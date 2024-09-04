@@ -218,11 +218,21 @@ double LumpedVectorMassIntegrator::TotalMass (
       mcoeff.SetSize(vdim);
    }
 
-    const IntegrationRule *ir = IntRule;
-    if (ir == NULL)
-    {
-        ir = &GetRule(el, Trans);
-    }
+   const IntegrationRule *ir = IntRule;
+   int Q_order = 0;
+   if (ir == NULL)
+   {
+       int order = 2 * el.GetOrder() + Trans.OrderW() + Q_order;
+
+       if (el.Space() == FunctionSpace::rQk)
+       {
+           ir = &RefinedIntRules.Get(el.GetGeomType(), order);
+       }
+       else
+       {
+           ir = &IntRules.Get(el.GetGeomType(), order);
+       }
+   }
 
    double Mtot = 0.0;
    vec = 0.0;
