@@ -221,6 +221,8 @@ public:
    virtual const Operator *GetRestriction() const
    { return pfes->GetRestrictionMatrix(); }
 
+   OperatorHandle &GetEliminatedOperator() { return p_mat_e; };
+
    using BilinearForm::FormLinearSystem;
    using BilinearForm::FormSystemMatrix;
 
