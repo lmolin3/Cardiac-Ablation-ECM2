@@ -12,8 +12,8 @@
 #ifndef MFEM_HEAT_OPERATOR
 #define MFEM_HEAT_OPERATOR
 
-#include "../common/mesh_extras.hpp"
-#include "../common/pfem_extras.hpp"
+#include "mesh_extras.hpp"
+#include "pfem_extras.hpp"
 #include "bc/heat_bchandler.hpp"
 #include "utils.hpp"
 #include <deque>

@@ -34,7 +34,7 @@
 //    mpirun -np 4 ./convergence -ode 1 -n 20 -a 3 -b 1.2 -kattr 1 -kval 1 -cattr 1 -cval 1 -rhoattr 1 -rhoval 1 --paraview -o 1 -r 5 -fun 2 -d 2
 //
 
-#include "../lib/heat_solver.hpp"
+#include "lib/heat_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>

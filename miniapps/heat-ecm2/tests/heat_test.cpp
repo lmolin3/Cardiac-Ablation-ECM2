@@ -52,7 +52,7 @@
 //   mpirun -np 4 ./heat_test -p 4 -o 1 -rs 0 -rp 0 -ode 1 -tf 10.0 -dt 1.0e-2 -ht 300.0 -Tamb 0.0 -Q 1e7 --paraview -sf 10
 //
 
-#include "../lib/heat_solver.hpp"
+#include "lib/heat_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>

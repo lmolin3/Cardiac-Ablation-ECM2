@@ -11,7 +11,6 @@
 
 #include "heat_operator.hpp"
 #include "../../general/forall.hpp"
-#include "bc/heat_bchandler.hpp"
 
 #ifdef MFEM_USE_MPI
 
