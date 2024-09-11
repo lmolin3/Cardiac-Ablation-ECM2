@@ -26,6 +26,11 @@ BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
 /// Dirichlet BCS
 void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
 {
+    // Check size of attributes provided
+    MFEM_ASSERT(attr.Size() == pmesh->bdr_attributes.Max(),
+                "Size of attributes array does not match mesh attributes.");
+
+    // Append to the list of Dirichlet BCs
     dirichlet_dbcs.emplace_back(attr, coeff);
 
     // Check for duplicate
@@ -91,6 +96,11 @@ void BCHandler::AddDirichletBC(double coeff_val, int &attr)
 /// Neumann BCS
 void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
 {
+    // Check size of attributes provided
+    MFEM_ASSERT(attr.Size() == pmesh->bdr_attributes.Max(),
+                "Size of attributes array does not match mesh attributes.");
+
+    // Append to the list of Neumann BCs
     neumann_bcs.emplace_back(attr, coeff);
 
     for (int i = 0; i < attr.Size(); ++i)
@@ -142,6 +152,11 @@ void BCHandler::AddNeumannBC(double val, int &attr)
 /// Robin BCS
 void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<int> &attr)
 {
+    // Check size of attributes provided
+    MFEM_ASSERT(attr.Size() == pmesh->bdr_attributes.Max(),
+                "Size of attributes array does not match mesh attributes.");
+
+    // Append to the list of Robin BCs
     robin_bcs.emplace_back(attr, h_coeff, T0_coeff);
 
     for (int i = 0; i < attr.Size(); ++i)
