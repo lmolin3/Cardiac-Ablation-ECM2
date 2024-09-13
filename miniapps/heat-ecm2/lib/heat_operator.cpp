@@ -164,6 +164,14 @@ namespace mfem
                                          neumann_bc.attr);
          }
 
+         // Adding neuman vector bcs
+         for (auto &neumann_vec_bc : bcs->GetNeumannVectorBcs())
+         {
+            fform->AddBoundaryIntegrator(
+                new BoundaryNormalLFIntegrator(*(neumann_vec_bc.coeff)),
+                neumann_vec_bc.attr);
+         }
+
          // Adding robin bcs
          for (auto &robin_bc : bcs->GetRobinBcs())
          {

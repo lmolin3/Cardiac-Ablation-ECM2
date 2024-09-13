@@ -31,7 +31,7 @@ void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
     // Check for duplicate
     for (int i = 0; i < attr.Size(); ++i)
     {
-        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && attr[i]) == 0,
+        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && neumann_vec_attr[i] && attr[i]) == 0,
                     "Duplicate boundary definition detected.");
         if (attr[i] == 1)
         {
@@ -95,7 +95,7 @@ void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
 
     for (int i = 0; i < attr.Size(); ++i)
     {
-        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && attr[i]) == 0,
+        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && neumann_vec_attr[i] && attr[i]) == 0,
                     "Trying to enforce Neumann bc on dirichlet boundary.");
         if (attr[i] == 1)
         {
@@ -139,6 +139,62 @@ void BCHandler::AddNeumannBC(double val, int &attr)
 }
 
 
+/// Neumann Vector BCS
+void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr)
+{
+    // Check size of attributes provided
+    MFEM_ASSERT(attr.Size() == pmesh->bdr_attributes.Max(),
+                "Size of attributes array does not match mesh attributes.");
+
+    // Append to the list of Neumann BCs
+    neumann_vec_bcs.emplace_back(attr, coeff);
+
+    for (int i = 0; i < attr.Size(); ++i)
+    {
+        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && neumann_vec_attr[i] && attr[i]) == 0,
+                    "Trying to enforce Neumann bc on dirichlet boundary.");
+        if (attr[i] == 1)
+        {
+            neumann_vec_attr[i] = 1;
+        }
+    }
+
+    if (verbose && pmesh->GetMyRank() == 0)
+    {
+        mfem::out << "Adding Neumann BC (vector) to boundary attributes: ";
+        for (int i = 0; i < attr.Size(); ++i)
+        {
+            if (attr[i] == 1)
+            {
+                mfem::out << i+1 << " ";
+            }
+        }
+        mfem::out << std::endl;
+    }
+}
+
+void BCHandler::AddNeumannVectorBC(VecFuncT func, Array<int> &attr)
+{
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(),func), attr);
+}
+
+void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, int &attr)
+{
+    // Create array for attributes and mark given mark given mesh boundary
+    neumann_attr_tmp = 0;
+    neumann_attr_tmp[attr - 1] = 1;
+
+    // Call AddDirichletBC accepting array of essential attributes
+    AddNeumannVectorBC(coeff, neumann_attr_tmp);
+}
+
+void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr)
+{
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(),func), attr);
+}
+
+
+
 /// Robin BCS
 void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<int> &attr)
 {
@@ -146,7 +202,7 @@ void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<in
 
     for (int i = 0; i < attr.Size(); ++i)
     {
-        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && attr[i]) == 0,
+        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && neumann_vec_attr[i] && attr[i]) == 0,
                     "Trying to enforce Robin bc on dirichlet boundary.");
         if (attr[i] == 1)
         {
@@ -209,6 +265,14 @@ void BCHandler::UpdateTimeNeumannBCs(double new_time)
     }
 }
 
+void BCHandler::UpdateTimeNeumannVectorBCs(double new_time)
+{
+    for (auto &neumann_vec_bc : neumann_vec_bcs)
+    {
+        neumann_vec_bc.coeff->SetTime(new_time);
+    }
+}
+
 void BCHandler::UpdateTimeRobinBCs(double new_time)
 {
     for (auto &robin_bc :robin_bcs)
@@ -223,5 +287,6 @@ void BCHandler::SetTime(double new_time)
     time = new_time;
     UpdateTimeDirichletBCs(new_time);
     UpdateTimeNeumannBCs(new_time);
+    UpdateTimeNeumannVectorBCs(new_time);
     UpdateTimeRobinBCs(new_time);
 }
