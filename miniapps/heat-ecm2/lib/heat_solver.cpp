@@ -287,7 +287,7 @@ namespace mfem
       }
 
       void
-      HeatSolver::Step(double &time, double dt, int step)
+      HeatSolver::Step(double &time, double dt, int step, bool UpdateHistory)
       {
          // Solve the system
          sw_solve.Start();
@@ -314,7 +314,8 @@ namespace mfem
          T_gf->SetFromTrueDofs(*T);
 
          // Update the time history
-         UpdateTimeStepHistory(*T);
+         if (UpdateHistory)
+            UpdateTimeStepHistory(*T);
 
          sw_solve.Stop();
       }
@@ -333,6 +334,15 @@ namespace mfem
             sz--;
          }
       }
+
+
+      void
+      HeatSolver::UpdateTimeStepHistory()
+      {
+         // Overload to update the history with the internally stored solution
+         UpdateTimeStepHistory(*T);
+      }
+
 
      void HeatSolver::SetTimeIntegrationCoefficients(int step)
       {

@@ -35,10 +35,36 @@ include_directories(
 
 # Parallel apps.
 if (MFEM_USE_MPI)
-  add_mfem_miniapp(multidomain-ecm2
-    MAIN multidomain.cpp
+  add_mfem_miniapp(multidomain-mfem
+  MAIN multidomain-mfem.cpp
+  EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+  LIBRARIES mfem-common )
+  add_dependencies(multidomain-mfem copy_miniapps_multidomain_test_data)
+
+  add_mfem_miniapp(multidomain-original-ecm2
+    MAIN multidomain-original.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
-  add_dependencies(multidomain-ecm2 copy_miniapps_multidomain_test_data)
+  add_dependencies(multidomain-original-ecm2 copy_miniapps_multidomain_test_data)
+
+  add_mfem_miniapp(multidomain-neumann-dirichlet-ecm2
+    MAIN multidomain-neumann-dirichlet.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
+  add_dependencies(multidomain-neumann-dirichlet-ecm2 copy_miniapps_multidomain_test_data)
+
+  add_mfem_miniapp(test-gradient-transfer
+    MAIN test-grad-transfer.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2)
+  add_dependencies(test-gradient-transfer copy_miniapps_multidomain_test_data)
+
+    add_mfem_miniapp(multidomain-neumann-dirichlet-cylinder
+    MAIN multidomain-neumann-dirichlet-cylinder.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
+  add_dependencies(multidomain-neumann-dirichlet-cylinder copy_miniapps_multidomain_test_data)
+  
 
 endif()
+

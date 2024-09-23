@@ -13,6 +13,8 @@ BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
     dirichlet_attr_tmp = 0;
     neumann_attr.SetSize(pmesh->bdr_attributes.Max());
     neumann_attr = 0;
+    neumann_vec_attr.SetSize(pmesh->bdr_attributes.Max());
+    neumann_vec_attr = 0;
     robin_attr.SetSize(pmesh->bdr_attributes.Max());
     robin_attr = 0;
     neumann_attr_tmp.SetSize(pmesh->bdr_attributes.Max());
