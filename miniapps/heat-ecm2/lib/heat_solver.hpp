@@ -56,7 +56,10 @@ public:
 
   void Update();
 
-  void Step(double &time, double dt, int step);
+  void Step(double &time, double dt, int step, bool UpdateHistory = true);
+
+  // Explicit update of the time step history: useful to avoid automatic one in Step method (for multiple solutions at same time step)
+  void UpdateTimeStepHistory();
 
   // Add Volumetric heat term (to ConductionOperator)
   void AddVolumetricTerm(Coefficient *coeff,

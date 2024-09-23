@@ -1,0 +1,70 @@
+# Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
+# at the Lawrence Livermore National Laboratory. All Rights reserved. See files
+# LICENSE and NOTICE for details. LLNL-CODE-806117.
+#
+# This file is part of the MFEM library. For more information and source code
+# availability visit https://mfem.org.
+#
+# MFEM is free software; you can redistribute it and/or modify it under the
+# terms of the BSD-3 license. We welcome feedback and contributions, see file
+# CONTRIBUTING.md for details.
+
+set(MESH_FILES
+  multidomain-hex.mesh
+)
+
+# Add a target to copy the mesh files from the source directory; used by sample
+# runs.
+set(SRC_MESH_FILES)
+foreach(MESH_FILE ${MESH_FILES})
+  list(APPEND SRC_MESH_FILES ${CMAKE_CURRENT_SOURCE_DIR}/${MESH_FILE})
+endforeach()
+add_custom_command(OUTPUT data_is_copied
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SRC_MESH_FILES} .
+  COMMAND ${CMAKE_COMMAND} -E touch data_is_copied
+  COMMENT "Copying multidomain miniapps data files ...")
+add_custom_target(copy_miniapps_multidomain_test_data DEPENDS data_is_copied)
+
+
+# Add the include directories
+include_directories(
+  ${CMAKE_SOURCE_DIR}/miniapps/common
+  ${CMAKE_SOURCE_DIR}/miniapps/common-ecm2
+  ${CMAKE_SOURCE_DIR}/miniapps/heat-ecm2
+)
+
+# Parallel apps.
+if (MFEM_USE_MPI)
+  add_mfem_miniapp(multidomain-mfem
+  MAIN multidomain-mfem.cpp
+  EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+  LIBRARIES mfem-common )
+  add_dependencies(multidomain-mfem copy_miniapps_multidomain_test_data)
+
+  add_mfem_miniapp(multidomain-original-ecm2
+    MAIN multidomain-original.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
+  add_dependencies(multidomain-original-ecm2 copy_miniapps_multidomain_test_data)
+
+  add_mfem_miniapp(multidomain-neumann-dirichlet-ecm2
+    MAIN multidomain-neumann-dirichlet.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
+  add_dependencies(multidomain-neumann-dirichlet-ecm2 copy_miniapps_multidomain_test_data)
+
+  add_mfem_miniapp(test-gradient-transfer
+    MAIN test-grad-transfer.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2)
+  add_dependencies(test-gradient-transfer copy_miniapps_multidomain_test_data)
+
+    add_mfem_miniapp(multidomain-neumann-dirichlet-cylinder
+    MAIN multidomain-neumann-dirichlet-cylinder.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
+  add_dependencies(multidomain-neumann-dirichlet-cylinder copy_miniapps_multidomain_test_data)
+  
+
+endif()
+
