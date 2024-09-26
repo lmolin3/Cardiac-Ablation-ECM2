@@ -23,17 +23,35 @@ namespace mfem
    namespace heat
    {
 
-      ConductionOperator::ConductionOperator(std::shared_ptr<ParMesh> pmesh_,
-                                             ParFiniteElementSpace &f, BCHandler *bcs,
-                                             PWMatrixCoefficient *Kappa_,
-                                             Coefficient *c_, Coefficient *rho_)
+      AdvectionReactionDiffusionOperator::AdvectionReactionDiffusionOperator(std::shared_ptr<ParMesh> pmesh_,
+                                                                             ParFiniteElementSpace &f, BCHandler *bcs,
+                                                                             MatrixCoefficient *Kappa_,
+                                                                             Coefficient *c_, Coefficient *rho_,
+                                                                             real_t alpha_, VectorCoefficient *u_,
+                                                                             real_t beta_)
           : TimeDependentOperator(f.GetTrueVSize(), 0.0), pmesh(pmesh_), H1FESpace(f),
-            bcs(bcs), Kappa(Kappa_), M(nullptr), RobinMass(nullptr), K(nullptr),
+            bcs(bcs), Kappa(Kappa_), alpha(alpha_), u(u_), M(nullptr), RobinMass(nullptr), K(nullptr),
             Mfull(nullptr), M_solver(nullptr), T_solver(nullptr), M_prec(nullptr),
             fform(nullptr), fvec(nullptr), pa(false), current_dt(0.0)
       {
+         // Check if the parameters are set
+         if (!c_ || !rho_)
+            mfem_error("Coefficients c and rho must be set");
          rhoC = new ProductCoefficient(*c_, *rho_);
 
+         // Check contributions
+         has_reaction = beta_ != 0.0;
+         has_diffusion = Kappa ? true : false;
+         has_advection = alpha_ != 0 && u ? true : false;
+         if (!has_diffusion && !has_advection && !has_reaction)
+         {
+            mfem_error("At least one of the coefficients (diffusion, advection, reaction) must be set");
+         }
+
+         // Set reaction term coefficient -> set to negative because we assemble Advection-Diffusion as (D+A) and change sign after multiplying
+         beta = has_reaction ? new ConstantCoefficient(-beta_) : nullptr;
+
+         // Get the true size of the finite element space
          fes_truevsize = H1FESpace.GetTrueVSize();
 
          // Create the ParGridFunction and Vector for Temperature
@@ -43,9 +61,9 @@ namespace mfem
          z = 0.0;
       }
 
-      void ConductionOperator::EnablePA(bool pa_) { pa = pa_; }
+      void AdvectionReactionDiffusionOperator::EnablePA(bool pa_) { pa = pa_; }
 
-      void ConductionOperator::Setup()
+      void AdvectionReactionDiffusionOperator::Setup()
       {
          /// 1. Check partial assembly
          bool tensor = UsesTensorBasis(H1FESpace);
@@ -77,9 +95,14 @@ namespace mfem
          // Mass matrix
          M = new ParBilinearForm(&H1FESpace);
          M->AddDomainIntegrator(new MassIntegrator(*rhoC));
-         // Diffusion matrix
+         // Advection-Reaction-Diffusion matrix   K = ∇•(k∇) - α • u ∇ + β = -(D + A - R)
          K = new ParBilinearForm(&H1FESpace);
-         K->AddDomainIntegrator(new DiffusionIntegrator(*Kappa));
+         if (has_diffusion)
+            K->AddDomainIntegrator(new DiffusionIntegrator(*Kappa));
+         if (has_advection)
+            K->AddDomainIntegrator(new ConvectionIntegrator(*u, alpha));
+         if (has_reaction)
+            K->AddDomainIntegrator(new MassIntegrator(*beta));
          // Robin mass
          RobinMass = new ParBilinearForm(&H1FESpace);
          for (auto &robin_bc : bcs->GetRobinBcs())
@@ -179,10 +202,10 @@ namespace mfem
                 new BoundaryLFIntegrator(*(robin_bc.hT0_coeff)), robin_bc.attr);
          }
 
-         // Will be assembled in ConductionOperator::UpdateBcsRhs
+         // Will be assembled in AdvectionReactionDiffusionOperator::UpdateBcsRhs
       }
 
-      void ConductionOperator::Update()
+      void AdvectionReactionDiffusionOperator::Update()
       {
          Array<int> empty;
          // Inform the bilinear forms that the space has changed and reassemble.
@@ -219,9 +242,19 @@ namespace mfem
          T_solver->Reset();
       }
 
-      void ConductionOperator::SetTime(const double time)
+      void AdvectionReactionDiffusionOperator::SetTime(const double time)
       {
          TimeDependentOperator::SetTime(time);
+
+         // Update the advection coefficient and re-assemble the stiffness matrix
+         if (has_advection)
+         {
+            u->SetTime(time);
+            K->Update();
+            K->Assemble(0);
+            Array<int> empty;
+            K->FormSystemMatrix(empty, opK);
+         }
 
          // Update the time dependent boundary conditions
          bcs->SetTime(time);
@@ -248,8 +281,8 @@ namespace mfem
          fvec = fform->ParallelAssemble();
       }
 
-      void ConductionOperator::ProjectDirichletBCS(const double &time,
-                                                   ParGridFunction &gf)
+      void AdvectionReactionDiffusionOperator::ProjectDirichletBCS(const double &time,
+                                                                   ParGridFunction &gf)
       {
          // Projection of coeffs for dirichlet bcs
          for (auto &dbc : bcs->GetDirichletDbcs())
@@ -261,10 +294,10 @@ namespace mfem
          }
       }
 
-      void ConductionOperator::Mult(const Vector &u, Vector &du_dt) const
+      void AdvectionReactionDiffusionOperator::Mult(const Vector &u, Vector &du_dt) const
       {
          // Compute:
-         //    du_dt = M^{-1}*(-K(u) + f + Neumann + Robin)
+         //    du_dt = M^{-1}*(-K(u) + f + Neumann + Robin) = M^{-1}*(-D(u) - A(u) + R(u) + f + Neumann + Robin)
          opK->Mult(u, z); // z = K(u)
          z.Neg();         // z = -K(u)
 
@@ -302,8 +335,8 @@ namespace mfem
          }
       }
 
-      void ConductionOperator::ImplicitSolve(const double dt, const Vector &u,
-                                             Vector &du_dt)
+      void AdvectionReactionDiffusionOperator::ImplicitSolve(const double dt, const Vector &u,
+                                                             Vector &du_dt)
       {
          MFEM_VERIFY(!pa,
                      "Partial assembly not supported for implicit time integraton");
@@ -347,7 +380,7 @@ namespace mfem
          }
       }
 
-      void ConductionOperator::SetTimeStep(double dt)
+      void AdvectionReactionDiffusionOperator::SetTimeStep(double dt)
       {
          if (dt != current_dt && T_solver)
          {
@@ -356,18 +389,18 @@ namespace mfem
          current_dt = dt;
       }
 
-      void ConductionOperator::AddVolumetricTerm(Coefficient *coeff,
-                                                 Array<int> &attr)
+      void AdvectionReactionDiffusionOperator::AddVolumetricTerm(Coefficient *coeff,
+                                                                 Array<int> &attr)
       {
          volumetric_terms.emplace_back(attr, coeff);
       }
 
-      void ConductionOperator::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr)
+      void AdvectionReactionDiffusionOperator::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr)
       {
          AddVolumetricTerm(new FunctionCoefficient(func), attr);
       }
 
-      ConductionOperator::~ConductionOperator()
+      AdvectionReactionDiffusionOperator::~AdvectionReactionDiffusionOperator()
       {
          delete bcs;
 
@@ -437,6 +470,7 @@ namespace mfem
       void ImplicitSolver::BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
                                          HypreParMatrix *RobinMass_)
       {
+         // T = M + dt*K + dt RobinMass = M + dt*(D + A - R) + dt RobinMass
          RobinMassMat = RobinMass_;
          M = M_;
          K = K_;

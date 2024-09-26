@@ -22,135 +22,151 @@
 #include <map>
 #include <string>
 
-namespace mfem {
+namespace mfem
+{
 
-using common::H1_ParFESpace;
+  using common::H1_ParFESpace;
 
-namespace heat {
-// Converters from Celsius to Kelvin
-double CelsiusToKelvin(double Tc);
-double KelvinToCelsius(double Tk);
+  namespace heat
+  {
+    // Converters from Celsius to Kelvin
+    double CelsiusToKelvin(double Tc);
+    double KelvinToCelsius(double Tk);
 
-class HeatSolver {
-public:
-  HeatSolver(std::shared_ptr<ParMesh> pmesh, int order, BCHandler *bcs,
-             PWMatrixCoefficient *Kappa_, Coefficient *c_, Coefficient *rho_,
-             int ode_solver_type, bool verbose = true);
+    class HeatSolver
+    {
+    public:
+      HeatSolver(std::shared_ptr<ParMesh> pmesh, int order, BCHandler *bcs,
+                 MatrixCoefficient *Kappa = nullptr,
+                 Coefficient *c_ = nullptr, Coefficient *rho_ = nullptr,
+                 real_t advection = 0.0,
+                 VectorCoefficient *u = nullptr,
+                 real_t reaction = 0.0,
+                 int ode_solver_type = 1, bool verbose = true);
 
-  ~HeatSolver();
+      // overload for the case of purely conductive heat transfer
+      HeatSolver(std::shared_ptr<ParMesh> pmesh, int order, BCHandler *bcs,
+                 MatrixCoefficient *Kappa,
+                 Coefficient *c_, Coefficient *rho_,
+                 int ode_solver_type, bool verbose = true);
 
-  HYPRE_BigInt GetProblemSize();
+      ~HeatSolver();
 
-  H1_ParFESpace *GetFESpace() { return H1FESpace; };
+      HYPRE_BigInt GetProblemSize();
 
-  void PrintSizes();
+      H1_ParFESpace *GetFESpace() { return H1FESpace; };
 
-  /// Enable partial assembly for every operator.
-  // (to be effective, must be set before Setup() is called)
-  void EnablePA(bool pa) { op->EnablePA(pa); }
+      void PrintSizes();
 
-  /// Set the solver and ConductionOperator
-  void Setup();
+      /// Enable partial assembly for every operator.
+      // (to be effective, must be set before Setup() is called)
+      void EnablePA(bool pa) { op->EnablePA(pa); }
 
-  void SetInitialTemperature(ParGridFunction &T0);
+      /// Set the solver and AdvectionReactionDiffusionOperator
+      void Setup();
 
-  void Update();
+      void SetInitialTemperature(ParGridFunction &T0);
 
-  void Step(double &time, double dt, int step, bool UpdateHistory = true);
+      void Update();
 
-  // Explicit update of the time step history: useful to avoid automatic one in Step method (for multiple solutions at same time step)
-  void UpdateTimeStepHistory();
+      void Step(double &time, double dt, int step, bool UpdateHistory = true);
 
-  // Add Volumetric heat term (to ConductionOperator)
-  void AddVolumetricTerm(Coefficient *coeff,
-                         Array<int> &attr); // Using scalar coefficient
-  void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr); // Using function
-  void AddVolumetricTerm(Coefficient *coeff,
-                         int &attr); // Using coefficient and single attribute
-  void AddVolumetricTerm(ScalarFuncT func,
-                         int &attr); // Using function and single attribute
+      // Explicit update of the time step history: useful to avoid automatic one in Step method (for multiple solutions at same time step)
+      void UpdateTimeStepHistory();
 
-  // Visualization and Postprocessing
-  void RegisterVisItFields(VisItDataCollection &visit_dc_);
+      // Add Volumetric heat term (to AdvectionReactionDiffusionOperator)
+      void AddVolumetricTerm(Coefficient *coeff,
+                             Array<int> &attr);                   // Using scalar coefficient
+      void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr); // Using function
+      void AddVolumetricTerm(Coefficient *coeff,
+                             int &attr); // Using coefficient and single attribute
+      void AddVolumetricTerm(ScalarFuncT func,
+                             int &attr); // Using function and single attribute
 
-  void RegisterParaviewFields(ParaViewDataCollection &paraview_dc_);
+      // Visualization and Postprocessing
+      void RegisterVisItFields(VisItDataCollection &visit_dc_);
 
-  void AddParaviewField(const std::string &field_name, ParGridFunction *gf);
+      void RegisterParaviewFields(ParaViewDataCollection &paraview_dc_);
 
-  void AddVisItField(const std::string &field_name, ParGridFunction *gf);
+      void AddParaviewField(const std::string &field_name, ParGridFunction *gf);
 
-  void WriteFields(const int &it = 0, const double &time = 0);
+      void AddVisItField(const std::string &field_name, ParGridFunction *gf);
 
-  void InitializeGLVis();
+      void WriteFields(const int &it = 0, const double &time = 0);
 
-  void DisplayToGLVis();
+      ParaViewDataCollection &GetParaViewDc() { return *paraview_dc; }
+      VisItDataCollection &GetVisItDc() { return *visit_dc; }
 
-  std::vector<double> GetTimingData();
+      void InitializeGLVis();
 
-  void PrintTimingData();
+      void DisplayToGLVis();
 
-  void display_banner(std::ostream &os);
+      std::vector<double> GetTimingData();
 
-  void SetVerbose(bool verbose_) { verbose = verbose_; }
+      void PrintTimingData();
 
-  // Getters for T
-  ParGridFunction &GetTemperatureGf() { return *T_gf; }
-  ParGridFunction *GetTemperatureGfPtr() { return T_gf; }
+      void display_banner(std::ostream &os);
 
-  Vector &GetTemperature() { return *T; }
-  Vector *GetTemperaturePtr() { return T; }
+      void SetVerbose(bool verbose_) { verbose = verbose_; }
 
-private:
-  ODESolver *CreateODESolver(int ode_solver_type, TimeDependentOperator &op);
+      // Getters for T
+      ParGridFunction &GetTemperatureGf() { return *T_gf; }
+      ParGridFunction *GetTemperatureGfPtr() { return T_gf; }
 
-  /* Compute approximation of first derivative on essential tdofs*/
-  void ComputeDerivativeApproximation(const Vector &T, double dt) const;
+      Vector &GetTemperature() { return *T; }
+      Vector *GetTemperaturePtr() { return T; }
 
-  /* Rotate the solution history */
-  void UpdateTimeStepHistory(const Vector &u);
+    private:
+      ODESolver *CreateODESolver(int ode_solver_type, TimeDependentOperator &op);
 
-  /* Set time integration coefficients for derivative approximation */
-  void SetTimeIntegrationCoefficients(int step);
+      /* Compute approximation of first derivative on essential tdofs*/
+      void ComputeDerivativeApproximation(const Vector &T, double dt) const;
 
-  int order; // Basis function order
+      /* Rotate the solution history */
+      void UpdateTimeStepHistory(const Vector &u);
 
-  // Shared pointer to Mesh
-  std::shared_ptr<ParMesh> pmesh;
-  int dim;
+      /* Set time integration coefficients for derivative approximation */
+      void SetTimeIntegrationCoefficients(int step);
 
-  H1_ParFESpace *H1FESpace;
-  int fes_truevsize;
-  Array<int> ess_tdof_list;
+      int order; // Basis function order
 
-  ParGridFunction *T_gf; // Temperature field grid function
-  Vector *T;             // Temperature field vector
+      // Shared pointer to Mesh
+      std::shared_ptr<ParMesh> pmesh;
+      int dim;
 
-  BCHandler *bcs; // Boundary Condition Handler
+      H1_ParFESpace *H1FESpace;
+      int fes_truevsize;
+      Array<int> ess_tdof_list;
 
-  ConductionOperator *op; // Conduction Operator
+      ParGridFunction *T_gf; // Temperature field grid function
+      Vector *T;             // Temperature field vector
 
-  ODESolver *ode_solver; // ODE Solver
+      BCHandler *bcs; // Boundary Condition Handler
 
-  Array<int> tmp_domain_attr; // Temporary domain attributes
+      AdvectionReactionDiffusionOperator *op; // Conduction Operator
 
-  VisItDataCollection *visit_dc;       // To prepare fields for VisIt viewing
-  ParaViewDataCollection *paraview_dc; // To prepare fields for ParaView viewing
+      ODESolver *ode_solver; // ODE Solver
 
-  std::map<std::string, socketstream *> socks; // Visualization sockets
+      Array<int> tmp_domain_attr; // Temporary domain attributes
 
-  StopWatch sw_init, sw_setup, sw_solve;
+      VisItDataCollection *visit_dc;       // To prepare fields for VisIt viewing
+      ParaViewDataCollection *paraview_dc; // To prepare fields for ParaView viewing
 
-  bool verbose;
+      std::map<std::string, socketstream *> socks; // Visualization sockets
 
-  // Previous solutions (to compute the time derivative for dirichlet bcs)
-  int time_scheme_order;
-  double alpha;
-  Vector beta;
-  std::deque<Vector> T_prev;
-  mutable Vector T_bcs; // auxiliary vector for bcs
-};
+      StopWatch sw_init, sw_setup, sw_solve;
 
-} // namespace heat
+      bool verbose;
+
+      // Previous solutions (to compute the time derivative for dirichlet bcs)
+      int time_scheme_order;
+      double alpha;
+      Vector beta;
+      std::deque<Vector> T_prev;
+      mutable Vector T_bcs; // auxiliary vector for bcs
+    };
+
+  } // namespace heat
 
 } // namespace mfem
 

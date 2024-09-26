@@ -52,7 +52,7 @@ add_mfem_miniapp(heat_test
 
 
 
-add_mfem_miniapp(convergence
+add_mfem_miniapp(convergence_heat
     MAIN tests/convergence.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common heat-ecm2)
@@ -62,6 +62,15 @@ add_mfem_miniapp(convergence
     MAIN tests/heat_test_3Daniso.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common heat-ecm2)
+
+
+  if (MFEM_ENABLE_TESTING)
+      add_test(NAME convergence_heat_np${MFEM_MPI_NP}
+        COMMAND ${MPIEXEC} ${MPIEXEC_NUMPROC_FLAG} ${MFEM_MPI_NP}
+        ${MPIEXEC_PREFLAGS}
+        $<TARGET_FILE:convergence_heat> -ode 1 -n 20 -a 3 -b 1.2 -kattr 1 -kval 1 -cattr 1 -cval 1 -rhoattr 1 -rhoval 1 -o 2 -r 5 -fun 2 -d 2
+        ${MPIEXEC_POSTFLAGS})
+  endif()
 
 endif () #MFEM_USE_MPI
 
