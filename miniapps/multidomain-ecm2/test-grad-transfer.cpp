@@ -17,7 +17,7 @@
 // Compute k∇T_cylinder on cylinder wall and transfer it to the box wall.
 
 #include "mfem.hpp"
-#include "../../general/forall.hpp" // required for Reshape
+#include "utils.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -25,13 +25,9 @@
 
 using namespace mfem;
 
-using qoi_func_t = std::function<void(ElementTransformation &, int, int)>;
+using namespace ecm2_utils;
 
 IdentityMatrixCoefficient *Id = NULL;
-
-// Forward declaration
-void ComputeBdrQPCoords(ParMesh &mesh, Array<int> bdry_attributes, ParFiniteElementSpace &fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords);
-void GSLIBInterpolate(FindPointsGSLIB &finder, ParFiniteElementSpace &fes, qoi_func_t qoi_func, Vector &qoi_src, Vector &qoi_dst, int qoi_size_on_qp = 1);
 
 int main(int argc, char *argv[])
 {
@@ -268,7 +264,7 @@ int main(int argc, char *argv[])
         // Get all BE with the attribute corresponding to the inner wall of the box (at what index they are in mesh.GetNBE)
         std::vector<int> block_element_idx;
         Vector block_element_coords;
-        ComputeBdrQPCoords(block_submesh, block_inner_wall_attributes, fes_block, block_element_idx, block_element_coords);
+        ComputeBdrQuadraturePointsCoords(block_inner_wall_attributes, fes_block, block_element_idx, block_element_coords);
 
         // 2. Setup GSLIB finder on the source mesh (cylinder)
         FindPointsGSLIB finder(MPI_COMM_WORLD);
