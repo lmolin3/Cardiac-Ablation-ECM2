@@ -9,6 +9,19 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
+// Class for (Fourier) Heat Operator
+// This class provides the operator used to solve the heat equation in HeatSolver with either explicit or implicit time integration.
+// The operator discretizes: M du_dt = (-K(u) + f)
+// M is the mass matrix  (scaled by rho * C)
+// K is the stiffness matrix, K = -∇•(k∇) + α • u ∇ + β = (D + A - R)
+// f is the right-hand side (volumetric heat sources)
+//
+// The operator also handles Dirichlet, Neumann (scalar, vector • norm) and Robin boundary conditions.
+//
+// We assume only the field in the advection term is time-dependent (i.e. u = u(t)).
+// Therefore K is reassembled at each time step if the advection term is provided.
+// (NOTE: A could be defined separately, but this would increase memory requirements).
+
 #ifndef MFEM_HEAT_OPERATOR
 #define MFEM_HEAT_OPERATOR
 
@@ -23,148 +36,164 @@
 #include <map>
 #include <string>
 
-namespace mfem {
+namespace mfem
+{
 
-using common::H1_ParFESpace;
+  using common::H1_ParFESpace;
 
-// Include functions from ecm2_utils namespace
-using namespace ecm2_utils;
+  // Include functions from ecm2_utils namespace
+  using namespace ecm2_utils;
 
-namespace heat {
-// Forward declaration of ImplicitSolver
-class ImplicitSolver;
-class ConductionOperator : public TimeDependentOperator {
-protected:
-  // Shared pointer to Mesh
-  std::shared_ptr<ParMesh> pmesh;
-  int dim;
+  namespace heat
+  {
+    // Forward declaration of ImplicitSolver
+    class ImplicitSolver;
+    class AdvectionReactionDiffusionOperator : public TimeDependentOperator
+    {
+    protected:
+      // Shared pointer to Mesh
+      std::shared_ptr<ParMesh> pmesh;
+      int dim;
 
-  // BCHandler (operator takes ownership)
-  BCHandler *bcs;
+      // BCHandler (operator takes ownership)
+      BCHandler *bcs;
 
-  ParFiniteElementSpace &H1FESpace;
-  Array<int> ess_tdof_list;
-  int fes_truevsize;
-  bool pa; // Enable partial assembly
+      ParFiniteElementSpace &H1FESpace;
+      Array<int> ess_tdof_list;
+      int fes_truevsize;
+      bool pa; // Enable partial assembly
 
-  ParBilinearForm *M;
-  ParBilinearForm *K;
-  ParBilinearForm *RobinMass;
+      ParBilinearForm *M;
+      ParBilinearForm *K;
+      ParBilinearForm *RobinMass;
 
-  ParLinearForm *fform;
-  Vector *fvec;
+      ParLinearForm *fform;
+      Vector *fvec;
 
-  OperatorHandle opM;
-  OperatorHandle opMe;
-  OperatorHandle opK;
-  OperatorHandle opRobinMass; // Mass matrix with Robin BCs
-  HypreParMatrix *Mfull;
+      OperatorHandle opM;
+      OperatorHandle opMe;
+      OperatorHandle opK;
+      OperatorHandle opRobinMass; // Mass matrix with Robin BCs
+      HypreParMatrix *Mfull;
 
-  double current_dt = 0.0;
-  int current_step = 0;
+      double current_dt = 0.0;
+      int current_step = 0;
 
-  CGSolver M_solver; // Krylov solver for inverting the mass matrix M
-  Solver *M_prec;    // Preconditioner for the mass matrix M
+      CGSolver M_solver; // Krylov solver for inverting the mass matrix M
+      Solver *M_prec;    // Preconditioner for the mass matrix M
 
-  ImplicitSolver *T_solver; // Implicit solver for T = M + dt K
+      ImplicitSolver *T_solver; // Implicit solver for T = M + dt K
 
-  PWMatrixCoefficient *Kappa;
-  ProductCoefficient *rhoC;
+      ProductCoefficient *rhoC;
+      MatrixCoefficient *Kappa; // Diffusion term
+      real_t alpha;             // Convection term
+      VectorCoefficient *u;
+      Coefficient *beta; // Reaction term
 
-  // Bookkeeping for voumetric heat terms.
-  std::vector<CoeffContainer> volumetric_terms;
+      bool has_diffusion = false;
+      bool has_advection = false;
+      bool has_reaction = false;
 
-  mutable Vector z; // auxiliary vector
+      // Bookkeeping for voumetric heat terms.
+      std::vector<CoeffContainer> volumetric_terms;
 
-  // Approximation of first derivative
-  mutable Vector *dT_approx; // auxiliary vectors for bcs
+      mutable Vector z; // auxiliary vector
 
-public:
-  ConductionOperator(std::shared_ptr<ParMesh> pmesh_, ParFiniteElementSpace &f,
-                     BCHandler *bcs, PWMatrixCoefficient *Kappa_,
-                     Coefficient *c_, Coefficient *rho_);
+      // Approximation of first derivative
+      mutable Vector *dT_approx; // auxiliary vectors for bcs
 
-  // Enable partial assembly
-  void EnablePA(bool pa_ = false);
+    public:
+      AdvectionReactionDiffusionOperator(std::shared_ptr<ParMesh> pmesh_, ParFiniteElementSpace &f,
+                                         BCHandler *bcs,
+                                         MatrixCoefficient *Kappa = nullptr,
+                                         Coefficient *c_ = nullptr, Coefficient *rho_ = nullptr,
+                                         real_t alpha = 0.0, VectorCoefficient *u = nullptr,
+                                         real_t beta = 0.0);
 
-  /** Set up the ConductionOperator.
-   * This involves adding all the necessary integrators to the linear form for
-   * the rhs (volumetric terms, neumann, robin contribution)
-   *
-   * @note Must be called AFTER adding the volumetric terms with
-   * AddVolumetricTerm()
-   */
-  virtual void Setup();
+      // Enable partial assembly
+      void EnablePA(bool pa_ = false);
 
-  /** Update the ConductionOperator in case of changes in Mesh. */
-  void Update();
+      /** Set up the AdvectionReactionDiffusionOperator.
+       * This involves adding all the necessary integrators to the linear form for
+       * the rhs (volumetric terms, neumann, robin contribution)
+       *
+       * @note Must be called AFTER adding the volumetric terms with
+       * AddVolumetricTerm()
+       */
+      virtual void Setup();
 
-  /** Compute action of the ConductionOperator: du_dt = M^{-1}*(-K(u)). */
-  virtual void Mult(const Vector &u, Vector &du_dt) const;
+      /** Update the AdvectionReactionDiffusionOperator in case of changes in Mesh. */
+      void Update();
 
-  /** Solve the Backward-Euler equation: k = f(u + dt*k, t), for the unknown k.
-      This is the only requirement for high-order SDIRK implicit integration.*/
-  virtual void ImplicitSolve(const double dt, const Vector &u, Vector &k);
+      /** Compute action of the AdvectionReactionDiffusionOperator: du_dt = M^{-1}*(-K(u)). */
+      virtual void Mult(const Vector &u, Vector &du_dt) const;
 
-  /** Update bcs and rhs*/
-  virtual void SetTime(const double time);
+      /** Solve the Backward-Euler equation: k = f(u + dt*k, t), for the unknown k.
+          This is the only requirement for high-order SDIRK implicit integration.*/
+      virtual void ImplicitSolve(const double dt, const Vector &u, Vector &k);
 
-  /** Set the time step */
-  void SetTimeStep(double dt);
+      /** Update bcs and rhs*/
+      virtual void SetTime(const double time);
 
-  /** Set the starting temperature for the current step */
-  void SetStartingTemperature(const Vector *Tn);
+      /** Set the time step */
+      void SetTimeStep(double dt);
 
-  // Add Volumetric heat term
-  void AddVolumetricTerm(Coefficient *coeff,
-                         Array<int> &attr); // Using scalar coefficient
-  void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr); // Using function
+      /** Set the starting temperature for the current step */
+      void SetStartingTemperature(const Vector *Tn);
 
-  void ProjectDirichletBCS(const double &time, ParGridFunction &gf);
+      // Add Volumetric heat term
+      void AddVolumetricTerm(Coefficient *coeff,
+                             Array<int> &attr);                   // Using scalar coefficient
+      void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr); // Using function
 
-  /// Getter
-  // Get derivative approximation vector
-  Vector &GetDerivativeApproximation() { return *dT_approx; }
+      void ProjectDirichletBCS(const double &time, ParGridFunction &gf);
 
-  // Get ess_tdof_list
-  Array<int> &GetEssTDofList() { return ess_tdof_list; }
+      /// Getter
+      // Get derivative approximation vector
+      Vector &GetDerivativeApproximation() { return *dT_approx; }
 
-  virtual ~ConductionOperator();
-};
+      // Get ess_tdof_list
+      Array<int> &GetEssTDofList() { return ess_tdof_list; }
 
-class ImplicitSolver : public Solver {
-private:
-  HypreParMatrix *M, *K, *RobinMassMat;
-  HypreParMatrix *T, *Te;
-  CGSolver *linear_solver;
-  HypreSmoother *prec;
-  double current_dt;
-  bool finalized;
-  Array<int> ess_tdof_list;
+      virtual ~AdvectionReactionDiffusionOperator();
+    };
 
-public:
-  ImplicitSolver(HypreParMatrix *M_, HypreParMatrix *K_,
-                 Array<int> &ess_tdof_list_);
+    // Solver for implicit time integration Top du/dt = -K(T) + f
+    // where Top = M + dt*K + dt RobinMass = M + dt*(D + A - R) + dt RobinMass
+    class ImplicitSolver : public Solver
+    {
+    private:
+      HypreParMatrix *M, *K, *RobinMassMat;
+      HypreParMatrix *T, *Te;
+      CGSolver *linear_solver;
+      HypreSmoother *prec;
+      double current_dt;
+      bool finalized;
+      Array<int> ess_tdof_list;
 
-  void SetOperator(const Operator &op);
+    public:
+      ImplicitSolver(HypreParMatrix *M_, HypreParMatrix *K_,
+                     Array<int> &ess_tdof_list_);
 
-  void SetTimeStep(double dt_);
+      void SetOperator(const Operator &op);
 
-  void Reset();
+      void SetTimeStep(double dt_);
 
-  void BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
-                     HypreParMatrix *RobinMass_ = nullptr);
+      void Reset();
 
-  void EliminateBC(const Vector &x, Vector &b) const;
+      void BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
+                         HypreParMatrix *RobinMass_ = nullptr);
 
-  virtual void Mult(const Vector &x, Vector &y) const;
+      void EliminateBC(const Vector &x, Vector &b) const;
 
-  bool IsFinalized() const;
+      virtual void Mult(const Vector &x, Vector &y) const;
 
-  ~ImplicitSolver();
-};
+      bool IsFinalized() const;
 
-} // namespace heat
+      ~ImplicitSolver();
+    };
+
+  } // namespace heat
 
 } // namespace mfem
 

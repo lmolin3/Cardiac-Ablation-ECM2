@@ -39,12 +39,15 @@ namespace mfem
       {
          return Tk - 273.15;
       }
-      
+
       HeatSolver::HeatSolver(std::shared_ptr<ParMesh> pmesh_, int order_,
                              BCHandler *bcs,
-                             PWMatrixCoefficient *Kappa,
+                             MatrixCoefficient *Kappa,
                              Coefficient *c,
                              Coefficient *rho,
+                             real_t advection,
+                             VectorCoefficient *u,
+                             real_t reaction,
                              int ode_solver_type,
                              bool verbose_)
           : op(nullptr),
@@ -69,7 +72,7 @@ namespace mfem
          // Define  parallel finite element spaces on the parallel
          // Here we use arbitrary order H1 for the Temperature.
          // Note: Gauss-Lobatto basis is used for H1 space to ensure LOR can be used
-         H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto); 
+         H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
          fes_truevsize = H1FESpace->GetTrueVSize();
 
          // Create the ParGridFunction and Vector for Temperature
@@ -80,8 +83,8 @@ namespace mfem
          // Create the ODE Solver (no initialization yet)
          ode_solver = CreateODESolver(ode_solver_type, *op);
 
-         // Create the ConductionOperator
-         op = new ConductionOperator(pmesh, *H1FESpace, bcs, Kappa, c, rho);
+         // Create the AdvectionReactionDiffusionOperator
+         op = new AdvectionReactionDiffusionOperator(pmesh, *H1FESpace, bcs, Kappa, c, rho, advection, u, reaction);
 
          // Initialize ODESolver with operator
          ode_solver->Init(*op);
@@ -101,6 +104,15 @@ namespace mfem
             cout << "\n...done." << endl;
          }
       }
+
+      HeatSolver::HeatSolver(std::shared_ptr<ParMesh> pmesh_, int order_,
+                             BCHandler *bcs,
+                             MatrixCoefficient *Kappa,
+                             Coefficient *c,
+                             Coefficient *rho,
+                             int ode_solver_type,
+                             bool verbose_)
+          : HeatSolver(pmesh_, order_, bcs, Kappa, c, rho, 0.0, nullptr, 0.0, ode_solver_type, verbose_) {}
 
       HeatSolver::~HeatSolver()
       {
@@ -222,7 +234,7 @@ namespace mfem
             cout << "\nSetting up Heat solver... " << flush;
          }
 
-         // Set up the internal ConductionOperator
+         // Set up the internal AdvectionReactionDiffusionOperator
          op->Setup();
 
          // Initialize every entry with zero solution (only stored essential_tdofs)
@@ -296,16 +308,19 @@ namespace mfem
          op->SetTimeStep(dt);
          SetTimeIntegrationCoefficients(step);
 
+         // Set solution vector to the previous solution
+         T_gf->GetTrueDofs(*T);
+
          // Set the time for the boundary conditions, update the temperature gf and operator time
          op->ProjectDirichletBCS(time + dt, *T_gf);
-         T_gf->GetTrueDofs(T_bcs);
+         T_gf->GetTrueDofs(T_bcs); // Need another vector since T_final = T + dt * dT, and dT(ess_tdof) != 0
          ComputeDerivativeApproximation(T_bcs, dt);
 
          // Time advancing (Note time is updated by the ode_solver)
          ode_solver->Step(*T, time, dt);
 
          // Set bcs after solving
-         for (int i = 0; i <  ess_tdof_list.Size(); ++i)
+         for (int i = 0; i < ess_tdof_list.Size(); ++i)
          {
             (*T)[ess_tdof_list[i]] = T_bcs[ess_tdof_list[i]];
          }
@@ -335,7 +350,6 @@ namespace mfem
          }
       }
 
-
       void
       HeatSolver::UpdateTimeStepHistory()
       {
@@ -343,8 +357,7 @@ namespace mfem
          UpdateTimeStepHistory(*T);
       }
 
-
-     void HeatSolver::SetTimeIntegrationCoefficients(int step)
+      void HeatSolver::SetTimeIntegrationCoefficients(int step)
       {
 
          // Maximum BDF order to use at current time step
@@ -417,8 +430,8 @@ namespace mfem
          Vector &dT_approx = op->GetDerivativeApproximation();
          dT_approx = 0.0;
 
-         //std::cout << std::setprecision(10);
-         //std::cout << "T_bc[0]: " << T[0] << endl;
+         // std::cout << std::setprecision(10);
+         // std::cout << "T_bc[0]: " << T[0] << endl;
 
          for (int i = 0; i < ess_tdof_list.Size(); ++i)
          {
@@ -426,24 +439,23 @@ namespace mfem
             // out << "dof: " << dof << endl;
 
             dT_approx[dof] = alpha * T[dof]; // alpha * T_{n+1}
-            //std::cout << std::setprecision(10);
-            //std::cout << "T[dof]: " << T[dof] << endl;
+            // std::cout << std::setprecision(10);
+            // std::cout << "T[dof]: " << T[dof] << endl;
 
             // Sum over the previous solutions
             for (int j = 0; j < time_scheme_order; ++j)
             {
                const auto Tnmj = T_prev[j].Read();
                dT_approx[dof] += beta[j] * Tnmj[i]; // beta_j * T_{n-j}
-               //std::cout << " Tnmj[dof]: " << Tnmj[i] << endl;
-               //out << " beta[j]: " << beta[j] << endl;
+               // std::cout << " Tnmj[dof]: " << Tnmj[i] << endl;
+               // out << " beta[j]: " << beta[j] << endl;
             }
 
             dT_approx[dof] /= dt; // Divide by dt
-            //out << "dT_dt[dof]: " << dT_approx[dof] << endl;
-            // out << "\n" << flush;
+            // out << "dT_dt[dof]: " << dT_approx[dof] << endl;
+            //  out << "\n" << flush;
          }
       }
-
 
       void HeatSolver::AddVolumetricTerm(Coefficient *coeff, Array<int> &attr)
       {
