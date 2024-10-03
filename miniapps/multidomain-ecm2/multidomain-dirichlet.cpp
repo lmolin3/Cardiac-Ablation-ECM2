@@ -16,6 +16,29 @@
 // order H1 finite elements. This does not mean that the approach is limited to
 // this configuration.
 //
+// A 3D domain comprised of an outer box with a cylinder shaped inside is used.
+//
+// A heat equation is described on the outer box domain
+//
+//                  dT/dt = κΔT         in outer box
+//                      T = T_out       on outside wall
+//                   ∇T•n = 0           on inside (cylinder) wall
+//
+// with temperature T and coefficient κ (non-physical in this example).
+//
+// A heat equation equation is described inside the cylinder domain
+//
+//                  dT/dt = κΔT          in inner cylinder
+//                      T = T_wall       on cylinder wall (obtained from heat equation)
+//                   ∇T•n = 0            else
+//
+// with temperature T, coefficients κ, α and prescribed velocity profile b.
+//
+// To couple the solutions of both equations, a segregated solve with one way
+// coupling approach is used. The heat equation of the outer box is solved from
+// the timestep T_box(t) to T_box(t+dt). Then for the convection-diffusion
+// equation T_wall is set to T_box(t+dt) and the equation is solved for T(t+dt)
+// which results in a first-order one way coupling.
 
 #include "mfem.hpp"
 #include "lib/heat_solver.hpp"
@@ -25,15 +48,6 @@
 #include <memory>
 
 using namespace mfem;
-
-double T_wall_function(const Vector &x, double t)
-{
-   double T = 0.0;
-
-   T = 10 * t;
-
-   return T > 1.0 ? 1.0 : T;
-}
 
 IdentityMatrixCoefficient *Id = NULL;
 
@@ -109,14 +123,14 @@ int main(int argc, char *argv[])
    Array<int> cylinder_domain_attributes(1);
    cylinder_domain_attributes[0] = 1;
 
-   Array<int> block_domain_attributes(1);
-   block_domain_attributes[0] = 2;
+   Array<int> box_domain_attributes(1);
+   box_domain_attributes[0] = 2;
 
    auto cylinder_submesh =
        std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, cylinder_domain_attributes));
 
    auto block_submesh =
-       std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, block_domain_attributes));
+       std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, box_domain_attributes));
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 4. Set up coefficients
@@ -181,66 +195,13 @@ int main(int argc, char *argv[])
    heat::HeatSolver Heat_Cylinder(cylinder_submesh, order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, ode_solver_type);
    heat::HeatSolver Heat_Block(block_submesh, order, bcs_block, Kappa_block, c_block, rho_block, ode_solver_type);
 
-   H1_ParFESpace *GradH1FESpace_block = new H1_ParFESpace(block_submesh.get(), order, block_submesh->Dimension(), BasisType::GaussLobatto, block_submesh->Dimension());
-   H1_ParFESpace *GradH1FESpace_cylinder = new H1_ParFESpace(cylinder_submesh.get(), order, cylinder_submesh->Dimension(), BasisType::GaussLobatto, cylinder_submesh->Dimension());
-
    ParGridFunction *temperature_cylinder_gf = Heat_Cylinder.GetTemperatureGfPtr();
    ParGridFunction *temperature_block_gf = Heat_Block.GetTemperatureGfPtr();
-   ParGridFunction *grad_temperature_wall_block_gf = new ParGridFunction(GradH1FESpace_block);
-   ParGridFunction *grad_temperature_wall_cylinder_gf = new ParGridFunction(GradH1FESpace_cylinder);
-   ParGridFunction *temperature_wall_cylinder_gf = new ParGridFunction(Heat_Cylinder.GetFESpace());
-   ParGridFunction *temperature_wall_block_prev_gf = new ParGridFunction(Heat_Block.GetFESpace());
-
-   GridFunctionCoefficient temperature_wall_block_prev_coeff(temperature_wall_block_prev_gf);
 
    // Create the transfer map needed in the time integration loop
-   auto temperature_block_to_cylinder_map = ParSubMesh::CreateTransferMap(*temperature_block_gf, *temperature_wall_cylinder_gf);
-   auto grad_temperature_cylinder_to_block_map = ParSubMesh::CreateTransferMap(*grad_temperature_wall_cylinder_gf, *grad_temperature_wall_block_gf);
-
-   ///////////////////////////////////////////////////////////////////////////////////////////////
-   /// 7. Populate BC Handler
-   ///////////////////////////////////////////////////////////////////////////////////////////////
-
-   // Outer Box:
-   // - T = T_out on the outside wall
-   // - ∇T•n = 0 on the inside (cylinder) wall and top/bottom surfaces
-
-   Array<int> block_outer_wall_attributes(block_submesh->bdr_attributes.Max());
-   block_outer_wall_attributes = 0;
-   block_outer_wall_attributes[0] = 1;
-   block_outer_wall_attributes[1] = 1;
-   block_outer_wall_attributes[2] = 1;
-   block_outer_wall_attributes[3] = 1;
-
-   Array<int> block_inner_wall_attributes(block_submesh->bdr_attributes.Max());
-   block_inner_wall_attributes = 0;
-   block_inner_wall_attributes[8] = 1;
-
-   // Box solver is just dummy. We just keep the same structure of the multidomain solver but solve on the cylinder only.
-   // The box solver is used to update the temperature on the wall with a prescribed function and transfer it to the cylinder.
-   FunctionCoefficient T_wall_box(T_wall_function);
-
-   // Cylinder:
-   // - T = T_wall on the cylinder wall (obtained from heat equation on box)
-   // - ∇T•n = 0 else
-   //
-
-   Array<int> inner_cylinder_wall_attributes(cylinder_submesh->bdr_attributes.Max()); // CHECK
-   inner_cylinder_wall_attributes = 0;
-   inner_cylinder_wall_attributes[8] = 1;
-
-   GridFunctionCoefficient *T_wall_cylinder = new GridFunctionCoefficient(temperature_wall_cylinder_gf);
-   bcs_cyl->AddDirichletBC(T_wall_cylinder, inner_cylinder_wall_attributes);
-
-   ///////////////////////////////////////////////////////////////////////////////////////////////
-   /// 8. Setup solver and Assemble forms
-   ///////////////////////////////////////////////////////////////////////////////////////////////
-
-   Heat_Cylinder.EnablePA(pa);
-   Heat_Cylinder.Setup();
-
-   Heat_Block.EnablePA(pa);
-   Heat_Block.Setup();
+   auto temperature_block_to_cylinder_map = ParSubMesh::CreateTransferMap(
+       *temperature_block_gf,
+       *temperature_cylinder_gf);
 
    // Setup ouput
    ParaViewDataCollection paraview_dc_cylinder("Heat-Cylinder", cylinder_submesh.get());
@@ -259,7 +220,49 @@ int main(int argc, char *argv[])
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
-   /// 9. Perform time-integration (looping over the time iterations, step, with a
+   /// 7. Populate BC Handler
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
+   // Outer Box:
+   // - T = T_out on the outside wall
+   // - ∇T•n = 0 on the inside (cylinder) wall and top/bottom surfaces
+
+   Array<int> block_wall_attributes(block_submesh->bdr_attributes.Max());
+   block_wall_attributes = 0;
+   block_wall_attributes[0] = 1;
+   block_wall_attributes[1] = 1;
+   block_wall_attributes[2] = 1;
+   block_wall_attributes[3] = 1;
+
+   double T_out = 1.0;
+   bcs_block->AddDirichletBC(T_out, block_wall_attributes);
+
+   // Cylinder:
+   // - T = T_wall on the cylinder wall (obtained from heat equation on box)
+   // - ∇T•n = 0 else
+   //
+
+   Array<int> inner_cylinder_wall_attributes(
+       cylinder_submesh->bdr_attributes.Max());
+   inner_cylinder_wall_attributes = 0;
+   inner_cylinder_wall_attributes[8] = 1;
+
+   ParGridFunction *temperature_cylinder_wall_gf = new ParGridFunction(Heat_Cylinder.GetFESpace()); // Check if creates deep copy or not -->  want deep copy since we need to step Heat_Cylinder using T_prev, and store T_new in another gf
+   GridFunctionCoefficient *T_wall = new GridFunctionCoefficient(temperature_cylinder_wall_gf);
+   bcs_cyl->AddDirichletBC(T_wall, inner_cylinder_wall_attributes);
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 8. Setup solver and Assemble forms
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
+   Heat_Cylinder.EnablePA(pa);
+   Heat_Cylinder.Setup();
+
+   Heat_Block.EnablePA(pa);
+   Heat_Block.Setup();
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 8. Perform time-integration (looping over the time iterations, step, with a
    //     time-step dt).
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -280,7 +283,6 @@ int main(int argc, char *argv[])
       Heat_Cylinder.WriteFields(0, t);
    }
 
-   // Outer loop for time integration
    for (int step = 1; !last_step; step++)
    {
       if (t + dt >= t_final - dt / 2)
@@ -288,14 +290,14 @@ int main(int argc, char *argv[])
          last_step = true;
       }
 
-      // Update the temperature on the inner wall of the block
-      T_wall_box.SetTime(t + dt);
-      temperature_block_gf->ProjectBdrCoefficient(T_wall_box, block_inner_wall_attributes);
+      // Advance the diffusion equation on the outer block to the next time step
+      Heat_Block.Step(t, dt, step);
+      t -= dt; // Reset t to same time step, since t is incremented in the Step function
 
       // Transfer the solution from the inner surface of the outer block to
       // the cylinder outer surface to act as a boundary condition.
       temperature_block_to_cylinder_map.Transfer(*temperature_block_gf,
-                                                 *temperature_wall_cylinder_gf);
+                                                 *temperature_cylinder_wall_gf);
 
       // Advance the convection-diffusion equation on the outer block to the
       // next time step
@@ -313,7 +315,7 @@ int main(int argc, char *argv[])
    /// 8. Cleanup
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   delete temperature_wall_cylinder_gf;
+   delete temperature_cylinder_wall_gf;
 
    delete Kappa_cyl;
    delete c_cyl;

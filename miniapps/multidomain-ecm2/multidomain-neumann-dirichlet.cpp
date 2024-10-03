@@ -18,25 +18,24 @@
 //
 // A 3D domain comprised of an outer box with a cylinder shaped inside is used.
 //
-// A heat equation is described on the outer box domain
+// A diffusion equation is described on the outer box domain
 //
 //                 rho c dT/dt = κΔT          in outer box
-//                           T = T_out        on outside wall
+//                           T = T_out        on outside wall           (IF TEST 1 is selected)
 //                       k∇T•n = k∇T_wall•n   on cylinder interface
 //                       k∇T•n = 0            elsewhere
 //
-// with temperature T and coefficient κ (non-physical in this example).
+// An advection-diffusion-reaction equation is described inside the cylinder domain
 //
-// A heat equation equation is described inside the cylinder domain
-//
-//                 rho c dT/dt = κΔT          in cylinder
-//                           T = T_wall       on cylinder interface
-//                       k∇T•n = 0            elsewhere
+//                 rho c dT/dt = κΔT - α • u ∇T - β u       in cylinder
+//                           T = T_wall                     on cylinder interface
+//                       k∇T•n = 0                          elsewhere
+//                           Q = Qval                       inside sphere (IF TEST 2 is selected)
 //
 // with temperature T, coefficients κ, α and prescribed velocity profile b.
 //
 // To couple the solutions of both equations, a segregated solve with two way
-// coupling approach is used to solve the timestep tn tn+dt:
+// coupling (Neumann-Dirichlet) approach is used to solve the timestep tn tn+dt:
 //
 // Algorithm:
 //
@@ -61,12 +60,31 @@
 // Convergence reached when ||T_wall(j+1) - T_wall(j)|| < tol
 //
 // Sample run:
-//      mpirun -np 4 ./multidomain-neumann-dirichlet-ecm2 -o 3 -tf 1e0 -dt 1.0e-2 --relaxation-parameter 0.8 --paraview -of ./Output
+// Box heating:
+//    mpirun -np 4 ./multidomain-neumann-dirichlet --problem 0 -rs 1 --paraview -of ./Output/Test
+//
+// Cylinder heating:
+//    mpirun -np 4 ./multidomain-neumann-dirichlet --problem 1 -rs 1 -Q 1e4 --paraview -of ./Output/Test
+//
+// Advection-Diffusion:
+//   mpirun -np 4 ./multidomain-neumann-dirichlet --problem 1 -rs 1 -dPdx 500 --relaxation-parameter 0.5 --paraview -of ./Output/Test
+//
+// Reaction-Diffusion:
+//  mpirun -np 4 ./multidomain-neumann-dirichlet --problem 1 -rs 1 -beta 1 --relaxation-parameter 0.5 --paraview -of ./Output/Test
+//
+// Advection-Reaction-Diffusion:
+//   mpirun -np 4 ./multidomain-neumann-dirichlet --problem 1 -rs 1 -dPdx 500 -beta 1 --relaxation-parameter 0.5 --paraview -of ./Output/Test
+//
+// Heterogeneous conductivity:
+//  mpirun -np 4 ./multidomain-neumann-dirichlet --problem 1 -rs 1 -kc 0.1 -kb 10 --relaxation-parameter 0.5 --paraview -of ./Output/Test
+//
 
 #include "mfem.hpp"
 #include "lib/heat_solver.hpp"
 
 #include <fstream>
+#include <sstream>
+#include <sys/stat.h> // Include for mkdir
 #include <iostream>
 #include <memory>
 
@@ -77,6 +95,18 @@ IdentityMatrixCoefficient *Id = NULL;
 // Forward declaration
 void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &fes_grad, const Vector &grad_vec, ParGridFunction &grad_gf, MatrixCoefficient *K);
 void print_matrix(const DenseMatrix &A);
+void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step);
+
+// Volumetric heat source in the sphere
+constexpr double Sphere_Radius = 0.2;
+double Qval = 1e3; // W/m^3
+double HeatingSphere(const Vector &x, double t);
+
+// Advection velocity profile
+void velocity_profile(const Vector &x, Vector &b);
+double viscosity = 1.0;
+double dPdx = 1.0;
+constexpr double R = 0.25; // cylinder mesh radius
 
 int main(int argc, char *argv[])
 {
@@ -100,13 +130,17 @@ int main(int argc, char *argv[])
    // Physics
    double kval_cyl = 1.0;   // W/mK
    double kval_block = 1.0; // W/mK
+   double alpha = 1.0;      // Advection coefficient
+   double reaction = 0.0;   // Reaction term
+   // Test selection
+   int test = 1; // 0 - Box heating, 1 - Cylinder heating
    // Mesh
    int serial_ref_levels = 0;
    int parallel_ref_levels = 0;
    // Time integrator
    int ode_solver_type = 1;
-   real_t t_final = 5.0;
-   real_t dt = 1.0e-5;
+   real_t t_final = 1.0;
+   real_t dt = 1.0e-2;
    // Domain decomposition
    real_t omega = 0.5; // Relaxation parameter
    // Postprocessing
@@ -116,14 +150,20 @@ int main(int argc, char *argv[])
    const char *outfolder = "";
 
    OptionsParser args(argc, argv);
+   // Test
+   args.AddOption(&test, "-p", "--problem",
+                  "Test selection: 0 - Box heating, 1 - Cylinder heating.");
+   // FE
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
                   "Enable or disable partial assembly.");
+   // Mesh
    args.AddOption(&serial_ref_levels, "-rs", "--serial-ref-levels",
                   "Number of serial refinement levels.");
    args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
+   // Time integrator
    args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
                   "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
                   "\t   4 - Implicit Midpoint, 5 - SDIRK23, 6 - SDIRK34,\n\t"
@@ -132,18 +172,30 @@ int main(int argc, char *argv[])
                   "Final time; start time is 0.");
    args.AddOption(&dt, "-dt", "--time-step",
                   "Time step.");
+   // Domain decomposition
    args.AddOption(&omega, "-omega", "--relaxation-parameter",
                   "Relaxation parameter.");
+   // Physics
    args.AddOption(&kval_cyl, "-kc", "--k-cylinder",
                   "Thermal conductivity of the cylinder (W/mK).");
    args.AddOption(&kval_block, "-kb", "--k-block",
                   "Thermal conductivity of the block (W/mK).");
+   args.AddOption(&dPdx, "-dPdx", "--pressure-drop",
+                  "Pressure drop forvelocity profile.");
+   args.AddOption(&alpha, "-alpha", "--advection-coefficient",
+                  "Advection coefficient.");
+   args.AddOption(&reaction, "-beta", "--reaction-coefficient",
+                  "Reaction coefficient.");
+   args.AddOption(&Qval, "-Q", "--volumetric-heat-source",
+                  "Volumetric heat source (W/m^3).");
+   // Postprocessing
    args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable VisIt visualization.");
    args.AddOption(&save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
    args.AddOption(&outfolder, "-of", "--out-folder",
                   "Output folder.");
+
    args.ParseCheck();
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -229,23 +281,26 @@ int main(int argc, char *argv[])
    coefs_rho_block.Append(new ConstantCoefficient(rhoval_block));
    PWCoefficient *rho_block = new PWCoefficient(attr_block, coefs_rho_block);
 
+   // Velocity profile for advectio term in cylinder α∇•(q T)
+   VectorCoefficient *q = new VectorFunctionCoefficient(sdim, velocity_profile);
+
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 5. Create BC Handler (not populated yet)
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
-   bool verbose = true;
+   bool bc_verbose = true;
 
-   heat::BCHandler *bcs_cyl = new heat::BCHandler(cylinder_submesh, verbose); // Boundary conditions handler for cylinder
-   heat::BCHandler *bcs_block = new heat::BCHandler(block_submesh, verbose);  // Boundary conditions handler for block
+   heat::BCHandler *bcs_cyl = new heat::BCHandler(cylinder_submesh, bc_verbose); // Boundary conditions handler for cylinder
+   heat::BCHandler *bcs_block = new heat::BCHandler(block_submesh, bc_verbose);  // Boundary conditions handler for block
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Create the Heat Solver
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   verbose = false;
-   heat::HeatSolver Heat_Cylinder(cylinder_submesh, order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, ode_solver_type, verbose);
-   heat::HeatSolver Heat_Block(block_submesh, order, bcs_block, Kappa_block, c_block, rho_block, ode_solver_type, verbose);
+   bool solv_verbose = false;
+   heat::HeatSolver Heat_Cylinder(cylinder_submesh, order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, alpha, q, reaction, ode_solver_type, solv_verbose);
+   heat::HeatSolver Heat_Block(block_submesh, order, bcs_block, Kappa_block, c_block, rho_block, ode_solver_type, solv_verbose);
 
    H1_ParFESpace *GradH1FESpace_block = new H1_ParFESpace(block_submesh.get(), order, block_submesh->Dimension(), BasisType::GaussLobatto, block_submesh->Dimension());
    H1_ParFESpace *GradH1FESpace_cylinder = new H1_ParFESpace(cylinder_submesh.get(), order, cylinder_submesh->Dimension(), BasisType::GaussLobatto, cylinder_submesh->Dimension());
@@ -254,6 +309,7 @@ int main(int argc, char *argv[])
    ParGridFunction *temperature_block_gf = Heat_Block.GetTemperatureGfPtr();
    ParGridFunction *k_grad_temperature_wall_gf = new ParGridFunction(GradH1FESpace_block);
    ParGridFunction *temperature_wall_cylinder_gf = new ParGridFunction(Heat_Cylinder.GetFESpace());
+   ParGridFunction *velocity_gf = new ParGridFunction(GradH1FESpace_cylinder);
 
    ParGridFunction *temperature_wall_block_prev_gf = new ParGridFunction(Heat_Block.GetFESpace());
    GridFunctionCoefficient temperature_wall_block_prev_coeff(temperature_wall_block_prev_gf);
@@ -280,8 +336,12 @@ int main(int argc, char *argv[])
    double T_out = 1.0;
    VectorGridFunctionCoefficient *k_grad_temperature_wall_coeff = new VectorGridFunctionCoefficient(k_grad_temperature_wall_gf);
 
-   bcs_block->AddDirichletBC(T_out, block_outer_wall_attributes);
    bcs_block->AddNeumannVectorBC(k_grad_temperature_wall_coeff, block_inner_wall_attributes);
+
+   if (test == 0)
+   {
+      bcs_block->AddDirichletBC(T_out, block_outer_wall_attributes);
+   }
 
    // Cylinder:
    // - T = T_wall on the cylinder wall (obtained from heat equation on box)
@@ -293,6 +353,13 @@ int main(int argc, char *argv[])
 
    GridFunctionCoefficient *T_wall = new GridFunctionCoefficient(temperature_wall_cylinder_gf);
    bcs_cyl->AddDirichletBC(T_wall, inner_cylinder_wall_attributes);
+
+   int cyl_domain_attr = 1;
+
+   if (test == 1)
+   {
+      Heat_Cylinder.AddVolumetricTerm(HeatingSphere, cyl_domain_attr);
+   }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup interface transfer
@@ -340,12 +407,12 @@ int main(int argc, char *argv[])
       paraview_dc_cylinder.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_cylinder.SetCompressionLevel(9);
       Heat_Cylinder.RegisterParaviewFields(paraview_dc_cylinder);
+      Heat_Cylinder.AddParaviewField("velocity", velocity_gf);
 
       paraview_dc_block.SetPrefixPath(outfolder);
       paraview_dc_block.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_block.SetCompressionLevel(9);
       Heat_Block.RegisterParaviewFields(paraview_dc_block);
-      Heat_Block.AddParaviewField("K-Grad-Temperature", k_grad_temperature_wall_gf);
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -359,6 +426,8 @@ int main(int argc, char *argv[])
 
    temperature_cylinder_gf->ProjectCoefficient(T0);
    Heat_Cylinder.SetInitialTemperature(*temperature_cylinder_gf);
+
+   velocity_gf->ProjectCoefficient(*q);
 
    real_t t = 0.0;
    bool last_step = false;
@@ -379,6 +448,15 @@ int main(int argc, char *argv[])
    Vector temperature_block_tn(*temperature_block_gf->GetTrueDofs());
    Vector temperature_cylinder_tn(*temperature_cylinder_gf->GetTrueDofs());
 
+   int cyl_dofs = Heat_Cylinder.GetProblemSize();
+   int block_dofs = Heat_Block.GetProblemSize();
+
+   if (Mpi::Root())
+   {
+      out << " Cylinder dofs: " << cyl_dofs << std::endl;
+      out << " Block dofs: " << block_dofs << std::endl;
+   }
+
    if (Mpi::Root())
    {
       out << "----------------------------------------------------------------------------------------"
@@ -389,6 +467,9 @@ int main(int argc, char *argv[])
    }
 
    // Outer loop for time integration
+   int num_steps = (int)(t_final / dt);
+   Array2D<real_t> convergence(num_steps, 3);
+   Array<real_t> convergence_subiter;
    for (int step = 1; !last_step; step++)
    {
       if (Mpi::Root())
@@ -457,6 +538,19 @@ int main(int argc, char *argv[])
          // t_iter += dt_iter;
          // Heat_Block.WriteFields(iter, t_iter);
          // Heat_Cylinder.WriteFields(iter, t_iter);
+         if (Mpi::Root())
+         {
+            convergence_subiter.Append(norm_diff);
+         }
+      }
+
+      if (Mpi::Root())
+      {
+         convergence(step - 1, 0) = t;
+         convergence(step - 1, 1) = iter;
+         convergence(step - 1, 2) = norm_diff;
+         saveConvergenceSubiter(convergence_subiter, outfolder, step);
+         convergence_subiter.DeleteAll();
       }
 
       // Reset the convergence flag and time for the next iteration
@@ -487,6 +581,22 @@ int main(int argc, char *argv[])
       {
          Heat_Block.WriteFields(step, t);
          Heat_Cylinder.WriteFields(step, t);
+      }
+   }
+
+   // Save convergence data
+   if (Mpi::Root())
+   {
+      std::string outputFilePath = std::string(outfolder) + "/convergence" + "/convergence.txt";
+      std::ofstream outFile(outputFilePath);
+      if (outFile.is_open())
+      {
+         convergence.Save(outFile);
+         outFile.close();
+      }
+      else
+      {
+         std::cerr << "Unable to open file: " << std::string(outfolder) + "/convergence.txt" << std::endl;
       }
    }
 
@@ -612,4 +722,62 @@ void print_matrix(const DenseMatrix &A)
    std::cout << std::fixed;
    std::cout << std::endl
              << std::flush; // Debugging print
+}
+
+void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step)
+{
+   // Create the output folder path
+   std::string outputFolder = outfolder + "/convergence";
+
+   // Ensure the directory exists
+   if ((mkdir(outputFolder.c_str(), 0777) == -1) && Mpi::Root())
+   {
+      // check error
+   }
+
+   // Construct the filename
+   std::ostringstream filename;
+   filename << outputFolder << "/step_" << step << ".txt";
+
+   // Open the file and save the data
+   std::ofstream outFile(filename.str());
+   if (outFile.is_open())
+   {
+      convergence_subiter.Save(outFile);
+      outFile.close();
+   }
+   else
+   {
+      std::cerr << "Unable to open file: " << filename.str() << std::endl;
+   }
+}
+
+void velocity_profile(const Vector &c, Vector &q)
+{
+   real_t A = 1.0;
+   real_t x = c(0);
+   real_t y = c(1);
+   real_t r = sqrt(pow(x, 2.0) + pow(y, 2.0));
+
+   q(0) = 0.0;
+   q(1) = 0.0;
+
+   if (std::abs(r) >= R - 1e-8)
+   {
+      q(2) = 0.0;
+   }
+   else
+   {
+      // q(2) = A * exp(-(pow(x, 2.0) / 2.0 + pow(y, 2.0) / 2.0));
+      q(2) = 1 / (4 * viscosity) * dPdx * (R * R - r * r);
+   }
+}
+
+double HeatingSphere(const Vector &x, double t)
+{
+   double Q = 0.0;
+   double r = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+   Q = r < Sphere_Radius ? Qval : 0.0; // W/m^2
+
+   return Q;
 }
