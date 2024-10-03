@@ -48,8 +48,8 @@ namespace mfem
             mfem_error("At least one of the coefficients (diffusion, advection, reaction) must be set");
          }
 
-         // Set reaction term coefficient -> set to negative because we assemble Advection-Diffusion as (D+A) and change sign after multiplying
-         beta = has_reaction ? new ConstantCoefficient(-beta_) : nullptr;
+         // Set reaction term coefficient
+         beta = has_reaction ? new ConstantCoefficient(beta_) : nullptr;
 
          // Get the true size of the finite element space
          fes_truevsize = H1FESpace.GetTrueVSize();
@@ -95,14 +95,14 @@ namespace mfem
          // Mass matrix
          M = new ParBilinearForm(&H1FESpace);
          M->AddDomainIntegrator(new MassIntegrator(*rhoC));
-         // Advection-Reaction-Diffusion matrix   K = ∇•(k∇) - α • u ∇ + β = -(D + A - R)
+         // Advection-Reaction-Diffusion matrix   K = ∇•(k∇) - α • u ∇ - β = -(D + A + R)
          K = new ParBilinearForm(&H1FESpace);
          if (has_diffusion)
             K->AddDomainIntegrator(new DiffusionIntegrator(*Kappa));
          if (has_advection)
             K->AddDomainIntegrator(new ConvectionIntegrator(*u, alpha));
          if (has_reaction)
-            K->AddDomainIntegrator(new MassIntegrator(*beta));
+            K->AddDomainIntegrator(new MassIntegrator(*beta)); // beta > 0 consumes heat
          // Robin mass
          RobinMass = new ParBilinearForm(&H1FESpace);
          for (auto &robin_bc : bcs->GetRobinBcs())
@@ -157,7 +157,7 @@ namespace mfem
             Mfull =
                 Add(1.0, *opM.As<HypreParMatrix>(), 1.0, *opMe.As<HypreParMatrix>());
             T_solver =
-                new ImplicitSolver(Mfull, opK.As<HypreParMatrix>(), ess_tdof_list);
+                new ImplicitSolver(Mfull, opK.As<HypreParMatrix>(), ess_tdof_list, pmesh->Dimension(), has_advection);
          }
 
          const double rel_tol = 1e-8;
@@ -422,13 +422,27 @@ namespace mfem
 
       // Class for solver used in implicit time integration
       ImplicitSolver::ImplicitSolver(HypreParMatrix *M_, HypreParMatrix *K_,
-                                     Array<int> &ess_tdof_list_)
+                                     Array<int> &ess_tdof_list_, int dim, bool use_advection)
           : M(M_), K(K_), RobinMassMat(nullptr), T(nullptr), Te(nullptr),
             current_dt(-1.0), ess_tdof_list(ess_tdof_list_), finalized(false)
       {
-         prec = new HypreSmoother();
-         prec->SetType(HypreSmoother::Jacobi); // See hypre.hpp for more options
-         linear_solver = new CGSolver(M->GetComm());
+         // prec = new HypreSmoother();
+         // prec->SetType(HypreSmoother::Jacobi); // See hypre.hpp for more options --> use default l1-scaled block Gauss-Seidel/SSOR
+         prec = new HypreBoomerAMG();
+         prec->SetPrintLevel(0);
+         prec->iterative_mode = false;
+
+         if (use_advection)
+         {
+            linear_solver = new GMRESSolver(M->GetComm());
+            prec->SetAdvectiveOptions(15, "", "FFC"); // HypreBoomerAMG with advective options (AIR) default used, check hypre.hpp for more options
+         }
+         else
+         {
+            linear_solver = new CGSolver(M->GetComm());
+            prec->SetSystemsOptions(dim);
+         }
+
          linear_solver->iterative_mode = false;
          linear_solver->SetRelTol(1e-8);
          linear_solver->SetAbsTol(0.0);
