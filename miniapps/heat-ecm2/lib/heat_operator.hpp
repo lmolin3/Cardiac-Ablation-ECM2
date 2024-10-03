@@ -10,17 +10,32 @@
 // CONTRIBUTING.md for details.
 
 // Class for (Fourier) Heat Operator
+//
 // This class provides the operator used to solve the heat equation in HeatSolver with either explicit or implicit time integration.
-// The operator discretizes: M du_dt = (-K(u) + f)
-// M is the mass matrix  (scaled by rho * C)
-// K is the stiffness matrix, K = -∇•(k∇) + α • u ∇ + β = (D + A - R)
-// f is the right-hand side (volumetric heat sources)
+// The operator discretizes the heat equation:
 //
-// The operator also handles Dirichlet, Neumann (scalar, vector • norm) and Robin boundary conditions.
+//        rho * C * du/dt = ∇•(k∇u) - α • u ∇u - β u + f
 //
-// We assume only the field in the advection term is time-dependent (i.e. u = u(t)).
-// Therefore K is reassembled at each time step if the advection term is provided.
-// (NOTE: A could be defined separately, but this would increase memory requirements).
+// into the form:
+//
+//        M * du_dt = -K(u) + f
+//
+// where:
+// - M is the mass matrix, scaled by rho * C.
+// - K is the stiffness matrix, defined as K = ∇•(k∇) - α • u ∇ - β = -(D + A - R).
+// - f is the right-hand side, representing volumetric heat sources.
+//
+// The operator also handles various boundary conditions, including:
+// - Dirichlet boundary conditions
+// - Neumann boundary conditions (scalar, vector • norm)
+// - Robin boundary conditions
+//
+// Key Assumptions:
+// - Only the field in the advection term is time-dependent (i.e., u = u(t)).
+// - The stiffness matrix K is reassembled at each time step if the advection term is provided.
+//   (Note: matrix could be defined separately, but this would increase memory requirements).
+//
+// This class is designed to be used within the HeatSolver framework to facilitate the numerical solution of the heat equation.
 
 #ifndef MFEM_HEAT_OPERATOR
 #define MFEM_HEAT_OPERATOR
@@ -165,15 +180,15 @@ namespace mfem
     private:
       HypreParMatrix *M, *K, *RobinMassMat;
       HypreParMatrix *T, *Te;
-      CGSolver *linear_solver;
-      HypreSmoother *prec;
+      IterativeSolver *linear_solver;
+      HypreBoomerAMG *prec;
       double current_dt;
       bool finalized;
       Array<int> ess_tdof_list;
 
     public:
       ImplicitSolver(HypreParMatrix *M_, HypreParMatrix *K_,
-                     Array<int> &ess_tdof_list_);
+                     Array<int> &ess_tdof_list_, int dim, bool use_advection);
 
       void SetOperator(const Operator &op);
 
