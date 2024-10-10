@@ -402,6 +402,9 @@ namespace mfem
             // Shared pointer to Mesh
             std::shared_ptr<ParMesh> pmesh;
 
+            // Maximum number of boundary attributes
+            int max_bdr_attributes;
+            
             // Bookkeeping for Dirichlet (temperature) bcs.
             std::vector<CoeffContainer> dirichlet_dbcs;
 

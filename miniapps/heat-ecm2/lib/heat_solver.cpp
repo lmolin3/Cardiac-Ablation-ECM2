@@ -73,6 +73,8 @@ namespace mfem
          // Here we use arbitrary order H1 for the Temperature.
          // Note: Gauss-Lobatto basis is used for H1 space to ensure LOR can be used
          H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
+         VectorH1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto, pmesh->Dimension());
+
          fes_truevsize = H1FESpace->GetTrueVSize();
 
          // Create the ParGridFunction and Vector for Temperature

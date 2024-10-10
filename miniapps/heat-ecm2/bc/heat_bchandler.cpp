@@ -6,28 +6,43 @@ using namespace heat;
 BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
     : pmesh(mesh), verbose(verbose)
 {
+    ParSubMesh *submesh = dynamic_cast<ParSubMesh *>(pmesh.get());
+    if (submesh)
+    {
+        // Provided mesh is a ParSubMesh --> Get the parent mesh max attributes
+        max_bdr_attributes = submesh->GetParent()->bdr_attributes.Max();
+    }
+    else
+    {
+        // Provided mesh is a ParMesh
+        max_bdr_attributes = pmesh->bdr_attributes.Max();
+    }
+
     // initialize vectors of essential attributes
-    dirichlet_attr.SetSize(pmesh->bdr_attributes.Max());
+    dirichlet_attr.SetSize(max_bdr_attributes);
     dirichlet_attr = 0;
-    dirichlet_attr_tmp.SetSize(pmesh->bdr_attributes.Max());
+    dirichlet_attr_tmp.SetSize(max_bdr_attributes);
     dirichlet_attr_tmp = 0;
-    neumann_attr.SetSize(pmesh->bdr_attributes.Max());
+    neumann_attr.SetSize(max_bdr_attributes);
     neumann_attr = 0;
-    neumann_vec_attr.SetSize(pmesh->bdr_attributes.Max());
+    neumann_vec_attr.SetSize(max_bdr_attributes);
     neumann_vec_attr = 0;
-    robin_attr.SetSize(pmesh->bdr_attributes.Max());
+    robin_attr.SetSize(max_bdr_attributes);
     robin_attr = 0;
-    neumann_attr_tmp.SetSize(pmesh->bdr_attributes.Max());
+    neumann_attr_tmp.SetSize(max_bdr_attributes);
     neumann_attr_tmp = 0;
-    robin_attr_tmp.SetSize(pmesh->bdr_attributes.Max());
+    robin_attr_tmp.SetSize(max_bdr_attributes);
     robin_attr_tmp = 0;
 }
-
-
 
 /// Dirichlet BCS
 void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
 {
+    // Check size of attributes provided
+    MFEM_ASSERT(attr.Size() == max_bdr_attributes, // Modified to >= to account for SubMesh indexing
+                "Size of attributes array does not match mesh attributes.");
+
+    // Append to the list of Dirichlet BCs
     dirichlet_dbcs.emplace_back(attr, coeff);
 
     // Check for duplicate
@@ -49,7 +64,7 @@ void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
         {
             if (attr[i] == 1)
             {
-                mfem::out << i+1 << " ";
+                mfem::out << i + 1 << " ";
             }
         }
         mfem::out << std::endl;
@@ -88,11 +103,14 @@ void BCHandler::AddDirichletBC(double coeff_val, int &attr)
     AddDirichletBC(coeff, attr);
 }
 
-
-
 /// Neumann BCS
 void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
 {
+    // Check size of attributes provided
+    MFEM_ASSERT(attr.Size() == max_bdr_attributes,
+                "Size of attributes array does not match mesh attributes.");
+
+    // Append to the list of Neumann BCs
     neumann_bcs.emplace_back(attr, coeff);
 
     for (int i = 0; i < attr.Size(); ++i)
@@ -112,7 +130,7 @@ void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
         {
             if (attr[i] == 1)
             {
-                mfem::out << i+1 << " ";
+                mfem::out << i + 1 << " ";
             }
         }
         mfem::out << std::endl;
@@ -140,12 +158,11 @@ void BCHandler::AddNeumannBC(double val, int &attr)
     AddNeumannBC(coeff, attr);
 }
 
-
 /// Neumann Vector BCS
 void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr)
 {
     // Check size of attributes provided
-    MFEM_ASSERT(attr.Size() == pmesh->bdr_attributes.Max(),
+    MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
     // Append to the list of Neumann BCs
@@ -168,7 +185,7 @@ void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr)
         {
             if (attr[i] == 1)
             {
-                mfem::out << i+1 << " ";
+                mfem::out << i + 1 << " ";
             }
         }
         mfem::out << std::endl;
@@ -177,7 +194,7 @@ void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr)
 
 void BCHandler::AddNeumannVectorBC(VecFuncT func, Array<int> &attr)
 {
-    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(),func), attr);
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr);
 }
 
 void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, int &attr)
@@ -192,14 +209,17 @@ void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, int &attr)
 
 void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr)
 {
-    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(),func), attr);
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr);
 }
-
-
 
 /// Robin BCS
 void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<int> &attr)
 {
+    // Check size of attributes provided
+    MFEM_ASSERT(attr.Size() == max_bdr_attributes,
+                "Size of attributes array does not match mesh attributes.");
+
+    // Append to the list of Robin BCs
     robin_bcs.emplace_back(attr, h_coeff, T0_coeff);
 
     for (int i = 0; i < attr.Size(); ++i)
@@ -219,7 +239,7 @@ void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<in
         {
             if (attr[i] == 1)
             {
-                mfem::out << i+1 << " ";
+                mfem::out << i + 1 << " ";
             }
         }
         mfem::out << std::endl;
@@ -248,8 +268,6 @@ void BCHandler::AddRobinBC(double h_val, double T0_val, int &attr)
     AddRobinBC(h_coeff, T0_coeff, attr);
 }
 
-
-
 /// Update time dependent boundary conditions
 void BCHandler::UpdateTimeDirichletBCs(double new_time)
 {
@@ -277,7 +295,7 @@ void BCHandler::UpdateTimeNeumannVectorBCs(double new_time)
 
 void BCHandler::UpdateTimeRobinBCs(double new_time)
 {
-    for (auto &robin_bc :robin_bcs)
+    for (auto &robin_bc : robin_bcs)
     {
         robin_bc.h_coeff->SetTime(new_time);
         robin_bc.T0_coeff->SetTime(new_time);

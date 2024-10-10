@@ -33,3 +33,8 @@ set(MINIAPPS_COMMON_HEADERS ${MINIAPPS_COMMON_HEADERS} ${HDRS} PARENT_SCOPE)
 
 mfem_add_library(mfem-common-ecm2 ${SRCS} ${HDRS})
 target_link_libraries(mfem-common-ecm2 mfem)
+
+
+add_mfem_miniapp(check_mesh
+  MAIN check_mesh.cpp
+  LIBRARIES mfem)

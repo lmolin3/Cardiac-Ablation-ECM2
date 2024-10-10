@@ -55,6 +55,7 @@ namespace mfem
       HYPRE_BigInt GetProblemSize();
 
       H1_ParFESpace *GetFESpace() { return H1FESpace; };
+      H1_ParFESpace *GetVectorFESpace() { return VectorH1FESpace; };
 
       void PrintSizes();
 
@@ -135,6 +136,8 @@ namespace mfem
       int dim;
 
       H1_ParFESpace *H1FESpace;
+      H1_ParFESpace *VectorH1FESpace;
+
       int fes_truevsize;
       Array<int> ess_tdof_list;
 
