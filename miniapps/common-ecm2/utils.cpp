@@ -107,11 +107,42 @@ namespace mfem
                 Tr->SetIntPoint(&ip);
 
                 // Compute the qoi_src at quadrature point (it will change the qoi_src vector)
-                qoi_func(*Tr, i, npt_recv);
+                qoi_func(*Tr, i, ip);
             }
 
             // Transfer the QoI from the source mesh to the destination mesh at quadrature points
             finder.DistributeInterpolatedValues(qoi_src, qoi_size_on_qp, Ordering::byVDIM, qoi_dst);
+        }
+
+        void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &dest_fes, const Vector &dest_vec, ParGridFunction &dest_gf)
+        {
+
+            int sdim = dest_fes.GetMesh()->SpaceDimension();
+            int vdim = dest_fes.GetVDim();
+
+            int dof, idx, be_idx, qp_idx;
+            Vector qoi_loc(vdim), loc_values;
+            for (int be = 0; be < elem_idx.size(); be++) // iterate over each BE on interface boundary and construct FE value from quadrature point
+            {
+                Array<int> vdofs;
+                be_idx = elem_idx[be];
+                dest_fes.GetBdrElementVDofs(be_idx, vdofs);
+                const FiniteElement *fe = dest_fes.GetBE(be_idx);
+                dof = fe->GetDof();
+                loc_values.SetSize(dof * vdim);
+                auto ordering = dest_fes.GetOrdering();
+                for (int qp = 0; qp < dof; qp++)
+                {
+                    qp_idx = be * dof + qp;
+                    qoi_loc = Vector(dest_vec.GetData() + qp_idx * vdim, vdim);
+                    for (int d = 0; d < vdim; d++)
+                    {
+                        idx = ordering == Ordering::byVDIM ? qp * sdim + d : dof * d + qp;
+                        loc_values(idx) = qoi_loc(d);
+                    }
+                }
+                dest_gf.SetSubVector(vdofs, loc_values);
+            }
         }
 
     } // namespace ecm2_utils

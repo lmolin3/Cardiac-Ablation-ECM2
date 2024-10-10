@@ -53,6 +53,12 @@ if (MFEM_USE_MPI)
     LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
   add_dependencies(multidomain-neumann-dirichlet copy_miniapps_multidomain_test_data)
 
+  add_mfem_miniapp(multidomain-three-domains
+    MAIN multidomain-three-domains.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
+  add_dependencies(multidomain-three-domains copy_miniapps_multidomain_test_data)
+
 
 endif()
 

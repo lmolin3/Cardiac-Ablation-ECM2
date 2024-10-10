@@ -93,7 +93,6 @@ using namespace mfem;
 IdentityMatrixCoefficient *Id = NULL;
 
 // Forward declaration
-void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &fes_grad, const Vector &grad_vec, ParGridFunction &grad_gf, MatrixCoefficient *K);
 void print_matrix(const DenseMatrix &A);
 void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step);
 
@@ -257,11 +256,11 @@ int main(int argc, char *argv[])
    Array<MatrixCoefficient *> coefs_k_cyl(0);
    coefs_k_cyl.Append(new ScalarMatrixProductCoefficient(kval_cyl, *Id));
    PWMatrixCoefficient *Kappa_cyl = new PWMatrixCoefficient(sdim, attr_cyl, coefs_k_cyl);
+   ScalarMatrixProductCoefficient *Kappa_cylinder_bdr = new ScalarMatrixProductCoefficient(kval_cyl, *Id);
 
    Array<MatrixCoefficient *> coefs_k_block(0);
    coefs_k_block.Append(new ScalarMatrixProductCoefficient(kval_block, *Id));
    PWMatrixCoefficient *Kappa_block = new PWMatrixCoefficient(sdim, attr_block, coefs_k_block);
-   ScalarMatrixProductCoefficient *Kappa_block_bdr = new ScalarMatrixProductCoefficient(kval_block, *Id);
 
    // Heat Capacity
    Array<Coefficient *> coefs_c_cyl(0);
@@ -302,14 +301,11 @@ int main(int argc, char *argv[])
    heat::HeatSolver Heat_Cylinder(cylinder_submesh, order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, alpha, q, reaction, ode_solver_type, solv_verbose);
    heat::HeatSolver Heat_Block(block_submesh, order, bcs_block, Kappa_block, c_block, rho_block, ode_solver_type, solv_verbose);
 
-   H1_ParFESpace *GradH1FESpace_block = new H1_ParFESpace(block_submesh.get(), order, block_submesh->Dimension(), BasisType::GaussLobatto, block_submesh->Dimension());
-   H1_ParFESpace *GradH1FESpace_cylinder = new H1_ParFESpace(cylinder_submesh.get(), order, cylinder_submesh->Dimension(), BasisType::GaussLobatto, cylinder_submesh->Dimension());
-
    ParGridFunction *temperature_cylinder_gf = Heat_Cylinder.GetTemperatureGfPtr();
    ParGridFunction *temperature_block_gf = Heat_Block.GetTemperatureGfPtr();
-   ParGridFunction *k_grad_temperature_wall_gf = new ParGridFunction(GradH1FESpace_block);
+   ParGridFunction *k_grad_temperature_wall_gf = new ParGridFunction(Heat_Block.GetVectorFESpace());
    ParGridFunction *temperature_wall_cylinder_gf = new ParGridFunction(Heat_Cylinder.GetFESpace());
-   ParGridFunction *velocity_gf = new ParGridFunction(GradH1FESpace_cylinder);
+   ParGridFunction *velocity_gf = new ParGridFunction(Heat_Cylinder.GetVectorFESpace());
 
    ParGridFunction *temperature_wall_block_prev_gf = new ParGridFunction(Heat_Block.GetFESpace());
    GridFunctionCoefficient temperature_wall_block_prev_coeff(temperature_wall_block_prev_gf);
@@ -382,10 +378,16 @@ int main(int argc, char *argv[])
    // 3. Compute QoI (gradient of the temperature field) on the source mesh (cylinder)
    int qoi_size_on_qp = sdim;
    Vector qoi_src, qoi_dst; // QoI vector, used to store qoi_src in qoi_func and in call to GSLIB interpolator
-   auto qoi_func = [&](ElementTransformation &Tr, int pt_idx, int num_pts)
+   auto qoi_func = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
    {
-      Vector gradloc(qoi_src.GetData() + pt_idx * sdim, sdim);
+      DenseMatrix Kmat(sdim);
+      Vector gradloc(sdim);
+      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
+
+      Kappa_cylinder_bdr->Eval(Kmat, Tr, ip);
+
       temperature_cylinder_gf->GetGradient(Tr, gradloc);
+      Kmat.Mult(gradloc, kgradloc);
    };
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -499,7 +501,7 @@ int main(int argc, char *argv[])
          // Transfer k ∇T_wall from cylinder -> block
          {
             ecm2_utils::GSLIBInterpolate(finder, *Heat_Cylinder.GetFESpace(), qoi_func, qoi_src, qoi_dst, qoi_size_on_qp);
-            TransferQoIToDest(block_element_idx, *GradH1FESpace_block, qoi_dst, *k_grad_temperature_wall_gf, Kappa_block_bdr);
+            ecm2_utils::TransferQoIToDest(block_element_idx, *Heat_Block.GetVectorFESpace(), qoi_dst, *k_grad_temperature_wall_gf);
          }
 
          // Advance the diffusion equation on the outer block to the next time step
@@ -650,48 +652,6 @@ int main(int argc, char *argv[])
    delete Id;
 
    return 0;
-}
-
-void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &fes_grad, const Vector &grad_vec, ParGridFunction &grad_gf, MatrixCoefficient *K)
-{
-
-   int sdim = fes_grad.GetMesh()->SpaceDimension();
-   int vdim = fes_grad.GetVDim();
-
-   const IntegrationRule &ir_face = (fes_grad.GetBE(elem_idx[0]))->GetNodes();
-
-   int dof, idx, be_idx, qp_idx;
-   Vector grad_loc(vdim), k_grad_loc(vdim), loc_values;
-   DenseMatrix Kmat(vdim);
-   for (int be = 0; be < elem_idx.size(); be++) // iterate over each BE on interface boundary and construct FE value from quadrature point
-   {
-      Array<int> vdofs;
-      be_idx = elem_idx[be];
-      fes_grad.GetBdrElementVDofs(be_idx, vdofs);
-      const FiniteElement *fe = fes_grad.GetBE(be_idx);
-      ElementTransformation *Tr = fes_grad.GetBdrElementTransformation(be_idx);
-      dof = fe->GetDof();
-      loc_values.SetSize(dof * vdim);
-      auto ordering = fes_grad.GetOrdering();
-      for (int qp = 0; qp < dof; qp++)
-      {
-         qp_idx = be * dof + qp;
-         // Evaluate diffusion tensor K at the quadrature point
-         const IntegrationPoint &ip = ir_face.IntPoint(qp);
-         K->Eval(Kmat, *Tr, ip);
-         // if (Mpi::Root())
-         //    print_matrix(Kmat);
-         grad_loc = Vector(grad_vec.GetData() + qp_idx * vdim, vdim);
-         Kmat.Mult(grad_loc, k_grad_loc);
-         // k_grad_loc *= -1.0;
-         for (int d = 0; d < vdim; d++)
-         {
-            idx = ordering == Ordering::byVDIM ? qp * sdim + d : dof * d + qp;
-            loc_values(idx) = k_grad_loc(d);
-         }
-      }
-      grad_gf.SetSubVector(vdofs, loc_values);
-   }
 }
 
 void print_matrix(const DenseMatrix &A)

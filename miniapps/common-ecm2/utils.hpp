@@ -28,7 +28,7 @@ namespace mfem
         // Vector and Scalar functions (time dependent)
         using VecFuncT = void(const Vector &x, double t, Vector &u);
         using ScalarFuncT = double(const Vector &x, double t);
-        using qoi_func_t = std::function<void(ElementTransformation &, int, int)>; // QoI function type for GSLIB interpolation
+        using qoi_func_t = std::function<void(ElementTransformation &, int, const IntegrationPoint &)>; // QoI function type for GSLIB interpolation
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                          Solver utils                                                ///
@@ -233,10 +233,17 @@ namespace mfem
         ///                                          GSLIB utils                                                ///
         ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+        // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes (on Destination mesh)
         void ComputeBdrQuadraturePointsCoords(Array<int> bdry_attributes, ParFiniteElementSpace &fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords);
+
+        // GSLIB interpolation of the QoI (given by qoi_func) on the source mesh and transfer to the destination mesh quadrature points
         void GSLIBInterpolate(FindPointsGSLIB &finder, ParFiniteElementSpace &fes, qoi_func_t qoi_func, Vector &qoi_src, Vector &qoi_dst, int qoi_size_on_qp = 1);
 
+        // Fill the grid function on destination mesh with the QoI vector (on quadrature points) on the destination mesh computed with GSLIBInterpolate
+        void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &dest_fes, const Vector &dest_vec, ParGridFunction &dest_gf);
+
     } // namespace ecm2_utils
+
 } // namespace mfem
 
 #endif
