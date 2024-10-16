@@ -5,10 +5,6 @@ namespace mfem
 
     namespace ecm2_utils
     {
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ///                                          Linalg utils                                                ///
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
         // Mult and AddMult for full matrix (using matrices modified with WliminateRowsCols)
         void FullMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y)
         {
@@ -22,11 +18,39 @@ namespace mfem
             mat_e->AddMult(x, y, a); // y += a mat_e x
         }
 
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///                                              Mesh utils                                              ///
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+        void ExportMeshwithPartitioning(const std::string &outfolder, Mesh &mesh, const int *partitioning_)
+        {
+            // Extract the partitioning
+            Array<int> partitioning;
+            partitioning.MakeRef(const_cast<int *>(partitioning_), mesh.GetNE(), false);
+
+            // Assign partitioning to the mesh
+            FiniteElementCollection *attr_fec = new L2_FECollection(0, mesh.Dimension());
+            FiniteElementSpace *attr_fespace = new FiniteElementSpace(&mesh, attr_fec);
+            GridFunction attr(attr_fespace);
+            for (int i = 0; i < mesh.GetNE(); i++)
+            {
+                attr(i) = partitioning[i] + 1;
+            }
+
+            // Create paraview datacollection
+            ParaViewDataCollection paraview_dc("Partitioning", &mesh);
+            paraview_dc.SetPrefixPath(outfolder);
+            paraview_dc.SetDataFormat(VTKFormat::BINARY);
+            paraview_dc.SetCompressionLevel(9);
+            paraview_dc.RegisterField("partitioning", &attr);
+            paraview_dc.Save();
+        }
+
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                     GSLIB Interpolation utils                                         ///
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        void ComputeBdrQuadraturePointsCoords(Array<int> bdry_attributes, ParFiniteElementSpace &fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords)
+        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace &fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords)
         {
             // Mesh
             ParMesh &mesh = *fes.GetParMesh();
@@ -42,6 +66,26 @@ namespace mfem
                     continue;
                 }
                 bdry_element_idx.push_back(be);
+            }
+
+            // Print the number of boundary elements on each MPI core
+            int size = mesh.GetNRanks();
+            std::vector<int> all_bdry_element_counts(size);
+            int local_bdry_element_count = bdry_element_idx.size();
+            MPI_Gather(&local_bdry_element_count, 1, MPI_INT, all_bdry_element_counts.data(), 1, MPI_INT, 0, mesh.GetComm());
+
+            if (Mpi::Root())
+            {
+                for (int i = 0; i < size; i++)
+                {
+                    mfem::out << "Number of boundary elements, for MPI Core " << i << ": " << all_bdry_element_counts[i] << std::endl;
+                }
+            }
+
+            // If no boundary elements are found, return
+            if (bdry_element_idx.size() == 0)
+            {
+                return;
             }
 
             // Extract the coordinates of the quadrature points for each selected boundary element

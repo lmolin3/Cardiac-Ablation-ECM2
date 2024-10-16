@@ -28,11 +28,12 @@ namespace mfem
                                                                              MatrixCoefficient *Kappa_,
                                                                              Coefficient *c_, Coefficient *rho_,
                                                                              real_t alpha_, VectorCoefficient *u_,
-                                                                             real_t beta_)
+                                                                             real_t beta_,
+                                                                             bool verbose_)
           : TimeDependentOperator(f.GetTrueVSize(), 0.0), pmesh(pmesh_), H1FESpace(f),
             bcs(bcs), Kappa(Kappa_), alpha(alpha_), u(u_), M(nullptr), RobinMass(nullptr), K(nullptr),
             Mfull(nullptr), M_solver(nullptr), T_solver(nullptr), M_prec(nullptr),
-            fform(nullptr), fvec(nullptr), pa(false), current_dt(0.0)
+            fform(nullptr), fvec(nullptr), pa(false), current_dt(0.0), verbose(verbose_)
       {
          // Check if the parameters are set
          if (!c_ || !rho_)
@@ -65,10 +66,15 @@ namespace mfem
 
       void AdvectionReactionDiffusionOperator::Setup()
       {
+         // cout << "\033[31mCheckpoint 0, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
+
          /// 1. Check partial assembly
+         // bool tensor = false;
          bool tensor = UsesTensorBasis(H1FESpace);
 
-         if (pmesh->GetMyRank() == 0)
+         // cout << "\033[31mCheckpoint 1, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
+
+         if (pmesh->GetMyRank() == 0 && verbose)
          {
             if (pa && tensor)
             {
@@ -85,11 +91,15 @@ namespace mfem
             }
          }
 
+         // cout << "\033[31mCheckpoint 2, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
+
          /// 2. Extract the list of essential BC degrees of freedom
          if ((bcs->GetDirichletDbcs()).size() > 0) // Applied temperature
          {
             H1FESpace.GetEssentialTrueDofs(bcs->GetDirichletAttr(), ess_tdof_list);
          }
+
+         // cout << "\033[31mCheckpoint 3, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
 
          /// 3. Setup bilinear forms
          // Mass matrix
@@ -111,6 +121,8 @@ namespace mfem
             RobinMass->AddBoundaryIntegrator(new MassIntegrator(*robin_bc.h_coeff),
                                              robin_bc.attr);
          }
+
+         // cout << "\033[31mCheckpoint 2, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
 
          // Finalize (based on assembly level)
          if (pa)
@@ -137,6 +149,8 @@ namespace mfem
             M->FormSystemMatrix(ess_tdof_list, opM);
             opMe = M->GetEliminatedOperator();
          }
+
+         // cout << "\033[31mCheckpoint 3, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
 
          /// 4. Solvers
 

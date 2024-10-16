@@ -10,13 +10,16 @@
  * - Neumann Boundary Conditions:    -k∇T•n = g      (providing scalar field g) --> Applied as BoundaryLFIntegrator (f, v)
  *
  * - Neumann Boundary Conditions:    -k∇T•n = F • n  (providing a vector field F for the flux) --> Applied as BoundaryNormalLFIntegrator ( F • n, v)
- * 
+ *
  * - Robin Boundary Conditions:      -k∇T•n + h(T - T0) = g
  *
  * The BCs value can be set using Coefficients, functions, constant values.
  * The BCs can be applied to specific mesh attributes or to a list of mesh attributes.
  *
-*/
+ * By default the CoeffContainers take ownership of the Coefficients passed to them.
+ * If this is not desired, the user can pass the Coefficients with the own flag set to false
+ * (e.g. if using the same coefficient for different boundaries)
+ */
 
 #ifndef BCHANDLER_HEAT_HPP
 #define BCHANDLER_HEAT_HPP
@@ -50,7 +53,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddDirichletBC(Coefficient *coeff, Array<int> &attr);
+            void AddDirichletBC(Coefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for temperature using ScalarFuncT and list of essential mesh attributes.
@@ -62,7 +65,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddDirichletBC(ScalarFuncT *func, Array<int> &attr);
+            void AddDirichletBC(ScalarFuncT *func, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for temperature using double and specific mesh attribute.
@@ -74,7 +77,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddDirichletBC(double coeff_val, Array<int> &attr);
+            void AddDirichletBC(double coeff_val, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for temperature using Coefficient and specific mesh attribute.
@@ -86,7 +89,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddDirichletBC(Coefficient *coeff, int &attr);
+            void AddDirichletBC(Coefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for temperature passing ScalarFuncT and specific mesh attribute.
@@ -98,7 +101,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddDirichletBC(ScalarFuncT *func, int &attr);
+            void AddDirichletBC(ScalarFuncT *func, int &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for temperature using double and specific mesh attribute.
@@ -110,7 +113,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddDirichletBC(double coeff_val, int &attr);
+            void AddDirichletBC(double coeff_val, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using Coefficient and list of essential boundaries.
@@ -122,7 +125,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddNeumannBC(Coefficient *coeff, Array<int> &attr);
+            void AddNeumannBC(Coefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using ScalarFuncT and list of essential boundaries.
@@ -134,7 +137,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddNeumannBC(ScalarFuncT *coeff, Array<int> &attr);
+            void AddNeumannBC(ScalarFuncT *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using Coefficient and specific mesh attribute.
@@ -146,7 +149,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannBC(Coefficient *coeff, int &attr);
+            void AddNeumannBC(Coefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using ScalarFuncT and specific mesh attribute.
@@ -158,7 +161,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannBC(ScalarFuncT *func, int &attr);
+            void AddNeumannBC(ScalarFuncT *func, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using double and specific mesh attribute.
@@ -170,13 +173,13 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannBC(double val, int &attr);
+            void AddNeumannBC(double val, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using VectorCoefficient and list of essential boundaries.
              *
              * (\vec{f} \cdot \vec{n}, v)
-             * 
+             *
              * Add a Neumann boundary condition to internal list of Neumann bcs,
              * using VectorCoefficient, and list of active mesh boundaries (they will be applied at setup time by adding BoundaryNormalIntegrators to the rhs).
              *
@@ -184,13 +187,13 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr);
+            void AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using VecFuncT and list of essential boundaries.
              *
              * (\vec{f} \cdot \vec{n}, v)
-             * 
+             *
              * Add a Neumann boundary condition to internal list of Neumann bcs,
              * using VecFuncT and list of active mesh boundaries (they will be applied at setup time by adding BoundaryNormalIntegrators to the rhs).
              *
@@ -198,13 +201,13 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddNeumannVectorBC(VecFuncT *coeff, Array<int> &attr);
+            void AddNeumannVectorBC(VecFuncT *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using VectorCoefficient and specific mesh attribute.
              *
              * (\vec{f} \cdot \vec{n}, v)
-             * 
+             *
              * Add a Neumann boundary condition to internal list of Neumann bcs,
              * using VectorCoefficient, and specific mesh attribute (they will be applied at setup time by adding BoundaryNormalIntegrators to the rhs).
              *
@@ -212,13 +215,13 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannVectorBC(VectorCoefficient *coeff, int &attr);
+            void AddNeumannVectorBC(VectorCoefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using VecFuncT h (heat transfer coefficient)nd specific mesh attribute.
              *
              * (\vec{f} \cdot \vec{n}, v)
-             * 
+             *
              * Add a Neumann boundary condition to internal list of Neumann bcs,
              * using VecFuncT and specific mesh attribute(they will be applied at setup time by adding BoundaryNormalIntegrators to the rhs).
              *
@@ -226,9 +229,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannVectorBC(VecFuncT *func, int &attr);
-
-
+            void AddNeumannVectorBC(VecFuncT *func, int &attr, bool own = true);
 
             /**
              * \brief Add Robin BC using two Coefficients and list of essential boundaries.
@@ -241,7 +242,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<int> &attr);
+            void AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Robin BC using two ScalarFuncT h (heat transfer coefficient)nd list of essential boundaries.
@@ -254,7 +255,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddRobinBC(ScalarFuncT *h_func, ScalarFuncT *T0_func, Array<int> &attr);
+            void AddRobinBC(ScalarFuncT *h_func, ScalarFuncT *T0_func, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Robin BC using two Coefficients and specific mesh attribute.
@@ -267,7 +268,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, int &attr);
+            void AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Robin BC using two ScalarFuncT h (heat transfer coefficient)nd specific mesh attribute.
@@ -280,7 +281,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddRobinBC(ScalarFuncT *h_func, ScalarFuncT *T0_func, int &attr);
+            void AddRobinBC(ScalarFuncT *h_func, ScalarFuncT *T0_func, int &attr, bool own = true);
 
             /**
              * \brief Add Robin BC using two doubles and specific mesh attribute.
@@ -293,7 +294,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddRobinBC(double val_h, double val_T0, int &attr);
+            void AddRobinBC(double val_h, double val_T0, int &attr, bool own = true);
 
             /**
              * \brief Set the time in the BCs coefficients.
@@ -385,7 +386,6 @@ namespace mfem
              *
              */
             void UpdateTimeNeumannVectorBCs(double new_time);
-            
 
             /**
              * \brief Update the time in the Robin BCs coefficients.
@@ -404,7 +404,7 @@ namespace mfem
 
             // Maximum number of boundary attributes
             int max_bdr_attributes;
-            
+
             // Bookkeeping for Dirichlet (temperature) bcs.
             std::vector<CoeffContainer> dirichlet_dbcs;
 

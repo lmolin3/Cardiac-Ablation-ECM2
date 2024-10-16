@@ -117,13 +117,17 @@ namespace mfem
       // Approximation of first derivative
       mutable Vector *dT_approx; // auxiliary vectors for bcs
 
+      // verbosity
+      bool verbose;
+
     public:
       AdvectionReactionDiffusionOperator(std::shared_ptr<ParMesh> pmesh_, ParFiniteElementSpace &f,
                                          BCHandler *bcs,
                                          MatrixCoefficient *Kappa = nullptr,
                                          Coefficient *c_ = nullptr, Coefficient *rho_ = nullptr,
                                          real_t alpha = 0.0, VectorCoefficient *u = nullptr,
-                                         real_t beta = 0.0);
+                                         real_t beta = 0.0,
+                                         bool verbose = false);
 
       // Enable partial assembly
       void EnablePA(bool pa_ = false);

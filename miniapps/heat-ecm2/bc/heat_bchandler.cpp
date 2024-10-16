@@ -6,7 +6,7 @@ using namespace heat;
 BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
     : pmesh(mesh), verbose(verbose)
 {
-    ParSubMesh *submesh = dynamic_cast<ParSubMesh *>(pmesh.get());
+    /*ParSubMesh *submesh = dynamic_cast<ParSubMesh *>(pmesh.get());
     if (submesh)
     {
         // Provided mesh is a ParSubMesh --> Get the parent mesh max attributes
@@ -16,7 +16,9 @@ BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
     {
         // Provided mesh is a ParMesh
         max_bdr_attributes = pmesh->bdr_attributes.Max();
-    }
+    } */
+
+    max_bdr_attributes = pmesh->bdr_attributes.Max();
 
     // initialize vectors of essential attributes
     dirichlet_attr.SetSize(max_bdr_attributes);
@@ -36,14 +38,14 @@ BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
 }
 
 /// Dirichlet BCS
-void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
+void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes, // Modified to >= to account for SubMesh indexing
                 "Size of attributes array does not match mesh attributes.");
 
     // Append to the list of Dirichlet BCs
-    dirichlet_dbcs.emplace_back(attr, coeff);
+    dirichlet_dbcs.emplace_back(attr, coeff, own);
 
     // Check for duplicate
     for (int i = 0; i < attr.Size(); ++i)
@@ -71,47 +73,47 @@ void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
     }
 }
 
-void BCHandler::AddDirichletBC(ScalarFuncT func, Array<int> &attr)
+void BCHandler::AddDirichletBC(ScalarFuncT func, Array<int> &attr, bool own)
 {
-    AddDirichletBC(new FunctionCoefficient(func), attr);
+    AddDirichletBC(new FunctionCoefficient(func), attr, own);
 }
 
-void BCHandler::AddDirichletBC(double coeff_val, Array<int> &attr)
+void BCHandler::AddDirichletBC(double coeff_val, Array<int> &attr, bool own)
 {
     auto coeff = new ConstantCoefficient(coeff_val);
-    AddDirichletBC(coeff, attr);
+    AddDirichletBC(coeff, attr, own);
 }
 
-void BCHandler::AddDirichletBC(Coefficient *coeff, int &attr)
+void BCHandler::AddDirichletBC(Coefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     dirichlet_attr_tmp = 0;
     dirichlet_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddDirichletBC(coeff, dirichlet_attr_tmp);
+    AddDirichletBC(coeff, dirichlet_attr_tmp, own);
 }
 
-void BCHandler::AddDirichletBC(ScalarFuncT func, int &attr)
+void BCHandler::AddDirichletBC(ScalarFuncT func, int &attr, bool own)
 {
-    AddDirichletBC(new FunctionCoefficient(func), attr);
+    AddDirichletBC(new FunctionCoefficient(func), attr, own);
 }
 
-void BCHandler::AddDirichletBC(double coeff_val, int &attr)
+void BCHandler::AddDirichletBC(double coeff_val, int &attr, bool own)
 {
     auto coeff = new ConstantCoefficient(coeff_val);
-    AddDirichletBC(coeff, attr);
+    AddDirichletBC(coeff, attr, own);
 }
 
 /// Neumann BCS
-void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
+void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
     // Append to the list of Neumann BCs
-    neumann_bcs.emplace_back(attr, coeff);
+    neumann_bcs.emplace_back(attr, coeff, own);
 
     for (int i = 0; i < attr.Size(); ++i)
     {
@@ -137,36 +139,36 @@ void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
     }
 }
 
-void BCHandler::AddNeumannBC(ScalarFuncT func, Array<int> &attr)
+void BCHandler::AddNeumannBC(ScalarFuncT func, Array<int> &attr, bool own)
 {
-    AddNeumannBC(new FunctionCoefficient(func), attr);
+    AddNeumannBC(new FunctionCoefficient(func), attr, own);
 }
 
-void BCHandler::AddNeumannBC(Coefficient *coeff, int &attr)
+void BCHandler::AddNeumannBC(Coefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     neumann_attr_tmp = 0;
     neumann_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddNeumannBC(coeff, neumann_attr_tmp);
+    AddNeumannBC(coeff, neumann_attr_tmp, own);
 }
 
-void BCHandler::AddNeumannBC(double val, int &attr)
+void BCHandler::AddNeumannBC(double val, int &attr, bool own)
 {
     auto coeff = new ConstantCoefficient(val);
-    AddNeumannBC(coeff, attr);
+    AddNeumannBC(coeff, attr, own);
 }
 
 /// Neumann Vector BCS
-void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr)
+void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
     // Append to the list of Neumann BCs
-    neumann_vec_bcs.emplace_back(attr, coeff);
+    neumann_vec_bcs.emplace_back(attr, coeff, own);
 
     for (int i = 0; i < attr.Size(); ++i)
     {
@@ -192,35 +194,35 @@ void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr)
     }
 }
 
-void BCHandler::AddNeumannVectorBC(VecFuncT func, Array<int> &attr)
+void BCHandler::AddNeumannVectorBC(VecFuncT func, Array<int> &attr, bool own)
 {
-    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr);
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, own);
 }
 
-void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, int &attr)
+void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     neumann_attr_tmp = 0;
     neumann_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddNeumannVectorBC(coeff, neumann_attr_tmp);
+    AddNeumannVectorBC(coeff, neumann_attr_tmp, own);
 }
 
-void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr)
+void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr, bool own)
 {
-    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr);
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, own);
 }
 
 /// Robin BCS
-void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<int> &attr)
+void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
     // Append to the list of Robin BCs
-    robin_bcs.emplace_back(attr, h_coeff, T0_coeff);
+    robin_bcs.emplace_back(attr, h_coeff, T0_coeff, own);
 
     for (int i = 0; i < attr.Size(); ++i)
     {
@@ -246,26 +248,26 @@ void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, Array<in
     }
 }
 
-void BCHandler::AddRobinBC(ScalarFuncT h_func, ScalarFuncT T0_func, Array<int> &attr)
+void BCHandler::AddRobinBC(ScalarFuncT h_func, ScalarFuncT T0_func, Array<int> &attr, bool own)
 {
-    AddRobinBC(new FunctionCoefficient(h_func), new FunctionCoefficient(T0_func), attr);
+    AddRobinBC(new FunctionCoefficient(h_func), new FunctionCoefficient(T0_func), attr, own);
 }
 
-void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, int &attr)
+void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     robin_attr_tmp = 0;
     robin_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddRobinBC(h_coeff, T0_coeff, robin_attr_tmp);
+    AddRobinBC(h_coeff, T0_coeff, robin_attr_tmp, own);
 }
 
-void BCHandler::AddRobinBC(double h_val, double T0_val, int &attr)
+void BCHandler::AddRobinBC(double h_val, double T0_val, int &attr, bool own)
 {
     auto h_coeff = new ConstantCoefficient(h_val);
     auto T0_coeff = new ConstantCoefficient(T0_val);
-    AddRobinBC(h_coeff, T0_coeff, attr);
+    AddRobinBC(h_coeff, T0_coeff, attr, own);
 }
 
 /// Update time dependent boundary conditions
