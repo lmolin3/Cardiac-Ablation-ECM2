@@ -75,6 +75,9 @@ namespace mfem
          H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
          VectorH1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto, pmesh->Dimension());
 
+         // Print H1FEspace pointer for each rank
+         // cout << "\033[31mH1FESpace pointer on rank " << pmesh->GetMyRank() << " is " << H1FESpace << "\033[0m" << endl;
+
          fes_truevsize = H1FESpace->GetTrueVSize();
 
          // Create the ParGridFunction and Vector for Temperature
@@ -86,7 +89,7 @@ namespace mfem
          ode_solver = CreateODESolver(ode_solver_type, *op);
 
          // Create the AdvectionReactionDiffusionOperator
-         op = new AdvectionReactionDiffusionOperator(pmesh, *H1FESpace, bcs, Kappa, c, rho, advection, u, reaction);
+         op = new AdvectionReactionDiffusionOperator(pmesh, *H1FESpace, bcs, Kappa, c, rho, advection, u, reaction, verbose);
 
          // Initialize ODESolver with operator
          ode_solver->Init(*op);
