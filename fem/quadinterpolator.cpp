@@ -20,114 +20,118 @@
 namespace mfem
 {
 
-namespace internal
-{
-namespace quadrature_interpolator
-{
-void InitEvalByNodesKernels();
-void InitEvalByVDimKernels();
-void InitEvalKernels();
-void InitDetKernels();
-template <bool P> void InitGradByNodesKernels();
-template <bool P> void InitGradByVDimKernels();
-}
-}
-
-QuadratureInterpolator::Kernels QuadratureInterpolator::kernels;
-QuadratureInterpolator::Kernels::Kernels()
-{
-   using namespace internal::quadrature_interpolator;
-
-   InitEvalByNodesKernels();
-   InitEvalByVDimKernels();
-   // Non-phys grad kernels
-   InitGradByNodesKernels<false>();
-   InitGradByVDimKernels<false>();
-   // Phys grad kernels
-   InitGradByNodesKernels<true>();
-   InitGradByVDimKernels<true>();
-   // Determinants
-   InitDetKernels();
-   // Non-tensor
-   InitEvalKernels();
-}
-
-QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
-                                               const IntegrationRule &ir):
-
-   fespace(&fes),
-   qspace(nullptr),
-   IntRule(&ir),
-   q_layout(QVectorLayout::byNODES),
-   use_tensor_products(UsesTensorBasis(fes))
-{
-   d_buffer.UseDevice(true);
-   if (fespace->GetNE() == 0) { return; }
-   const FiniteElement *fe = fespace->GetFE(0);
-   MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
-               "Only scalar finite elements are supported");
-}
-
-QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
-                                               const QuadratureSpace &qs):
-
-   fespace(&fes),
-   qspace(&qs),
-   IntRule(nullptr),
-   q_layout(QVectorLayout::byNODES),
-   use_tensor_products(UsesTensorBasis(fes))
-{
-   d_buffer.UseDevice(true);
-   if (fespace->GetNE() == 0) { return; }
-   const FiniteElement *fe = fespace->GetFE(0);
-   MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement*>(fe) != NULL,
-               "Only scalar finite elements are supported");
-}
-
-namespace internal
-{
-
-namespace quadrature_interpolator
-{
-
-// Compute kernel for 1D quadrature interpolation:
-// * non-tensor product version,
-// * assumes 'e_vec' is using ElementDofOrdering::NATIVE,
-// * assumes 'maps.mode == FULL'.
-static void Eval1D(const int NE,
-                   const int vdim,
-                   const QVectorLayout q_layout,
-                   const GeometricFactors *geom,
-                   const DofToQuad &maps,
-                   const Vector &e_vec,
-                   Vector &q_val,
-                   Vector &q_der,
-                   Vector &q_det,
-                   const int eval_flags)
-{
-   using QI = QuadratureInterpolator;
-
-   const int nd = maps.ndof;
-   const int nq = maps.nqpt;
-   MFEM_ASSERT(maps.mode == DofToQuad::FULL, "internal error");
-   MFEM_ASSERT(!geom || geom->mesh->SpaceDimension() == 1, "");
-   MFEM_VERIFY(vdim == 1 || !(eval_flags & QI::DETERMINANTS), "");
-   MFEM_VERIFY(bool(geom) == bool(eval_flags & QI::PHYSICAL_DERIVATIVES),
-               "'geom' must be given (non-null) only when evaluating physical"
-               " derivatives");
-   const auto B = Reshape(maps.B.Read(), nq, nd);
-   const auto G = Reshape(maps.G.Read(), nq, nd);
-   const auto J = Reshape(geom ? geom->J.Read() : nullptr, nq, NE);
-   const auto E = Reshape(e_vec.Read(), nd, vdim, NE);
-   auto val = q_layout == QVectorLayout::byNODES ?
-              Reshape(q_val.Write(), nq, vdim, NE):
-              Reshape(q_val.Write(), vdim, nq, NE);
-   auto der = q_layout == QVectorLayout::byNODES ?
-              Reshape(q_der.Write(), nq, vdim, NE):
-              Reshape(q_der.Write(), vdim, nq, NE);
-   auto det = Reshape(q_det.Write(), nq, NE);
-   mfem::forall(NE, [=] MFEM_HOST_DEVICE (int e)
+   namespace internal
    {
+      namespace quadrature_interpolator
+      {
+         void InitEvalByNodesKernels();
+         void InitEvalByVDimKernels();
+         void InitEvalKernels();
+         void InitDetKernels();
+         template <bool P>
+         void InitGradByNodesKernels();
+         template <bool P>
+         void InitGradByVDimKernels();
+      }
+   }
+
+   QuadratureInterpolator::Kernels QuadratureInterpolator::kernels;
+   QuadratureInterpolator::Kernels::Kernels()
+   {
+      using namespace internal::quadrature_interpolator;
+
+      InitEvalByNodesKernels();
+      InitEvalByVDimKernels();
+      // Non-phys grad kernels
+      InitGradByNodesKernels<false>();
+      InitGradByVDimKernels<false>();
+      // Phys grad kernels
+      InitGradByNodesKernels<true>();
+      InitGradByVDimKernels<true>();
+      // Determinants
+      InitDetKernels();
+      // Non-tensor
+      InitEvalKernels();
+   }
+
+   QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
+                                                  const IntegrationRule &ir) :
+
+                                                                               fespace(&fes),
+                                                                               qspace(nullptr),
+                                                                               IntRule(&ir),
+                                                                               q_layout(QVectorLayout::byNODES),
+                                                                               use_tensor_products(UsesTensorBasis(fes))
+   {
+      d_buffer.UseDevice(true);
+      if (fespace->GetNE() == 0)
+      {
+         return;
+      }
+      const FiniteElement *fe = fespace->GetTypicalFE();
+      MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement *>(fe) != NULL,
+                  "Only scalar finite elements are supported");
+   }
+
+   QuadratureInterpolator::QuadratureInterpolator(const FiniteElementSpace &fes,
+                                                  const QuadratureSpace &qs) :
+
+                                                                               fespace(&fes),
+                                                                               qspace(&qs),
+                                                                               IntRule(nullptr),
+                                                                               q_layout(QVectorLayout::byNODES),
+                                                                               use_tensor_products(UsesTensorBasis(fes))
+   {
+      d_buffer.UseDevice(true);
+      if (fespace->GetNE() == 0)
+      {
+         return;
+      }
+      const FiniteElement *fe = fespace->GetTypicalFE();
+      MFEM_VERIFY(dynamic_cast<const ScalarFiniteElement *>(fe) != NULL,
+                  "Only scalar finite elements are supported");
+   }
+
+   namespace internal
+   {
+
+      namespace quadrature_interpolator
+      {
+
+         // Compute kernel for 1D quadrature interpolation:
+         // * non-tensor product version,
+         // * assumes 'e_vec' is using ElementDofOrdering::NATIVE,
+         // * assumes 'maps.mode == FULL'.
+         static void Eval1D(const int NE,
+                            const int vdim,
+                            const QVectorLayout q_layout,
+                            const GeometricFactors *geom,
+                            const DofToQuad &maps,
+                            const Vector &e_vec,
+                            Vector &q_val,
+                            Vector &q_der,
+                            Vector &q_det,
+                            const int eval_flags)
+         {
+            using QI = QuadratureInterpolator;
+
+            const int nd = maps.ndof;
+            const int nq = maps.nqpt;
+            MFEM_ASSERT(maps.mode == DofToQuad::FULL, "internal error");
+            MFEM_ASSERT(!geom || geom->mesh->SpaceDimension() == 1, "");
+            MFEM_VERIFY(vdim == 1 || !(eval_flags & QI::DETERMINANTS), "");
+            MFEM_VERIFY(bool(geom) == bool(eval_flags & QI::PHYSICAL_DERIVATIVES),
+                        "'geom' must be given (non-null) only when evaluating physical"
+                        " derivatives");
+            const auto B = Reshape(maps.B.Read(), nq, nd);
+            const auto G = Reshape(maps.G.Read(), nq, nd);
+            const auto J = Reshape(geom ? geom->J.Read() : nullptr, nq, NE);
+            const auto E = Reshape(e_vec.Read(), nd, vdim, NE);
+            auto val = q_layout == QVectorLayout::byNODES ? Reshape(q_val.Write(), nq, vdim, NE) : Reshape(q_val.Write(), vdim, nq, NE);
+            auto der = q_layout == QVectorLayout::byNODES ? Reshape(q_der.Write(), nq, vdim, NE) : Reshape(q_der.Write(), vdim, nq, NE);
+            auto det = Reshape(q_det.Write(), nq, NE);
+            mfem::forall(NE, [=] MFEM_HOST_DEVICE(int e)
+                         {
       for (int q = 0; q < nq; ++q)
       {
          if (eval_flags & QI::VALUES)
@@ -169,54 +173,49 @@ static void Eval1D(const int NE,
                }
             }
          }
-      }
-   });
-}
+      } });
+         }
 
-// Template compute kernel for 2D quadrature interpolation:
-// * non-tensor product version,
-// * assumes 'e_vec' is using ElementDofOrdering::NATIVE,
-// * assumes 'maps.mode == FULL'.
-template<const int T_VDIM, const int T_ND, const int T_NQ>
-static void Eval2D(const int NE,
-                   const int vdim,
-                   const QVectorLayout q_layout,
-                   const GeometricFactors *geom,
-                   const DofToQuad &maps,
-                   const Vector &e_vec,
-                   Vector &q_val,
-                   Vector &q_der,
-                   Vector &q_det,
-                   const int eval_flags)
-{
-   using QI = QuadratureInterpolator;
+         // Template compute kernel for 2D quadrature interpolation:
+         // * non-tensor product version,
+         // * assumes 'e_vec' is using ElementDofOrdering::NATIVE,
+         // * assumes 'maps.mode == FULL'.
+         template <const int T_VDIM, const int T_ND, const int T_NQ>
+         static void Eval2D(const int NE,
+                            const int vdim,
+                            const QVectorLayout q_layout,
+                            const GeometricFactors *geom,
+                            const DofToQuad &maps,
+                            const Vector &e_vec,
+                            Vector &q_val,
+                            Vector &q_der,
+                            Vector &q_det,
+                            const int eval_flags)
+         {
+            using QI = QuadratureInterpolator;
 
-   const int nd = maps.ndof;
-   const int nq = maps.nqpt;
-   const int ND = T_ND ? T_ND : nd;
-   const int NQ = T_NQ ? T_NQ : nq;
-   const int NMAX = NQ > ND ? NQ : ND;
-   const int VDIM = T_VDIM ? T_VDIM : vdim;
-   MFEM_ASSERT(maps.mode == DofToQuad::FULL, "internal error");
-   MFEM_ASSERT(!geom || geom->mesh->SpaceDimension() == 2, "");
-   MFEM_VERIFY(ND <= QI::MAX_ND2D, "");
-   MFEM_VERIFY(NQ <= QI::MAX_NQ2D, "");
-   MFEM_VERIFY(bool(geom) == bool(eval_flags & QI::PHYSICAL_DERIVATIVES),
-               "'geom' must be given (non-null) only when evaluating physical"
-               " derivatives");
-   const auto B = Reshape(maps.B.Read(), NQ, ND);
-   const auto G = Reshape(maps.G.Read(), NQ, 2, ND);
-   const auto J = Reshape(geom ? geom->J.Read() : nullptr, NQ, 2, 2, NE);
-   const auto E = Reshape(e_vec.Read(), ND, VDIM, NE);
-   auto val = q_layout == QVectorLayout::byNODES ?
-              Reshape(q_val.Write(), NQ, VDIM, NE):
-              Reshape(q_val.Write(), VDIM, NQ, NE);
-   auto der = q_layout == QVectorLayout::byNODES ?
-              Reshape(q_der.Write(), NQ, VDIM, 2, NE):
-              Reshape(q_der.Write(), VDIM, 2, NQ, NE);
-   auto det = Reshape(q_det.Write(), NQ, NE);
-   mfem::forall_2D(NE, NMAX, 1, [=] MFEM_HOST_DEVICE (int e)
-   {
+            const int nd = maps.ndof;
+            const int nq = maps.nqpt;
+            const int ND = T_ND ? T_ND : nd;
+            const int NQ = T_NQ ? T_NQ : nq;
+            const int NMAX = NQ > ND ? NQ : ND;
+            const int VDIM = T_VDIM ? T_VDIM : vdim;
+            MFEM_ASSERT(maps.mode == DofToQuad::FULL, "internal error");
+            MFEM_ASSERT(!geom || geom->mesh->SpaceDimension() == 2, "");
+            MFEM_VERIFY(ND <= QI::MAX_ND2D, "");
+            MFEM_VERIFY(NQ <= QI::MAX_NQ2D, "");
+            MFEM_VERIFY(bool(geom) == bool(eval_flags & QI::PHYSICAL_DERIVATIVES),
+                        "'geom' must be given (non-null) only when evaluating physical"
+                        " derivatives");
+            const auto B = Reshape(maps.B.Read(), NQ, ND);
+            const auto G = Reshape(maps.G.Read(), NQ, 2, ND);
+            const auto J = Reshape(geom ? geom->J.Read() : nullptr, NQ, 2, 2, NE);
+            const auto E = Reshape(e_vec.Read(), ND, VDIM, NE);
+            auto val = q_layout == QVectorLayout::byNODES ? Reshape(q_val.Write(), NQ, VDIM, NE) : Reshape(q_val.Write(), VDIM, NQ, NE);
+            auto der = q_layout == QVectorLayout::byNODES ? Reshape(q_der.Write(), NQ, VDIM, 2, NE) : Reshape(q_der.Write(), VDIM, 2, NQ, NE);
+            auto det = Reshape(q_det.Write(), NQ, NE);
+            mfem::forall_2D(NE, NMAX, 1, [=] MFEM_HOST_DEVICE(int e)
+                            {
       const int ND = T_ND ? T_ND : nd;
       const int NQ = T_NQ ? T_NQ : nq;
       const int VDIM = T_VDIM ? T_VDIM : vdim;
@@ -322,55 +321,50 @@ static void Eval2D(const int NE,
                }
             }
          }
-      }
-   });
-}
+      } });
+         }
 
-// Template compute kernel for 3D quadrature interpolation:
-// * non-tensor product version,
-// * assumes 'e_vec' is using ElementDofOrdering::NATIVE,
-// * assumes 'maps.mode == FULL'.
-template<const int T_VDIM, const int T_ND, const int T_NQ>
-static void Eval3D(const int NE,
-                   const int vdim,
-                   const QVectorLayout q_layout,
-                   const GeometricFactors *geom,
-                   const DofToQuad &maps,
-                   const Vector &e_vec,
-                   Vector &q_val,
-                   Vector &q_der,
-                   Vector &q_det,
-                   const int eval_flags)
-{
-   using QI = QuadratureInterpolator;
+         // Template compute kernel for 3D quadrature interpolation:
+         // * non-tensor product version,
+         // * assumes 'e_vec' is using ElementDofOrdering::NATIVE,
+         // * assumes 'maps.mode == FULL'.
+         template <const int T_VDIM, const int T_ND, const int T_NQ>
+         static void Eval3D(const int NE,
+                            const int vdim,
+                            const QVectorLayout q_layout,
+                            const GeometricFactors *geom,
+                            const DofToQuad &maps,
+                            const Vector &e_vec,
+                            Vector &q_val,
+                            Vector &q_der,
+                            Vector &q_det,
+                            const int eval_flags)
+         {
+            using QI = QuadratureInterpolator;
 
-   const int nd = maps.ndof;
-   const int nq = maps.nqpt;
-   const int ND = T_ND ? T_ND : nd;
-   const int NQ = T_NQ ? T_NQ : nq;
-   const int NMAX = NQ > ND ? NQ : ND;
-   const int VDIM = T_VDIM ? T_VDIM : vdim;
-   MFEM_ASSERT(maps.mode == DofToQuad::FULL, "internal error");
-   MFEM_ASSERT(!geom || geom->mesh->SpaceDimension() == 3, "");
-   MFEM_VERIFY(ND <= QI::MAX_ND3D, "");
-   MFEM_VERIFY(NQ <= QI::MAX_NQ3D, "");
-   MFEM_VERIFY(VDIM == 3 || !(eval_flags & QI::DETERMINANTS), "");
-   MFEM_VERIFY(bool(geom) == bool(eval_flags & QI::PHYSICAL_DERIVATIVES),
-               "'geom' must be given (non-null) only when evaluating physical"
-               " derivatives");
-   const auto B = Reshape(maps.B.Read(), NQ, ND);
-   const auto G = Reshape(maps.G.Read(), NQ, 3, ND);
-   const auto J = Reshape(geom ? geom->J.Read() : nullptr, NQ, 3, 3, NE);
-   const auto E = Reshape(e_vec.Read(), ND, VDIM, NE);
-   auto val = q_layout == QVectorLayout::byNODES ?
-              Reshape(q_val.Write(), NQ, VDIM, NE):
-              Reshape(q_val.Write(), VDIM, NQ, NE);
-   auto der = q_layout == QVectorLayout::byNODES ?
-              Reshape(q_der.Write(), NQ, VDIM, 3, NE):
-              Reshape(q_der.Write(), VDIM, 3, NQ, NE);
-   auto det = Reshape(q_det.Write(), NQ, NE);
-   mfem::forall_2D(NE, NMAX, 1, [=] MFEM_HOST_DEVICE (int e)
-   {
+            const int nd = maps.ndof;
+            const int nq = maps.nqpt;
+            const int ND = T_ND ? T_ND : nd;
+            const int NQ = T_NQ ? T_NQ : nq;
+            const int NMAX = NQ > ND ? NQ : ND;
+            const int VDIM = T_VDIM ? T_VDIM : vdim;
+            MFEM_ASSERT(maps.mode == DofToQuad::FULL, "internal error");
+            MFEM_ASSERT(!geom || geom->mesh->SpaceDimension() == 3, "");
+            MFEM_VERIFY(ND <= QI::MAX_ND3D, "");
+            MFEM_VERIFY(NQ <= QI::MAX_NQ3D, "");
+            MFEM_VERIFY(VDIM == 3 || !(eval_flags & QI::DETERMINANTS), "");
+            MFEM_VERIFY(bool(geom) == bool(eval_flags & QI::PHYSICAL_DERIVATIVES),
+                        "'geom' must be given (non-null) only when evaluating physical"
+                        " derivatives");
+            const auto B = Reshape(maps.B.Read(), NQ, ND);
+            const auto G = Reshape(maps.G.Read(), NQ, 3, ND);
+            const auto J = Reshape(geom ? geom->J.Read() : nullptr, NQ, 3, 3, NE);
+            const auto E = Reshape(e_vec.Read(), ND, VDIM, NE);
+            auto val = q_layout == QVectorLayout::byNODES ? Reshape(q_val.Write(), NQ, VDIM, NE) : Reshape(q_val.Write(), VDIM, NQ, NE);
+            auto der = q_layout == QVectorLayout::byNODES ? Reshape(q_der.Write(), NQ, VDIM, 3, NE) : Reshape(q_der.Write(), VDIM, 3, NQ, NE);
+            auto det = Reshape(q_det.Write(), NQ, NE);
+            mfem::forall_2D(NE, NMAX, 1, [=] MFEM_HOST_DEVICE(int e)
+                            {
       const int ND = T_ND ? T_ND : nd;
       const int NQ = T_NQ ? T_NQ : nq;
       const int VDIM = T_VDIM ? T_VDIM : vdim;
@@ -481,301 +475,382 @@ static void Eval3D(const int NE,
                det(q,e) = kernels::Det<3>(D);
             }
          }
-      }
-   });
-}
+      } });
+         }
 
-} // namespace quadrature_interpolator
+      } // namespace quadrature_interpolator
 
-} // namespace internal
+   } // namespace internal
 
-void QuadratureInterpolator::Mult(const Vector &e_vec,
-                                  unsigned eval_flags,
-                                  Vector &q_val,
-                                  Vector &q_der,
-                                  Vector &q_det) const
-{
-   using namespace internal::quadrature_interpolator;
-
-   const int ne = fespace->GetNE();
-   if (ne == 0) { return; }
-   const int vdim = fespace->GetVDim();
-   const int sdim = fespace->GetMesh()->SpaceDimension();
-   const FiniteElement *fe = fespace->GetFE(0);
-   const bool use_tensor_eval =
-      use_tensor_products &&
-      dynamic_cast<const TensorBasisElement*>(fe) != nullptr;
-   const IntegrationRule *ir =
-      IntRule ? IntRule : &qspace->GetElementIntRule(0);
-   const DofToQuad::Mode mode =
-      use_tensor_eval ? DofToQuad::TENSOR : DofToQuad::FULL;
-   const DofToQuad &maps = fe->GetDofToQuad(*ir, mode);
-   const int dim = maps.FE->GetDim();
-   const int nd = maps.ndof;
-   const int nq = maps.nqpt;
-   const GeometricFactors *geom = nullptr;
-   if (eval_flags & PHYSICAL_DERIVATIVES)
+   void QuadratureInterpolator::Mult(const Vector &e_vec,
+                                     unsigned eval_flags,
+                                     Vector &q_val,
+                                     Vector &q_der,
+                                     Vector &q_det) const
    {
-      const int jacobians = GeometricFactors::JACOBIANS;
-      geom = fespace->GetMesh()->GetGeometricFactors(*ir, jacobians);
+      using namespace internal::quadrature_interpolator;
+
+      const int ne = fespace->GetNE();
+      if (ne == 0)
+      {
+         return;
+      }
+      const int vdim = fespace->GetVDim();
+      const int sdim = fespace->GetMesh()->SpaceDimension();
+      const FiniteElement *fe = fespace->GetTypicalFE();
+      const bool use_tensor_eval =
+          use_tensor_products &&
+          dynamic_cast<const TensorBasisElement *>(fe) != nullptr;
+      const IntegrationRule *ir =
+          IntRule ? IntRule : &qspace->GetElementIntRule(0);
+      const DofToQuad::Mode mode =
+          use_tensor_eval ? DofToQuad::TENSOR : DofToQuad::FULL;
+      const DofToQuad &maps = fe->GetDofToQuad(*ir, mode);
+      const int dim = maps.FE->GetDim();
+      const int nd = maps.ndof;
+      const int nq = maps.nqpt;
+      const GeometricFactors *geom = nullptr;
+      if (eval_flags & PHYSICAL_DERIVATIVES)
+      {
+         const int jacobians = GeometricFactors::JACOBIANS;
+         geom = fespace->GetMesh()->GetGeometricFactors(*ir, jacobians);
+      }
+
+      MFEM_ASSERT(!(eval_flags & DETERMINANTS) || dim == vdim ||
+                      (dim == 2 && vdim == 3),
+                  "Invalid dimensions for determinants.");
+      MFEM_ASSERT(fespace->GetMesh()->GetNumGeometries(
+                      fespace->GetMesh()->Dimension()) == 1,
+                  "mixed meshes are not supported");
+
+      if (use_tensor_eval)
+      {
+         if (eval_flags & VALUES)
+         {
+            TensorEvalKernels::Run(dim, q_layout, vdim, nd, nq, ne, maps.B.Read(),
+                                   e_vec.Read(), q_val.Write(), vdim, nd, nq);
+         }
+         if (eval_flags & (DERIVATIVES | PHYSICAL_DERIVATIVES))
+         {
+            const bool phys = (eval_flags & PHYSICAL_DERIVATIVES);
+            const real_t *J = phys ? geom->J.Read() : nullptr;
+            const int s_dim = phys ? sdim : dim;
+            GradKernels::Run(dim, q_layout, phys, vdim, nd, nq, ne,
+                             maps.B.Read(), maps.G.Read(), J, e_vec.Read(),
+                             q_der.Write(), s_dim, vdim, nd, nq);
+         }
+         if (eval_flags & DETERMINANTS)
+         {
+            DetKernels::Run(dim, vdim, nd, nq, ne, maps.B.Read(),
+                            maps.G.Read(), e_vec.Read(), q_det.Write(), nd,
+                            nq, &d_buffer);
+         }
+      }
+      else // use_tensor_eval == false
+      {
+         EvalKernels::Run(dim, vdim, maps.ndof, maps.nqpt, ne, vdim, q_layout,
+                          geom, maps, e_vec, q_val, q_der, q_det, eval_flags);
+      }
    }
 
-   MFEM_ASSERT(!(eval_flags & DETERMINANTS) || dim == vdim ||
-               (dim == 2 && vdim == 3), "Invalid dimensions for determinants.");
-   MFEM_ASSERT(fespace->GetMesh()->GetNumGeometries(
-                  fespace->GetMesh()->Dimension()) == 1,
-               "mixed meshes are not supported");
-
-   if (use_tensor_eval)
+   void QuadratureInterpolator::MultTranspose(unsigned eval_flags,
+                                              const Vector &q_val,
+                                              const Vector &q_der,
+                                              Vector &e_vec) const
    {
-      if (eval_flags & VALUES)
+      MFEM_CONTRACT_VAR(eval_flags);
+      MFEM_CONTRACT_VAR(q_val);
+      MFEM_CONTRACT_VAR(q_der);
+      MFEM_CONTRACT_VAR(e_vec);
+      MFEM_ABORT("this method is not implemented yet");
+   }
+
+   void QuadratureInterpolator::Values(const Vector &e_vec,
+                                       Vector &q_val) const
+   {
+      Vector empty;
+      Mult(e_vec, VALUES, q_val, empty, empty);
+   }
+
+   void QuadratureInterpolator::Derivatives(const Vector &e_vec,
+                                            Vector &q_der) const
+   {
+      Vector empty;
+      Mult(e_vec, DERIVATIVES, empty, q_der, empty);
+   }
+
+   void QuadratureInterpolator::PhysDerivatives(const Vector &e_vec,
+                                                Vector &q_der) const
+   {
+      Vector empty;
+      Mult(e_vec, PHYSICAL_DERIVATIVES, empty, q_der, empty);
+   }
+
+   void QuadratureInterpolator::Determinants(const Vector &e_vec,
+                                             Vector &q_det) const
+   {
+      Vector empty;
+      Mult(e_vec, DETERMINANTS, empty, empty, q_det);
+   }
+
+   /// @cond Suppress_Doxygen_warnings
+
+   namespace
+   {
+      using EvalKernel = QuadratureInterpolator::EvalKernelType;
+      using TensorEvalKernel = QuadratureInterpolator::TensorEvalKernelType;
+      using GradKernel = QuadratureInterpolator::GradKernelType;
+
+      template <QVectorLayout Q_LAYOUT>
+      TensorEvalKernel FallbackTensorEvalKernel(int DIM)
       {
-         TensorEvalKernels::Run(dim, q_layout, vdim, nd, nq, ne, maps.B.Read(),
-                                e_vec.Read(), q_val.Write(), vdim, nd, nq);
+         if (DIM == 1)
+         {
+            return internal::quadrature_interpolator::Values1D<Q_LAYOUT>;
+         }
+         else if (DIM == 2)
+         {
+            return internal::quadrature_interpolator::Values2D<Q_LAYOUT>;
+         }
+         else if (DIM == 3)
+         {
+            return internal::quadrature_interpolator::Values3D<Q_LAYOUT>;
+         }
+         else
+         {
+            MFEM_ABORT("");
+         }
       }
-      if (eval_flags & (DERIVATIVES | PHYSICAL_DERIVATIVES))
+
+      template <QVectorLayout Q_LAYOUT, bool GRAD_PHYS>
+      GradKernel GetGradKernel(int DIM)
       {
-         const bool phys = (eval_flags & PHYSICAL_DERIVATIVES);
-         const real_t *J = phys ? geom->J.Read() : nullptr;
-         const int s_dim = phys ? sdim : dim;
-         GradKernels::Run(dim, q_layout, phys, vdim, nd, nq, ne,
-                          maps.B.Read(), maps.G.Read(), J, e_vec.Read(),
-                          q_der.Write(), s_dim, vdim, nd, nq);
+         if (DIM == 1)
+         {
+            return internal::quadrature_interpolator::Derivatives1D<Q_LAYOUT, GRAD_PHYS>;
+         }
+         else if (DIM == 2)
+         {
+            return internal::quadrature_interpolator::Derivatives2D<Q_LAYOUT, GRAD_PHYS>;
+         }
+         else if (DIM == 3)
+         {
+            return internal::quadrature_interpolator::Derivatives3D<Q_LAYOUT, GRAD_PHYS>;
+         }
+         else
+         {
+            MFEM_ABORT("");
+         }
       }
-      if (eval_flags & DETERMINANTS)
+
+      template <QVectorLayout Q_LAYOUT>
+      GradKernel GetGradKernel(int DIM, bool GRAD_PHYS)
       {
-         DetKernels::Run(dim, vdim, nd, nq, ne, maps.B.Read(),
-                         maps.G.Read(), e_vec.Read(), q_det.Write(), nd,
-                         nq, &d_buffer);
+         if (GRAD_PHYS)
+         {
+            return GetGradKernel<Q_LAYOUT, true>(DIM);
+         }
+         else
+         {
+            return GetGradKernel<Q_LAYOUT, false>(DIM);
+         }
+      }
+   } // namespace
+
+   template <int DIM, int VDIM, int ND, int NQ>
+   EvalKernel QuadratureInterpolator::EvalKernels::Kernel()
+   {
+      using namespace internal::quadrature_interpolator;
+      if (DIM == 1)
+      {
+         return Eval1D;
+      }
+      else if (DIM == 2)
+      {
+         return Eval2D<VDIM, ND, NQ>;
+      }
+      else if (DIM == 3)
+      {
+         return Eval3D<VDIM, ND, NQ>;
+      }
+      else
+      {
+         MFEM_ABORT("");
       }
    }
-   else // use_tensor_eval == false
+
+   template <int DIM>
+   EvalKernel GetEvalKernelVDimFallback(int VDIM)
    {
-      EvalKernels::Run(dim, vdim, maps.ndof, maps.nqpt, ne,vdim,q_layout,
-                       geom, maps,e_vec, q_val,q_der,q_det,eval_flags);
+      using EvalKernels = QuadratureInterpolator::EvalKernels;
+      if (VDIM == 1)
+      {
+         return EvalKernels::Kernel<DIM, 1, 0, 0>();
+      }
+      else if (VDIM == 2)
+      {
+         return EvalKernels::Kernel<DIM, 2, 0, 0>();
+      }
+      else if (VDIM == 3)
+      {
+         return EvalKernels::Kernel<DIM, 3, 0, 0>();
+      }
+      else
+      {
+         MFEM_ABORT("");
+      }
    }
-}
 
-void QuadratureInterpolator::MultTranspose(unsigned eval_flags,
-                                           const Vector &q_val,
-                                           const Vector &q_der,
-                                           Vector &e_vec) const
-{
-   MFEM_CONTRACT_VAR(eval_flags);
-   MFEM_CONTRACT_VAR(q_val);
-   MFEM_CONTRACT_VAR(q_der);
-   MFEM_CONTRACT_VAR(e_vec);
-   MFEM_ABORT("this method is not implemented yet");
-}
+   EvalKernel QuadratureInterpolator::EvalKernels::Fallback(
+       int DIM, int VDIM, int ND, int NQ)
+   {
+      if (DIM == 1)
+      {
+         return GetEvalKernelVDimFallback<1>(VDIM);
+      }
+      else if (DIM == 2)
+      {
+         return GetEvalKernelVDimFallback<2>(VDIM);
+      }
+      else if (DIM == 3)
+      {
+         return GetEvalKernelVDimFallback<3>(VDIM);
+      }
+      else
+      {
+         MFEM_ABORT("");
+      }
+   }
 
-void QuadratureInterpolator::Values(const Vector &e_vec,
-                                    Vector &q_val) const
-{
-   Vector empty;
-   Mult(e_vec, VALUES, q_val, empty, empty);
-}
+   TensorEvalKernel QuadratureInterpolator::TensorEvalKernels::Fallback(
+       int DIM, QVectorLayout Q_LAYOUT, int, int, int)
+   {
+      if (Q_LAYOUT == QVectorLayout::byNODES)
+      {
+         return FallbackTensorEvalKernel<QVectorLayout::byNODES>(DIM);
+      }
+      else
+      {
+         return FallbackTensorEvalKernel<QVectorLayout::byVDIM>(DIM);
+      }
+   }
 
-void QuadratureInterpolator::Derivatives(const Vector &e_vec,
-                                         Vector &q_der) const
-{
-   Vector empty;
-   Mult(e_vec, DERIVATIVES, empty, q_der, empty);
-}
+   GradKernel QuadratureInterpolator::GradKernels::Fallback(
+       int DIM, QVectorLayout Q_LAYOUT, bool GRAD_PHYS, int, int, int)
+   {
+      if (Q_LAYOUT == QVectorLayout::byNODES)
+      {
+         return GetGradKernel<QVectorLayout::byNODES>(DIM, GRAD_PHYS);
+      }
+      else
+      {
+         return GetGradKernel<QVectorLayout::byVDIM>(DIM, GRAD_PHYS);
+      }
+   }
 
-void QuadratureInterpolator::PhysDerivatives(const Vector &e_vec,
-                                             Vector &q_der) const
-{
-   Vector empty;
-   Mult(e_vec, PHYSICAL_DERIVATIVES, empty, q_der, empty);
-}
+   /// @endcond
 
-void QuadratureInterpolator::Determinants(const Vector &e_vec,
-                                          Vector &q_det) const
-{
-   Vector empty;
-   Mult(e_vec, DETERMINANTS, empty, empty, q_det);
-}
+   namespace internal
+   {
+      namespace quadrature_interpolator
+      {
+         void InitEvalKernels()
+         {
+            using k = QuadratureInterpolator::EvalKernels;
+            // 2D, VDIM = 1
+            k::Specialization<2, 1, 1, 1>::Add();
+            k::Specialization<2, 1, 1, 4>::Add();
+            // Q1
+            k::Specialization<2, 1, 4, 4>::Add();
+            k::Specialization<2, 1, 4, 9>::Add();
+            // Q2
+            k::Specialization<2, 1, 9, 9>::Add();
+            k::Specialization<2, 1, 9, 16>::Add();
+            // Q3
+            k::Specialization<2, 1, 16, 16>::Add();
+            k::Specialization<2, 1, 16, 25>::Add();
+            k::Specialization<2, 1, 16, 36>::Add();
+            // Q4
+            k::Specialization<2, 1, 25, 25>::Add();
+            k::Specialization<2, 1, 25, 36>::Add();
+            k::Specialization<2, 1, 25, 49>::Add();
+            k::Specialization<2, 1, 25, 64>::Add();
 
-/// @cond Suppress_Doxygen_warnings
+            // 3D, VDIM = 1
+            // Q0
+            k::Specialization<3, 1, 1, 1>::Add();
+            k::Specialization<3, 1, 1, 8>::Add();
+            // Q1
+            k::Specialization<3, 1, 8, 8>::Add();
+            k::Specialization<3, 1, 8, 27>::Add();
+            // Q2
+            k::Specialization<3, 1, 27, 27>::Add();
+            k::Specialization<3, 1, 27, 64>::Add();
+            // Q3
+            k::Specialization<3, 1, 64, 64>::Add();
+            k::Specialization<3, 1, 64, 125>::Add();
+            k::Specialization<3, 1, 64, 216>::Add();
+            // Q4
+            k::Specialization<3, 1, 125, 125>::Add();
+            k::Specialization<3, 1, 125, 216>::Add();
 
-namespace
-{
-using EvalKernel = QuadratureInterpolator::EvalKernelType;
-using TensorEvalKernel = QuadratureInterpolator::TensorEvalKernelType;
-using GradKernel = QuadratureInterpolator::GradKernelType;
+            // 2D, VDIM = 3
+            // Q0
+            k::Specialization<2, 3, 1, 1>::Add();
+            k::Specialization<2, 3, 1, 4>::Add();
+            // Q1
+            k::Specialization<2, 3, 4, 4>::Add();
+            k::Specialization<2, 3, 4, 9>::Add();
+            // Q2
+            k::Specialization<2, 3, 9, 4>::Add();
+            k::Specialization<2, 3, 9, 9>::Add();
+            k::Specialization<2, 3, 9, 16>::Add();
+            k::Specialization<2, 3, 9, 25>::Add();
+            // Q3
+            k::Specialization<2, 3, 16, 16>::Add();
+            k::Specialization<2, 3, 16, 25>::Add();
+            k::Specialization<2, 3, 16, 36>::Add();
+            // Q4
+            k::Specialization<2, 3, 25, 25>::Add();
+            k::Specialization<2, 3, 25, 36>::Add();
+            k::Specialization<2, 3, 25, 49>::Add();
+            k::Specialization<2, 3, 25, 64>::Add();
 
-template <QVectorLayout Q_LAYOUT>
-TensorEvalKernel FallbackTensorEvalKernel(int DIM)
-{
-   if (DIM == 1) { return internal::quadrature_interpolator::Values1D<Q_LAYOUT>; }
-   else if (DIM == 2) { return internal::quadrature_interpolator::Values2D<Q_LAYOUT>; }
-   else if (DIM == 3) { return internal::quadrature_interpolator::Values3D<Q_LAYOUT>; }
-   else { MFEM_ABORT(""); }
-}
+            // 2D, VDIM = 2
+            // Q1
+            k::Specialization<2, 2, 4, 4>::Add();
+            k::Specialization<2, 2, 4, 9>::Add();
+            // Q2
+            k::Specialization<2, 2, 9, 9>::Add();
+            k::Specialization<2, 2, 9, 16>::Add();
+            // Q3
+            k::Specialization<2, 2, 16, 16>::Add();
+            k::Specialization<2, 2, 16, 25>::Add();
+            k::Specialization<2, 2, 16, 36>::Add();
+            // Q4
+            k::Specialization<2, 2, 25, 25>::Add();
+            k::Specialization<2, 2, 25, 36>::Add();
+            k::Specialization<2, 2, 25, 49>::Add();
+            k::Specialization<2, 2, 25, 64>::Add();
 
-template<QVectorLayout Q_LAYOUT, bool GRAD_PHYS>
-GradKernel GetGradKernel(int DIM)
-{
-   if (DIM == 1) { return internal::quadrature_interpolator::Derivatives1D<Q_LAYOUT, GRAD_PHYS>; }
-   else if (DIM == 2) { return internal::quadrature_interpolator::Derivatives2D<Q_LAYOUT, GRAD_PHYS>; }
-   else if (DIM == 3) { return internal::quadrature_interpolator::Derivatives3D<Q_LAYOUT, GRAD_PHYS>; }
-   else { MFEM_ABORT(""); }
-}
+            // 3D, VDIM = 3
+            // Q1
+            k::Specialization<3, 3, 8, 8>::Add();
+            k::Specialization<3, 3, 8, 27>::Add();
+            // Q2
+            k::Specialization<3, 3, 27, 27>::Add();
+            k::Specialization<3, 3, 27, 64>::Add();
+            k::Specialization<3, 3, 27, 125>::Add();
+            // Q3
+            k::Specialization<3, 3, 64, 64>::Add();
+            k::Specialization<3, 3, 64, 125>::Add();
+            k::Specialization<3, 3, 64, 216>::Add();
+            // Q4
+            k::Specialization<3, 3, 125, 125>::Add();
+            k::Specialization<3, 3, 125, 216>::Add();
+         }
 
-template<QVectorLayout Q_LAYOUT>
-GradKernel GetGradKernel(int DIM, bool GRAD_PHYS)
-{
-   if (GRAD_PHYS) { return GetGradKernel<Q_LAYOUT, true>(DIM); }
-   else { return GetGradKernel<Q_LAYOUT, false>(DIM); }
-}
-} // namespace
-
-template <int DIM, int VDIM, int ND, int NQ>
-EvalKernel QuadratureInterpolator::EvalKernels::Kernel()
-{
-   using namespace internal::quadrature_interpolator;
-   if (DIM == 1) { return Eval1D; }
-   else if (DIM == 2) { return Eval2D<VDIM,ND,NQ>; }
-   else if (DIM == 3) { return Eval3D<VDIM,ND,NQ>; }
-   else { MFEM_ABORT(""); }
-}
-
-template <int DIM>
-EvalKernel GetEvalKernelVDimFallback(int VDIM)
-{
-   using EvalKernels = QuadratureInterpolator::EvalKernels;
-   if (VDIM == 1) { return EvalKernels::Kernel<DIM,1,0,0>(); }
-   else if (VDIM == 2) { return EvalKernels::Kernel<DIM,2,0,0>(); }
-   else if (VDIM == 3) { return EvalKernels::Kernel<DIM,3,0,0>(); }
-   else { MFEM_ABORT(""); }
-}
-
-EvalKernel QuadratureInterpolator::EvalKernels::Fallback(
-   int DIM, int VDIM, int ND, int NQ)
-{
-   if (DIM == 1) { return GetEvalKernelVDimFallback<1>(VDIM); }
-   else if (DIM == 2) { return GetEvalKernelVDimFallback<2>(VDIM); }
-   else if (DIM == 3) { return GetEvalKernelVDimFallback<3>(VDIM); }
-   else { MFEM_ABORT(""); }
-}
-
-TensorEvalKernel QuadratureInterpolator::TensorEvalKernels::Fallback(
-   int DIM, QVectorLayout Q_LAYOUT, int, int, int)
-{
-   if (Q_LAYOUT == QVectorLayout::byNODES) { return FallbackTensorEvalKernel<QVectorLayout::byNODES>(DIM); }
-   else { return FallbackTensorEvalKernel<QVectorLayout::byVDIM>(DIM); }
-}
-
-GradKernel QuadratureInterpolator::GradKernels::Fallback(
-   int DIM, QVectorLayout Q_LAYOUT, bool GRAD_PHYS, int, int, int)
-{
-   if (Q_LAYOUT == QVectorLayout::byNODES) { return GetGradKernel<QVectorLayout::byNODES>(DIM, GRAD_PHYS); }
-   else { return GetGradKernel<QVectorLayout::byVDIM>(DIM, GRAD_PHYS); }
-}
-
-/// @endcond
-
-namespace internal
-{
-namespace quadrature_interpolator
-{
-void InitEvalKernels()
-{
-   using k = QuadratureInterpolator::EvalKernels;
-   // 2D, VDIM = 1
-   k::Specialization<2,1,1,1>::Add();
-   k::Specialization<2,1,1,4>::Add();
-   // Q1
-   k::Specialization<2,1,4,4>::Add();
-   k::Specialization<2,1,4,9>::Add();
-   // Q2
-   k::Specialization<2,1,9,9>::Add();
-   k::Specialization<2,1,9,16>::Add();
-   // Q3
-   k::Specialization<2,1,16,16>::Add();
-   k::Specialization<2,1,16,25>::Add();
-   k::Specialization<2,1,16,36>::Add();
-   // Q4
-   k::Specialization<2,1,25,25>::Add();
-   k::Specialization<2,1,25,36>::Add();
-   k::Specialization<2,1,25,49>::Add();
-   k::Specialization<2,1,25,64>::Add();
-
-   // 3D, VDIM = 1
-   // Q0
-   k::Specialization<3,1,1,1>::Add();
-   k::Specialization<3,1,1,8>::Add();
-   // Q1
-   k::Specialization<3,1,8,8>::Add();
-   k::Specialization<3,1,8,27>::Add();
-   // Q2
-   k::Specialization<3,1,27,27>::Add();
-   k::Specialization<3,1,27,64>::Add();
-   // Q3
-   k::Specialization<3,1,64,64>::Add();
-   k::Specialization<3,1,64,125>::Add();
-   k::Specialization<3,1,64,216>::Add();
-   // Q4
-   k::Specialization<3,1,125,125>::Add();
-   k::Specialization<3,1,125,216>::Add();
-
-   // 2D, VDIM = 3
-   // Q0
-   k::Specialization<2,3,1,1>::Add();
-   k::Specialization<2,3,1,4>::Add();
-   // Q1
-   k::Specialization<2,3,4,4>::Add();
-   k::Specialization<2,3,4,9>::Add();
-   // Q2
-   k::Specialization<2,3,9,4>::Add();
-   k::Specialization<2,3,9,9>::Add();
-   k::Specialization<2,3,9,16>::Add();
-   k::Specialization<2,3,9,25>::Add();
-   // Q3
-   k::Specialization<2,3,16,16>::Add();
-   k::Specialization<2,3,16,25>::Add();
-   k::Specialization<2,3,16,36>::Add();
-   // Q4
-   k::Specialization<2,3,25,25>::Add();
-   k::Specialization<2,3,25,36>::Add();
-   k::Specialization<2,3,25,49>::Add();
-   k::Specialization<2,3,25,64>::Add();
-
-   // 2D, VDIM = 2
-   // Q1
-   k::Specialization<2,2,4,4>::Add();
-   k::Specialization<2,2,4,9>::Add();
-   // Q2
-   k::Specialization<2,2,9,9>::Add();
-   k::Specialization<2,2,9,16>::Add();
-   // Q3
-   k::Specialization<2,2,16,16>::Add();
-   k::Specialization<2,2,16,25>::Add();
-   k::Specialization<2,2,16,36>::Add();
-   // Q4
-   k::Specialization<2,2,25,25>::Add();
-   k::Specialization<2,2,25,36>::Add();
-   k::Specialization<2,2,25,49>::Add();
-   k::Specialization<2,2,25,64>::Add();
-
-   // 3D, VDIM = 3
-   // Q1
-   k::Specialization<3,3,8,8>::Add();
-   k::Specialization<3,3,8,27>::Add();
-   // Q2
-   k::Specialization<3,3,27,27>::Add();
-   k::Specialization<3,3,27,64>::Add();
-   k::Specialization<3,3,27,125>::Add();
-   // Q3
-   k::Specialization<3,3,64,64>::Add();
-   k::Specialization<3,3,64,125>::Add();
-   k::Specialization<3,3,64,216>::Add();
-   // Q4
-   k::Specialization<3,3,125,125>::Add();
-   k::Specialization<3,3,125,216>::Add();
-}
-
-} // namespace quadrature_Interpolator
-} // namespace internal
+      } // namespace quadrature_Interpolator
+   } // namespace internal
 
 } // namespace mfem
