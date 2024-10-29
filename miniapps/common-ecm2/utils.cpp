@@ -108,10 +108,31 @@ namespace mfem
                 bdr_element_idx.Append(be);
             }
 
-            // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes (on the destination mesh)
-            const IntegrationRule &ir_face = (dst_fes->GetTypicalBE())->GetNodes();
-            bdr_element_coords.SetSize(bdr_element_idx.Size() * ir_face.GetNPoints() * sdim);
-            bdr_element_coords = 0.0;
+            // Print the number of boundary elements on each MPI core
+            int size = mesh.GetNRanks();
+            std::vector<int> all_bdry_element_counts(size);
+            int local_bdry_element_count = bdry_element_idx.size();
+            MPI_Gather(&local_bdry_element_count, 1, MPI_INT, all_bdry_element_counts.data(), 1, MPI_INT, 0, mesh.GetComm());
+
+            if (Mpi::Root())
+            {
+                for (int i = 0; i < size; i++)
+                {
+                    mfem::out << "Number of boundary elements, for MPI Core " << i << ": " << all_bdry_element_counts[i] << std::endl;
+                }
+            }
+
+            // If no boundary elements are found, return
+            if (bdry_element_idx.size() == 0)
+            {
+                return;
+            }
+
+            // Extract the coordinates of the quadrature points for each selected boundary element
+            const IntegrationRule &ir_face = (fes.GetTypicalBE())->GetNodes();
+            bdry_element_coords.SetSize(bdry_element_idx.size() *
+                                        ir_face.GetNPoints() * sdim);
+            bdry_element_coords = 0.0;
 
             auto pec = Reshape(bdr_element_coords.ReadWrite(), sdim, ir_face.GetNPoints(), bdr_element_idx.Size());
             for (int be = 0; be < bdr_element_idx.Size(); be++)

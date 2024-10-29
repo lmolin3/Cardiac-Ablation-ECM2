@@ -87,6 +87,9 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
    // wrong for the distributed SubMesh.
    FinalizeTopology(false);
 
+   // Set the mesh generator/type for the submesh from the parent mesh
+   ReduceMeshGen();
+
    if (parent.Nonconforming())
    {
       pncmesh = new ParNCSubMesh(*this, *parent.pncmesh, from, attributes);
