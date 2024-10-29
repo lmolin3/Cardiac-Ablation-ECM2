@@ -43,6 +43,7 @@
 //
 //
 // Sample run:
+// mpirun -np 10 ./multidomain-three-domains -o 1 -dt 0.01 -tf 1 -kc 1 -kb 1 --relaxation-parameter 1.0  --paraview -of ./Output/ThreeDomains
 //
 
 #include "mfem.hpp"
@@ -216,7 +217,7 @@ int main(int argc, char *argv[])
 
    // Create parallel mesh
    ParMesh parent_mesh = ParMesh(MPI_COMM_WORLD, *serial_mesh, partitioning, partition_type);
-   ecm2_utils::ExportMeshwithPartitioning(outfolder, *serial_mesh, partitioning);
+   // ExportMeshwithPartitioning(outfolder, *serial_mesh, partitioning);
    delete[] partitioning;
    delete serial_mesh;
 
@@ -228,10 +229,10 @@ int main(int argc, char *argv[])
    parent_mesh.EnsureNodes();
 
    if (Mpi::Root())
+   {
       mfem::out << "\033[34mdone." << std::endl;
-
-   if (Mpi::Root())
       mfem::out << "Creating sub-meshes... \033[0m";
+   }
 
    // Create the sub-domains for the cylinder, solid and fluid domains
    AttributeSets &attr_sets = parent_mesh.attribute_sets;
@@ -329,7 +330,6 @@ int main(int argc, char *argv[])
    ParGridFunction *temperature_fluid_gf = Heat_Fluid.GetTemperatureGfPtr();
 
    // Grid functions for interface transfer --> need it for gridfunction coefficients
-
    ParGridFunction *temperature_fc_cylinder = new ParGridFunction(Heat_Cylinder.GetFESpace());
    ParGridFunction *temperature_fc_fluid = new ParGridFunction(Heat_Fluid.GetFESpace());
    ParGridFunction *temperature_sc_solid = new ParGridFunction(Heat_Solid.GetFESpace());
@@ -404,7 +404,6 @@ int main(int argc, char *argv[])
    bcs_fluid->AddDirichletBC(temperature_fluid_wall_coeff, fluid_cylinder_interface[0], false); // Don't own the coefficient, it'll be deleted already in the previous line
    bcs_fluid->AddDirichletBC(T_out, fluid_lateral_attr[0]);
    bcs_fluid->AddDirichletBC(T_out, fluid_top_attr[0]);
-
    // Solid:
    // - T = T_out on bottom/lateral walls
    // - T = Tc                on  Γsc
@@ -454,6 +453,7 @@ int main(int argc, char *argv[])
    auto tm_fluid_to_cylinder = ParSubMesh::CreateTransferMap(*temperature_fluid_gf, *temperature_cylinder_gf);
    auto tm_solid_to_cylinder = ParSubMesh::CreateTransferMap(*temperature_solid_gf, *temperature_cylinder_gf);
    auto tm_cylinder_to_solid = ParSubMesh::CreateTransferMap(*temperature_cylinder_gf, *temperature_solid_gf);
+
    if (Mpi::Root())
       mfem::out << "\033[34mdone.\033[0m" << std::endl;
 
@@ -461,6 +461,8 @@ int main(int argc, char *argv[])
    // 1. Find points on the destination mesh
    // 2. Setup GSLIB finder on the source mesh
    // 3. Define QoI (gradient of the temperature field) on the source meshes (cylinder, solid, fluid)
+
+   MPI_Barrier(parent_mesh.GetComm());
 
    // Cylinder (S) --> Solid (D)
    if (Mpi::Root())
@@ -507,30 +509,45 @@ int main(int argc, char *argv[])
    finder_fluid_to_solid.Setup(*fluid_submesh);
    finder_fluid_to_solid.FindPoints(fs_solid_element_coords, Ordering::byVDIM);
 
-   // 3. Define QoI (gradient of the temperature field) on the source meshes (cylinder, solid, fluid)
+   // 3. Define QoI (heatflux) on the source meshes (cylinder, solid, fluid)
    int qoi_size_on_qp = sdim;
    Vector qoi_src, qoi_dst; // QoI vector, used to store qoi_src in qoi_func and in call to GSLIB interpolator
 
    // Define lamdbas to compute gradient of the temperature field
    auto heatFlux_cyl = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
    {
-      // CHANGE
-      Vector gradloc(qoi_src.GetData() + pt_idx * sdim, sdim);
+      DenseMatrix Kmat(sdim);
+      Vector gradloc(sdim);
+      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
+
+      Kappa_cyl->Eval(Kmat, Tr, ip);
+
       temperature_cylinder_gf->GetGradient(Tr, gradloc);
+      Kmat.Mult(gradloc, kgradloc);
    };
 
    auto heatFlux_solid = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
    {
-      // CHANGE
-      Vector gradloc(qoi_src.GetData() + pt_idx * sdim, sdim);
+      DenseMatrix Kmat(sdim);
+      Vector gradloc(sdim);
+      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
+
+      Kappa_solid->Eval(Kmat, Tr, ip);
+
       temperature_solid_gf->GetGradient(Tr, gradloc);
+      Kmat.Mult(gradloc, kgradloc);
    };
 
    auto heatFlux_fluid = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
    {
-      // CHANGE
-      Vector gradloc(qoi_src.GetData() + pt_idx * sdim, sdim);
+      DenseMatrix Kmat(sdim);
+      Vector gradloc(sdim);
+      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
+
+      Kappa_fluid->Eval(Kmat, Tr, ip);
+
       temperature_fluid_gf->GetGradient(Tr, gradloc);
+      Kmat.Mult(gradloc, kgradloc);
    };
 
    if (Mpi::Root())
@@ -559,17 +576,17 @@ int main(int argc, char *argv[])
    if (paraview)
    {
       paraview_dc_cylinder.SetPrefixPath(outfolder);
-      paraview_dc_cylinder.SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_cylinder.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_cylinder.SetCompressionLevel(9);
       Heat_Cylinder.RegisterParaviewFields(paraview_dc_cylinder);
 
       paraview_dc_solid.SetPrefixPath(outfolder);
-      paraview_dc_solid.SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_solid.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_solid.SetCompressionLevel(9);
       Heat_Solid.RegisterParaviewFields(paraview_dc_solid);
 
       paraview_dc_fluid.SetPrefixPath(outfolder);
-      paraview_dc_fluid.SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_fluid.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_fluid.SetCompressionLevel(9);
       Heat_Fluid.RegisterParaviewFields(paraview_dc_fluid);
       Heat_Fluid.AddParaviewField("velocity", velocity_gf);
@@ -639,10 +656,10 @@ int main(int argc, char *argv[])
 
    if (Mpi::Root())
    {
-      out << "----------------------------------------------------------------------------------------"
+      out << "-------------------------------------------------------------------------------------------------"
           << std::endl;
-      out << std::left << std::setw(16) << "Step" << std::setw(16) << "Time" << std::setw(16) << "dt" << std::setw(16) << "Sub-iterations" << std::endl;
-      out << "----------------------------------------------------------------------------------------"
+      out << std::left << std::setw(16) << "Step" << std::setw(16) << "Time" << std::setw(16) << "dt" << std::setw(16) << "Sub-iterations (F-S-C)" << std::endl;
+      out << "-------------------------------------------------------------------------------------------------"
           << std::endl;
    }
 
@@ -672,12 +689,19 @@ int main(int argc, char *argv[])
 
       // Inner loop for the segregated solve
       int iter = 0;
+      int iter_solid = 0;
+      int iter_fluid = 0;
+      int iter_cylinder = 0;
       double norm_diff = 2 * tol;
       double norm_diff_solid = 2 * tol;
       double norm_diff_fluid = 2 * tol;
       double norm_diff_cylinder = 2 * tol;
       // double dt_iter = dt / 10;
       // double t_iter = 0;
+
+      bool converged_solid = false;
+      bool converged_fluid = false;
+      bool converged_cylinder = false;
 
       while (!converged && iter <= max_iter)
       {
@@ -694,91 +718,120 @@ int main(int argc, char *argv[])
          //         Fluid Domain (F), Dirichlet(S)-Dirichlet(C)         //
          /////////////////////////////////////////////////////////////////
 
-         // S->F: Transfer T, C->F: Transfer T
-         tm_solid_to_fluid.Transfer(*temperature_solid_gf, *temperature_fluid_wall_gf);
-         tm_cylinder_to_fluid.Transfer(*temperature_cylinder_gf, *temperature_fluid_wall_gf);
+         MPI_Barrier(parent_mesh.GetComm());
 
-         // Step in the fluid domain
-         temperature_fluid_gf->SetFromTrueDofs(temperature_fluid_tn);
-         Heat_Fluid.Step(t, dt, step, false);
-         temperature_fluid_gf->GetTrueDofs(temperature_fluid);
-         t -= dt; // Reset t to same time step, since t is incremented in the Step function
+         // if (!converged_fluid)
+         { // S->F: Transfer T, C->F: Transfer T
+            tm_solid_to_fluid.Transfer(*temperature_solid_gf, *temperature_fluid_wall_gf);
+            tm_cylinder_to_fluid.Transfer(*temperature_cylinder_gf, *temperature_fluid_wall_gf);
 
-         // Relaxation
-         // T_fluid(j+1) = ω * T_fluid,j+1 + (1 - ω) * T_fluid,j
-         if (iter > 0)
-         {
-            temperature_fluid *= omega_fluid;
-            temperature_fluid.Add(1 - omega_fluid, temperature_fluid_prev);
-            temperature_fluid_gf->SetFromTrueDofs(temperature_fluid);
+            // Step in the fluid domain
+            temperature_fluid_gf->SetFromTrueDofs(temperature_fluid_tn);
+            Heat_Fluid.Step(t, dt, step, false);
+            temperature_fluid_gf->GetTrueDofs(temperature_fluid);
+            t -= dt; // Reset t to same time step, since t is incremented in the Step function
+
+            // Relaxation
+            // T_fluid(j+1) = ω * T_fluid,j+1 + (1 - ω) * T_fluid,j
+            if (iter > 0)
+            {
+               temperature_fluid *= omega_fluid;
+               temperature_fluid.Add(1 - omega_fluid, temperature_fluid_prev);
+               temperature_fluid_gf->SetFromTrueDofs(temperature_fluid);
+            }
+
+            iter_fluid++;
          }
 
          /////////////////////////////////////////////////////////////////
          //          Solid Domain (S), Neumann(F)-Neumann(C)            //
          /////////////////////////////////////////////////////////////////
 
-         // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
-         {
-            ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid, *Heat_Fluid.GetFESpace(), heatFlux_fluid, qoi_src, qoi_dst, qoi_size_on_qp);
-            ecm2_utils::TransferQoIToDest(fs_solid_element_idx, *Heat_Solid.GetVectorFESpace(), qoi_dst, *heatFlux_fs_solid);
-         }
-         {
-            ecm2_utils::GSLIBInterpolate(finder_cylinder_to_solid, *Heat_Cylinder.GetFESpace(), heatFlux_cyl, qoi_src, qoi_dst, qoi_size_on_qp);
-            ecm2_utils::TransferQoIToDest(sc_solid_element_idx, *Heat_Solid.GetVectorFESpace(), qoi_dst, *heatFlux_sc_solid);
-         }
+         MPI_Barrier(parent_mesh.GetComm());
 
-         // Step in the solid domain
-         temperature_solid_gf->SetFromTrueDofs(temperature_solid_tn);
-         Heat_Solid.Step(t, dt, step, false);
-         temperature_solid_gf->GetTrueDofs(temperature_solid);
-         t -= dt; // Reset t to same time step, since t is incremented in the Step function
+         // if (!converged_solid)
+         { // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
+            {
+               ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid, *Heat_Fluid.GetFESpace(), heatFlux_fluid, qoi_src, qoi_dst, qoi_size_on_qp);
+               ecm2_utils::TransferQoIToDest(fs_solid_element_idx, *Heat_Solid.GetVectorFESpace(), qoi_dst, *heatFlux_fs_solid);
+            }
+            {
+               ecm2_utils::GSLIBInterpolate(finder_cylinder_to_solid, *Heat_Cylinder.GetFESpace(), heatFlux_cyl, qoi_src, qoi_dst, qoi_size_on_qp);
+               ecm2_utils::TransferQoIToDest(sc_solid_element_idx, *Heat_Solid.GetVectorFESpace(), qoi_dst, *heatFlux_sc_solid);
+            }
 
-         // Relaxation
-         // T_wall(j+1) = ω * T_solid,j+1 + (1 - ω) * T_solid,j
-         if (iter > 0)
-         {
-            temperature_solid *= omega_solid;
-            temperature_solid.Add(1 - omega_solid, temperature_solid_prev);
-            temperature_solid_gf->SetFromTrueDofs(temperature_solid);
+            // Step in the solid domain
+            temperature_solid_gf->SetFromTrueDofs(temperature_solid_tn);
+            Heat_Solid.Step(t, dt, step, false);
+            temperature_solid_gf->GetTrueDofs(temperature_solid);
+            t -= dt; // Reset t to same time step, since t is incremented in the Step function
+
+            // Relaxation
+            // T_wall(j+1) = ω * T_solid,j+1 + (1 - ω) * T_solid,j
+            if (iter > 0)
+            {
+               temperature_solid *= omega_solid;
+               temperature_solid.Add(1 - omega_solid, temperature_solid_prev);
+               temperature_solid_gf->SetFromTrueDofs(temperature_solid);
+            }
+
+            iter_solid++;
          }
 
          /////////////////////////////////////////////////////////////////
          //          Cylinder Domain (F), Neumann(F)-Dirichlet(S)       //
          /////////////////////////////////////////////////////////////////
 
-         // F->C: Transfer k ∇T_wall, S->C: Transfer T
-         {
-            ecm2_utils::GSLIBInterpolate(finder_solid_to_cylinder, *Heat_Solid.GetFESpace(), heatFlux_solid, qoi_src, qoi_dst, qoi_size_on_qp);
-            ecm2_utils::TransferQoIToDest(fc_cylinder_element_idx, *Heat_Cylinder.GetVectorFESpace(), qoi_dst, *heatFlux_fc_cylinder);
-         }
-         tm_solid_to_cylinder.Transfer(*temperature_solid_gf, *temperature_sc_cylinder);
+         MPI_Barrier(parent_mesh.GetComm());
 
-         // Step in the cylinder domain
-         temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder_tn);
-         Heat_Cylinder.Step(t, dt, step, false);
-         temperature_cylinder_gf->GetTrueDofs(temperature_cylinder);
-         t -= dt; // Reset t to same time step, since t is incremented in the Step function
+         // if (!converged_cylinder)
+         { // F->C: Transfer k ∇T_wall, S->C: Transfer T
+            {
+               ecm2_utils::GSLIBInterpolate(finder_fluid_to_cylinder, *Heat_Fluid.GetFESpace(), heatFlux_fluid, qoi_src, qoi_dst, qoi_size_on_qp);
+               ecm2_utils::TransferQoIToDest(fc_cylinder_element_idx, *Heat_Cylinder.GetVectorFESpace(), qoi_dst, *heatFlux_fc_cylinder);
+            }
+            tm_solid_to_cylinder.Transfer(*temperature_solid_gf, *temperature_sc_cylinder);
 
-         // Relaxation
-         // T_cylinder(j+1) = ω * T_cylinder,j+1 + (1 - ω) * T_cylinder,j
-         if (iter > 0)
-         {
-            temperature_cylinder *= omega_cyl;
-            temperature_cylinder.Add(1 - omega_cyl, temperature_cylinder_prev);
-            temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder);
+            // Step in the cylinder domain
+            temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder_tn);
+            Heat_Cylinder.Step(t, dt, step, false);
+            temperature_cylinder_gf->GetTrueDofs(temperature_cylinder);
+            t -= dt; // Reset t to same time step, since t is incremented in the Step function
+
+            // Relaxation
+            // T_cylinder(j+1) = ω * T_cylinder,j+1 + (1 - ω) * T_cylinder,j
+            if (iter > 0)
+            {
+               temperature_cylinder *= omega_cyl;
+               temperature_cylinder.Add(1 - omega_cyl, temperature_cylinder_prev);
+               temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder);
+            }
+
+            iter_cylinder++;
          }
 
          //////////////////////////////////////////////////////////////////////
          //                        Check convergence                         //
          //////////////////////////////////////////////////////////////////////
 
-         //  min|| T_wall(j+1) - T_wall(j) || < tol
-         norm_diff_solid = temperature_solid_gf->ComputeL2Error(temperature_solid_prev_coeff);
-         norm_diff_fluid = temperature_fluid_gf->ComputeL2Error(temperature_fluid_prev_coeff);
-         norm_diff_cylinder = temperature_cylinder_gf->ComputeL2Error(temperature_cylinder_prev_coeff);
-         norm_diff = std::max({norm_diff_solid, norm_diff_fluid, norm_diff_cylinder});
+         // Compute local norms
+         double local_norm_diff_solid = temperature_solid_gf->ComputeL2Error(temperature_solid_prev_coeff);
+         double local_norm_diff_fluid = temperature_fluid_gf->ComputeL2Error(temperature_fluid_prev_coeff);
+         double local_norm_diff_cylinder = temperature_cylinder_gf->ComputeL2Error(temperature_cylinder_prev_coeff);
 
-         converged = norm_diff < tol;
+         // Perform global reduction to find the maximum norm across all processes
+         double global_norm_diff_solid, global_norm_diff_fluid, global_norm_diff_cylinder;
+         MPI_Allreduce(&local_norm_diff_solid, &global_norm_diff_solid, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+         MPI_Allreduce(&local_norm_diff_fluid, &global_norm_diff_fluid, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+         MPI_Allreduce(&local_norm_diff_cylinder, &global_norm_diff_cylinder, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+         // Check convergence on domains
+         converged_solid = global_norm_diff_solid < tol;
+         converged_fluid = global_norm_diff_fluid < tol;
+         converged_cylinder = global_norm_diff_cylinder < tol;
+
+         // Check convergence
+         converged = converged_solid && converged_fluid && converged_cylinder;
 
          iter++;
 
@@ -805,8 +858,10 @@ int main(int argc, char *argv[])
 
       // Reset the convergence flag and time for the next iteration
       if (Mpi::Root())
-      {
-         mfem::out << iter << std::endl;
+      { // Print iterations for (fluid-solid-cylinder)
+         mfem::out << std::setw(2) << iter_fluid << std::setw(2) << "-"
+                   << std::setw(2) << iter_solid << std::setw(2) << "-"
+                   << std::setw(2) << iter_cylinder << std::endl;
       }
 
       if (iter > max_iter)
