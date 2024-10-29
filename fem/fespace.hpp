@@ -1205,6 +1205,13 @@ public:
        even if the local mesh is empty. */
    const FiniteElement *GetTypicalFE() const;
 
+   /** @brief Return GetBE(0) if the local mesh is not empty; otherwise return a
+      typical BE based on the Geometry types in the global mesh.
+
+      This method can be used as a replacement for GetBE(0) that will be valid
+      even if the local mesh is empty. */
+   const FiniteElement *GetTypicalBE() const;
+
    /** @brief Returns pointer to the FiniteElement in the FiniteElementCollection
         associated with i'th boundary face in the mesh object. */
    const FiniteElement *GetBE(int i) const;

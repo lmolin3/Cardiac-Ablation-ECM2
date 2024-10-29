@@ -89,7 +89,7 @@ namespace mfem
             }
 
             // Extract the coordinates of the quadrature points for each selected boundary element
-            const IntegrationRule &ir_face = (fes.GetBE(bdry_element_idx[0]))->GetNodes();
+            const IntegrationRule &ir_face = (fes.GetTypicalBE())->GetNodes();
             bdry_element_coords.SetSize(bdry_element_idx.size() *
                                         ir_face.GetNPoints() * sdim);
             bdry_element_coords = 0.0;

@@ -75,6 +75,10 @@ ParSubMesh::ParSubMesh(const ParMesh &parent, SubMesh::From from,
    // wrong for the distributed SubMesh.
    FinalizeTopology(false);
 
+   // Set the mesh generator/type for the submesh from the parent mesh
+   // ReduceMeshGen();
+   meshgen = parent.meshgen;
+
    parent_to_submesh_vertex_ids_.SetSize(parent_.GetNV());
    parent_to_submesh_vertex_ids_ = -1;
    for (int i = 0; i < parent_vertex_ids_.Size(); i++)
