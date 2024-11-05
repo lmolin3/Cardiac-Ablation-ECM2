@@ -97,13 +97,12 @@ namespace mfem
             k3 = A3 * exp(-deltaE3 / (R * Tval)); // k3
 
             // Symbolic computation
-            real_t factor = std::pow(k1, 2) + 2.0 * k1 * k2 - 2.0 * k1 * k3 + std::pow(k2, 2) + 2.0 * k2 * k3 + std::pow(k3, 2);
-            real_t sqrt_factor = 0.5 * std::sqrt( factor );
-            real_t sum_factor = 0.5 * (k1 + k2 + k3);
+            real_t sqrt_factor = std::sqrt( std::pow(k1, 2) + 2.0 * k1 * k2 - 2.0 * k1 * k3 + std::pow(k2, 2) + 2.0 * k2 * k3 + std::pow(k3, 2) );
+            real_t sum_factor = -0.5 * (k1 + k2 + k3);
 
             real_t lambda1 = 0.0;
-            real_t lambda2 = -sum_factor - sqrt_factor;
-            real_t lambda3 = -sum_factor + sqrt_factor;
+            real_t lambda2 = sum_factor - 0.5 *sqrt_factor;
+            real_t lambda3 = sum_factor + 0.5 *sqrt_factor;
 
             real_t e1x = 0.0;
             real_t e1y = 0.0;
