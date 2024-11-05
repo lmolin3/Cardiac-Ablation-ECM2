@@ -5,6 +5,36 @@ namespace mfem
 
     namespace ecm2_utils
     {
+        void print_matrix(const DenseMatrix &A)
+        {
+            std::cout << std::scientific;
+            std::cout << "{";
+            for (int i = 0; i < A.NumRows(); i++)
+            {
+                std::cout << "{";
+                for (int j = 0; j < A.NumCols(); j++)
+                {
+                    std::cout << A(i, j);
+                    if (j < A.NumCols() - 1)
+                    {
+                        std::cout << ", ";
+                    }
+                }
+                if (i < A.NumRows() - 1)
+                {
+                    std::cout << "}, ";
+                }
+                else
+                {
+                    std::cout << "}";
+                }
+            }
+            std::cout << "}\n";
+            std::cout << std::fixed;
+            std::cout << std::endl
+                      << std::flush; // Debugging print
+        }
+
         // Mult and AddMult for full matrix (using matrices modified with WliminateRowsCols)
         void FullMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y)
         {

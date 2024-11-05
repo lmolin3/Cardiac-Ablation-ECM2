@@ -30,6 +30,9 @@ namespace mfem
         using ScalarFuncT = double(const Vector &x, double t);
         using qoi_func_t = std::function<void(ElementTransformation &, int, const IntegrationPoint &)>; // QoI function type for GSLIB interpolation
 
+        void print_matrix(const DenseMatrix &A);
+
+
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                          Solver utils                                                ///
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
