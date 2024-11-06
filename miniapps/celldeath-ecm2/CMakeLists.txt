@@ -63,8 +63,8 @@ target_link_libraries(celldeath-gotran-ecm2
  mfem-common
  ${TPL_LIBRARIES})
 
-add_mfem_miniapp(test_square
-    MAIN tests/test_square.cpp
+add_mfem_miniapp(test_celldeath
+    MAIN tests/test_celldeath.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common celldeath-ecm2 celldeath-gotran-ecm2)
 

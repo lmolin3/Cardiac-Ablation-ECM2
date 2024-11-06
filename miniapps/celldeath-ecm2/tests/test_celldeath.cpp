@@ -1,10 +1,21 @@
 //                       MFEM Cell-Death-ecm2 Example
 //
 // Sample runs:  
-//                mpirun -np 4 ./celldeath_ecm2 -of ./Output/CellDeath  
 //
-// Description: 
-// 
+// Sample runs:
+//
+// 1. 2D Problem with Quad Elements:
+//    ./test_celldeath -d 2 -e 0 -n 10 -paraview -of ./output -Tmax 100
+//
+// 2. 2D Problem with Tri Elements:
+//    ./test_celldeath -d 2 -e 1 -n 10 -paraview -of ./output -Tmax 100
+//
+// 3. 3D Problem with Hex Elements:
+//    ./test_celldeath -d 3 -e 0 -n 10 -paraview -of ./output -Tmax 100
+//
+// 4. 2D Problem with higher order for temperature field:
+//    ./test_celldeath -d 2 -e 0 -n 10 -o 4 -paraview -of ./output -Tmax 100
+//
 
 #include "mfem.hpp"
 #include "lib/celldeath_solver.hpp"
@@ -15,13 +26,24 @@
 using namespace std;
 using namespace mfem;
 
-static Vector center(2);
+static Vector center;
 static real_t Tmax = 1.0;
 static real_t circle_radius = 0.2;
 
-// Forward declaration
-real_t temperature_function(const Vector &x, real_t t);
 
+
+struct s_MeshContext // mesh
+{
+   int n = 10;                
+   int dim = 2;
+   int elem = 0;
+   int ser_ref_levels = 0;
+   int par_ref_levels = 0;
+} Mesh_ctx;
+
+// Forward declaration
+
+real_t temperature_function(const Vector &x, real_t t);
 int main(int argc, char *argv[])
 {
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -33,13 +55,33 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
-   string mesh_file = "../../data/square-disc.mesh";
    int order = 1;
+   int type = 0;
+   int meshDim = 2;
    bool paraview = true;
    string outfolder = "./Output/CellDeath/";
 
    OptionsParser args(argc, argv);
-   //args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+    args.AddOption(&Mesh_ctx.dim,
+                   "-d",
+                   "--dimension",
+                   "Dimension of the problem (2 = 2d, 3 = 3d)");
+    args.AddOption(&Mesh_ctx.elem,
+                   "-e",
+                   "--element-type",
+                   "Type of elements used (0: Quad/Hex, 1: Tri/Tet)");
+    args.AddOption(&Mesh_ctx.n,
+                   "-n",
+                   "--num-elements",
+                   "Number of elements in uniform mesh.");
+   args.AddOption(&Mesh_ctx.ser_ref_levels,
+                  "-rs",
+                  "--refine-serial",
+                  "Number of times to refine the mesh uniformly in serial.");
+   args.AddOption(&Mesh_ctx.par_ref_levels,
+                  "-rp",
+                  "--refine-parallel",
+                  "Number of times to refine the mesh uniformly in parallel.");
    args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
    args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
@@ -50,17 +92,47 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
    ///////////////////////////////////////////////////////////////////////////////////////////////
-   Mesh serial_mesh(mesh_file);
+   Mesh serial_mesh;
+   switch (Mesh_ctx.dim)
+   {
+   case 2: // 2d
+{      Element::Type type = (Mesh_ctx.elem == 0) ? Element::QUADRILATERAL: Element::TRIANGLE;
+      serial_mesh = Mesh::MakeCartesian2D(Mesh_ctx.n,Mesh_ctx.n,type,true);
+      break;}
+   case 3: // 3d
+{      Element::Type type = (Mesh_ctx.elem == 0) ? Element::HEXAHEDRON: Element::TETRAHEDRON;
+      serial_mesh = Mesh::MakeCartesian3D(Mesh_ctx.n,Mesh_ctx.n,Mesh_ctx.n,type,true);
+      break;}
+      default:
+      MFEM_ABORT("Unsupported dimension");
+   }
+   serial_mesh.EnsureNodes();
+
+   for (int l = 0; l < Mesh_ctx.ser_ref_levels; l++)
+   {
+      serial_mesh.UniformRefinement();
+   }
+
 
    auto mesh = std::make_shared<ParMesh>(ParMesh(MPI_COMM_WORLD, serial_mesh));
    serial_mesh.Clear(); // the serial mesh is no longer needed
-
-   mesh->UniformRefinement();
+   for (int l = 0; l < Mesh_ctx.par_ref_levels; l++)
+   {
+      mesh->UniformRefinement();
+   }
 
    if (mesh->Dimension() == 2)
    {
+      center.SetSize(2);
       center(0) = 0.5;
       center(1) = 0.5;
+   }
+   else if (mesh->Dimension() == 3)
+   {
+      center.SetSize(3);
+      center(0) = 0.5;
+      center(1) = 0.5;
+      center(2) = 0.5;
    }
 
 
