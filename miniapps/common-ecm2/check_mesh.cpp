@@ -3,7 +3,11 @@
 //
 
 #include "mfem.hpp"
+#include <fstream>
+#include <iostream>
 
+using namespace std;
+using namespace mfem;
 // Include for mkdir
 #include <sys/stat.h>
 
@@ -13,19 +17,14 @@
 #define M_PI 3.14159265358979
 #endif
 
-using namespace mfem;
-
 // Test
 int main(int argc, char *argv[])
 {
     //
     /// 1. Initialize MPI and HYPRE.
     //
-    int nprocs, myrank;
-    MPI_Init(&argc, &argv);
-    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
-    MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-    Hypre::Init();
+   Mpi::Init(argc, argv);
+   Hypre::Init();
 
     //
     /// 2. Parse command-line options.
@@ -145,6 +144,7 @@ int main(int argc, char *argv[])
     //     viewed later using GLVis: "glvis -np <np> -m mesh -g sol_*".
 
     std::ostringstream mesh_name, v_name, p_name;
+    int myrank = pmesh->GetMyRank();
     mesh_name << folderPath << "/mesh." << std::setfill('0') << std::setw(6) << myrank;
 
     v_name << folderPath << "/sol_v." << std::setfill('0') << std::setw(6) << myrank;
@@ -165,10 +165,6 @@ int main(int argc, char *argv[])
     // Free used memory.
     delete pmesh;
     pmesh = nullptr;
-
-    // Finalize Hypre and MPI
-    HYPRE_Finalize();
-    MPI_Finalize();
 
     return 0;
 }

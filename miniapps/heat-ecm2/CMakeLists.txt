@@ -28,9 +28,9 @@ if (MFEM_USE_MPI)
   )
 
   list(APPEND HEAT_HDRS
-    lib/heat_solver.cpp
-    lib/heat_operator.cpp
-    bc/heat_bchandler.cpp
+    lib/heat_solver.hpp
+    lib/heat_operator.hpp
+    bc/heat_bchandler.hpp
   )
 
   convert_filenames_to_full_paths(HEAT_SRCS)
