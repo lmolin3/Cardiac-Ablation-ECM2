@@ -90,6 +90,8 @@ namespace mfem
 
             private:
                   // Private methods
+                  // Compute eigenvalues/eigenvectors given the coefficients ki (handle cases in which ki = 0)
+                  inline void EigenSystem(real_t k1, real_t k2, real_t k3, Vector &lambda, DenseMatrix &P);
 
                   // Shared pointer to Mesh
                   std::shared_ptr<ParMesh> pmesh;
@@ -117,6 +119,7 @@ namespace mfem
                   real_t A1, A2, A3;
                   real_t deltaE1, deltaE2, deltaE3;
                   static constexpr real_t R = 8.31446261815324; // J/(mol*K)
+                  const real_t invR = 1.0 / R;
                   real_t k1, k2, k3;
 
                   // Eigenvalue problem
