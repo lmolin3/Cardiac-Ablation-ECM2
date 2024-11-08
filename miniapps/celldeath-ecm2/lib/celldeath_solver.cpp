@@ -138,7 +138,7 @@ namespace mfem
             e1[0] = 1.0; e1[1] = 0.0; e1[2] = 0.0;
             e2[0] = 0.0; e2[1] = 1.0; e2[2] = 0.0;
             e3[0] = 0.0; e3[1] = 0.0; e3[2] = 1.0;
-            return;
+            break;
          }
          case 1: // Only k1 is non-zero
          {
