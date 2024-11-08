@@ -126,85 +126,79 @@ namespace mfem
 
       void CellDeathSolver::Solve(real_t t, real_t dt)
       {
-         // Solve the system
-         // For each quadrature point:
-         // 1. Evaluate the rate coefficients and assemble the local matrix
-         // 2. Compute eigenvalues and eigenvectors of the local matrix
-         // 3. Solve the system for the initial conditions
-         // 4. Construct the new solution
+         // Precompute constants
+         const real_t invR = 1.0 / R;
 
+         // Allocate reusable resources to avoid redundant allocation in each loop
          DenseMatrix P(3, 3);
-         Vector lambda(3), norms(3);
+         DenseMatrix Plu(3, 3);
+         Vector lambda(3), norms(3), exp_lambda_dt(3);
 
          T_gf->GetTrueDofs(Tsrc);
          N_gf.GetTrueDofs(N);
          U_gf.GetTrueDofs(U);
          D_gf.GetTrueDofs(D);
 
-         // Project the temperature field to the target space (if needed)
-         ProjectTemperature(Tsrc, T);
+         ProjectTemperature(Tsrc, T); // Project the temperature field
 
          for (int i = 0; i < fes_truevsize; ++i)
          {
-            // Set the initial state
+            // Set initial state
             Xn(0) = N[i];
             Xn(1) = U[i];
             Xn(2) = D[i];
 
-            // Set the parameters
-            real_t Tval = T[i];
-            k1 = A1 * exp(-deltaE1 / (R * Tval)); // k1
-            k2 = A2 * exp(-deltaE2 / (R * Tval)); // k2
-            k3 = A3 * exp(-deltaE3 / (R * Tval)); // k3
+            // Precompute temperature-dependent coefficients
+            const real_t Tval = T[i];
+            const real_t invTval = invR / Tval;
+            const real_t k1 = A1 * exp(-deltaE1 * invTval);
+            const real_t k2 = A2 * exp(-deltaE2 * invTval);
+            const real_t k3 = A3 * exp(-deltaE3 * invTval);
 
-            // Symbolic computation
-            real_t sqrt_factor = std::sqrt(std::pow(k1, 2) + 2.0 * k1 * k2 - 2.0 * k1 * k3 + std::pow(k2, 2) + 2.0 * k2 * k3 + std::pow(k3, 2));
-            real_t sum_factor = -0.5 * (k1 + k2 + k3);
+            // Precompute factors for eigenvalues
+            const real_t k1k2 = k1 * k2;
+            const real_t k1k3 = k1 * k3;
+            const real_t k2k3 = k2 * k3;
+            const real_t sqrt_factor = std::sqrt(k1 * k1 + 2.0 * k1k2 - 2.0 * k1k3 + k2 * k2 + 2.0 * k2k3 + k3 * k3);
+            const real_t sum_factor =  (k1 + k2 + k3);
 
-            real_t lambda1 = 0.0;
-            real_t lambda2 = sum_factor - 0.5 * sqrt_factor;
-            real_t lambda3 = sum_factor + 0.5 * sqrt_factor;
+            // Compute eigenvalues
+            lambda(0) = 0.0;
+            lambda(1) = -0.5 *sum_factor - 0.5 * sqrt_factor;
+            lambda(2) = -0.5 *sum_factor + 0.5 * sqrt_factor;
 
-            real_t e1x = 0.0;
-            real_t e1y = 0.0;
-            real_t e1z = 1.0;
+            // Precompute exp(lambda * dt) for use in constructing the solution
+            exp_lambda_dt(0) = 1.0; // exp(0) = 1 for lambda1 = 0
+            exp_lambda_dt(1) = exp(lambda(1) * dt);
+            exp_lambda_dt(2) = exp(lambda(2) * dt);
 
-            real_t e2x = (k1 + k2 - k3 + sqrt_factor) / (2 * k3);
-            real_t e2y = -(k1 + k2 + k3 + sqrt_factor) / (2 * k3);
-            real_t e2z = 1.0;
+            // Compute eigenvectors and fill in matrix P
+            real_t e1[3] = {0.0, 0.0, 1.0};
+            real_t e2[3] = {(k1 + k2 - k3 + sqrt_factor) / (2 * k3), -(sum_factor + sqrt_factor) / (2 * k3), 1.0};
+            real_t e3[3] = {(k1 + k2 - k3 - sqrt_factor) / (2 * k3), -(sum_factor - sqrt_factor) / (2 * k3), 1.0};
 
-            real_t e3x = (k1 + k2 - k3 - sqrt_factor) / (2 * k3);
-            real_t e3y = -(k1 + k2 + k3 - sqrt_factor) / (2 * k3);
-            real_t e3z = 1.0;
-
-            // Create an array to hold the data in column-major order
-            real_t eigenvectors[9] = {e1x, e1y, e1z, e2x, e2y, e2z, e3x, e3y, e3z};
-            real_t eigenvalues[3] = {lambda1, lambda2, lambda3};
-
-            // Use the UseExternalData method to wrap the data array
+            real_t eigenvectors[9] = {e1[0], e1[1], e1[2], e2[0], e2[1], e2[2], e3[0], e3[1], e3[2]};
             P.UseExternalData(eigenvectors, 3, 3);
-            lambda.SetData(eigenvalues);
 
             // Normalize the eigenvectors
             P.Norm2(norms);
             P.InvRightScaling(norms);
 
-            // Solve the system for the initial conditions   P C = Xn
-            DenseMatrix Plu(P); // Deep copy of P since LinearSolve returns the LU factor for 3x3 matrices
+            // Solve P C = Xn by creating a deep copy of P (Plu) to preserve it
+            Plu = P; // Copy matrix P into Plu for solving
             LinearSolve(Plu, Xn.GetData());
 
-            // Construct the new solution X_n+1 = P * exp(lambda * dt) C
-            Xn(0) *= exp(lambda(0) * dt);
-            Xn(1) *= exp(lambda(1) * dt);
-            Xn(2) *= exp(lambda(2) * dt);
+            // Construct the new solution X_n+1 = P * exp(lambda * dt) * C
+            Xn *= exp_lambda_dt;
             P.Mult(Xn, X);
 
-            // Update the solution
+            // Update the solution arrays
             N[i] = X(0);
             U[i] = X(1);
             D[i] = X(2);
          }
 
+         // Set updated solution fields
          N_gf.SetFromTrueDofs(N);
          U_gf.SetFromTrueDofs(U);
          D_gf.SetFromTrueDofs(D);
