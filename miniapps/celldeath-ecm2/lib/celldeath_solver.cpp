@@ -121,6 +121,125 @@ namespace mfem
          }
       }
 
+      inline void CellDeathSolver::EigenSystem(real_t k1, real_t k2, real_t k3, Vector &lambda, DenseMatrix &P)
+      {
+         // Create an index based on which ki are non-zero
+         int index = (k1 != 0.0 ? 1 : 0) | (k2 != 0.0 ? 2 : 0) | (k3 != 0.0 ? 4 : 0);
+         real_t e1[3], e2[3], e3[3];
+         real_t lambda_[3];
+
+         switch (index)
+         {
+         case 0: // All k1, k2, k3 are zero
+         {
+            lambda_[0] = 0;
+            lambda_[1] = 0;
+            lambda_[2] = 0;
+            e1[0] = 1.0; e1[1] = 0.0; e1[2] = 0.0;
+            e2[0] = 0.0; e2[1] = 1.0; e2[2] = 0.0;
+            e3[0] = 0.0; e3[1] = 0.0; e3[2] = 1.0;
+            break;
+         }
+         case 1: // Only k1 is non-zero
+         {
+            lambda_[0] = 0;
+            lambda_[1] = 0;
+            lambda_[2] = -1.0 * k1;
+            e1[0] = 0; e1[1] = 1; e1[2] = 0;
+            e2[0] = 0; e2[1] = 0; e2[2] = 1;
+            e3[0] = -1; e3[1] = 1; e3[2] = 0;
+            break;
+         }
+         case 2: // Only k2 is non-zero
+         {
+            lambda_[0] = 0;
+            lambda_[1] = 0;
+            lambda_[2] = -1.0 * k2;
+            e1[0] = 1; e1[1] = 0; e1[2] = 0;
+            e2[0] = 0; e2[1] = 0; e2[2] = 1;
+            e3[0] = -1; e3[1] = 1; e3[2] = 0;
+            break;
+         }
+         case 3: // k1 and k2 are non-zero
+         {
+            lambda_[0] = 0;
+            lambda_[1] = 0;
+            lambda_[2] = -1.0 * k1 - 1.0 * k2;
+            e1[0] = k2 / k1; e1[1] = 1; e1[2] = 0;
+            e2[0] = 0; e2[1] = 0; e2[2] = 1;
+            e3[0] = -1; e3[1] = 1; e3[2] = 0;
+            break;
+         }
+         case 4: // Only k3 is non-zero
+         {
+            lambda_[0] = 0;
+            lambda_[1] = 0;
+            lambda_[2] = -1.0 * k3;
+            e1[0] = 1; e1[1] = 0; e1[2] = 0;
+            e2[0] = 0; e2[1] = 0; e2[2] = 1;
+            e3[0] = 0; e3[1] = -1; e3[2] = 1;
+            break;
+         }
+         case 5: // k1 and k3 are non-zero
+         {
+            lambda_[0] = 0;
+            lambda_[1] = -1.0 * k1;
+            lambda_[2] = -1.0 * k3;
+            e1[0] = 0; e1[1] = 0; e1[2] = 1;
+            e2[0] = (k1 - k3) / k3; e2[1] = -k1 / k3; e2[2] = 1;
+            e3[0] = 0; e3[1] = -1; e3[2] = 1;
+            break;
+         }
+         case 6: // k2 and k3 are non-zero
+         {
+            lambda_[0] = 0;
+            lambda_[1] = 0;
+            lambda_[2] = -1.0 * k2 - 1.0 * k3;
+            e1[0] = 1; e1[1] = 0; e1[2] = 0;
+            e2[0] = 0; e2[1] = 0; e2[2] = 1;
+            e3[0] = k2 / k3; e3[1] = -(k2 + k3) / k3; e3[2] = 1;
+            break;
+         }
+         case 7: // All k1, k2, k3 are non-zero
+         {
+            // Precompute factors for eigenvalues
+            const real_t k1k2 = k1 * k2;
+            const real_t k1k3 = k1 * k3;
+            const real_t k2k3 = k2 * k3;
+            const real_t sqrt_factor = std::sqrt(k1 * k1 + 2.0 * k1k2 - 2.0 * k1k3 + k2 * k2 + 2.0 * k2k3 + k3 * k3);
+            const real_t sum_factor = (k1 + k2 + k3);
+
+            // Compute eigenvalues
+            lambda_[0] = 0.0;
+            lambda_[1] = -0.5 * sum_factor - 0.5 * sqrt_factor;
+            lambda_[2] = -0.5 * sum_factor + 0.5 * sqrt_factor;
+
+            // Compute eigenvectors and fill in matrix P
+            e1[0] = 0.0; e1[1] = 0.0; e1[2] = 1.0;
+            e2[0] = (k1 + k2 - k3 + sqrt_factor) / (2 * k3); e2[1] = -(sum_factor + sqrt_factor) / (2 * k3); e2[2] = 1.0;
+            e3[0] = (k1 + k2 - k3 - sqrt_factor) / (2 * k3); e3[1] = -(sum_factor - sqrt_factor) / (2 * k3); e3[2] = 1.0;
+            break;
+         }
+         default:
+         {
+            MFEM_ABORT("Invalid index");
+            return;
+         }
+         }
+
+         // Assign the eigenvalues
+         lambda = lambda_;
+
+         // Create eigenvector matrix P
+         real_t eigenvectors[9] = {e1[0], e1[1], e1[2], e2[0], e2[1], e2[2], e3[0], e3[1], e3[2]};
+         P.UseExternalData(eigenvectors, 3, 3);
+
+         // Normalize the eigenvectors
+         Vector norms(3);
+         P.Norm2(norms);
+         P.InvRightScaling(norms);
+      }
+
       void CellDeathSolver::Solve(real_t t, real_t dt)
       {
          // Precompute constants
