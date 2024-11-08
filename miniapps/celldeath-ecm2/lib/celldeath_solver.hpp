@@ -45,7 +45,7 @@ namespace mfem
             class CellDeathSolver
             {
             public:
-                  CellDeathSolver(std::shared_ptr<ParMesh> pmesh,
+                  CellDeathSolver(std::shared_ptr<ParMesh> pmesh, int order,
                              ParGridFunction *T_,
                              real_t A1_, real_t A2_, real_t A3_,
                              real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
@@ -53,9 +53,14 @@ namespace mfem
 
                   ~CellDeathSolver();
 
+                  // Setup the projection
+                  void SetupProjection();
+
+                  // Project the temperature field
+                  void ProjectTemperature(Vector &Tin, Vector &Tout);
+
                   // Solve the system
                   void Solve(real_t t, real_t dt);
-
 
                   // Visualization and Postprocessing
                   void RegisterVisItFields(VisItDataCollection &visit_dc_);
@@ -71,6 +76,7 @@ namespace mfem
                   ParaViewDataCollection &GetParaViewDc() { return *paraview_dc; }
                   VisItDataCollection &GetVisItDc() { return *visit_dc; }
 
+                  HYPRE_BigInt GetProblemSize();
 
                   void display_banner(std::ostream &os);
 
@@ -90,16 +96,21 @@ namespace mfem
                   int dim;
 
                   // FE spaces
+                  FiniteElementCollection *fec;
                   ParFiniteElementSpace *fes;
+                  ParFiniteElementSpace *fesT;
                   int fes_truevsize;
+                  int fesT_truevsize;
                   int order;
+                  int orderT;
+                  TrueTransferOperator *transferOp;
 
                   // Grid functions and Vectors
                   ParGridFunction N_gf;   // Alive cells grid function
                   ParGridFunction U_gf;   // Vulnerable cells grid function
                   ParGridFunction D_gf;   // Dead cells grid function
 
-                  Vector N, U, D, T;
+                  Vector N, U, D, T, Tsrc;
 
                   // Coefficients
                   ParGridFunction *T_gf;

@@ -22,7 +22,7 @@ namespace mfem
 {
    namespace celldeath
    {
-      CellDeathSolver::CellDeathSolver(std::shared_ptr<ParMesh> pmesh_,
+      CellDeathSolver::CellDeathSolver(std::shared_ptr<ParMesh> pmesh_, int order_,
                                        ParGridFunction *T_,
                                        real_t A1_, real_t A2_, real_t A3_,
                                        real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
@@ -30,11 +30,26 @@ namespace mfem
           : pmesh(pmesh_), A1(A1_), A2(A2_), A3(A3_),
             deltaE1(deltaE1_), deltaE2(deltaE2_), deltaE3(deltaE3_), T_gf(T_), verbose(verbose)
       {
-
-         fes = T_gf->ParFESpace();         
-         fes_truevsize = fes->GetTrueVSize();
-         this->order = fes->FEColl()->GetOrder();
+         // TODO: Add som MFEM_ASSERT 
          
+         // Initialize the FE spaces for projection
+         fesT = T_gf->ParFESpace();
+         order = order_;
+         orderT = fesT->FEColl()->GetOrder();
+
+         if (order == orderT)
+         { // Fes have same order, no need to project
+            fes = fesT;
+         }
+         else
+         { // Fes have different order (temperaure = n, cell-death = m), at runtime need to project temperature to target space
+            SetupProjection();
+         }
+
+         // Initialize the grid functions and vectors
+         fes_truevsize = fes->GetTrueVSize();
+         fesT_truevsize = fesT->GetTrueVSize();
+
          N_gf.SetSpace(fes);
          U_gf.SetSpace(fes);
          D_gf.SetSpace(fes);
@@ -43,6 +58,7 @@ namespace mfem
          U.SetSize(fes_truevsize);
          D.SetSize(fes_truevsize);
          T.SetSize(fes_truevsize);
+         Tsrc.SetSize(fesT_truevsize);
 
          mat = DenseMatrix(3);
          P = DenseMatrix(3);
@@ -58,12 +74,54 @@ namespace mfem
          N_gf.ProjectCoefficient(one);
          U_gf.ProjectCoefficient(zero);
          D_gf.ProjectCoefficient(zero);
-         
       }
 
       CellDeathSolver::~CellDeathSolver()
       {
          // doesn't take ownership of coefficients  used to create the rate coefficients ki
+         if (order != orderT)
+         {
+            delete fec;
+            delete fes;
+            delete transferOp;
+         }
+      }
+
+      HYPRE_BigInt
+      CellDeathSolver::GetProblemSize()
+      {
+         return fes->GlobalTrueVSize();
+      }
+
+      void CellDeathSolver::SetupProjection()
+      {
+         // Create the FE spaces for cell-death variables
+         fec = (order == 0)
+                   ? static_cast<FiniteElementCollection *>(new L2_FECollection(order, pmesh->Dimension()))
+                   : static_cast<FiniteElementCollection *>(new H1_FECollection(order, pmesh->Dimension()));
+         fes = new ParFiniteElementSpace(pmesh.get(), fec);
+
+         // Create the TransferOperator
+         transferOp = (orderT > order) ? new TrueTransferOperator(*fes, *fesT) : new TrueTransferOperator(*fesT, *fes);
+      }
+
+      void CellDeathSolver::ProjectTemperature(Vector &Tin, Vector &Tout)
+      {
+         if (order == orderT)
+         {
+            Tout = Tin;
+            return;
+         }
+
+         // Project the temperature field from the source space to the target space
+         if (orderT > order) // Fine to coarse restriction
+         {
+            transferOp->MultTranspose(Tin, Tout);
+         }
+         else // Coarse to fine prolongation
+         {
+            transferOp->Mult(Tin, Tout);
+         }
       }
 
       void CellDeathSolver::Solve(real_t t, real_t dt)
@@ -78,10 +136,13 @@ namespace mfem
          DenseMatrix P(3, 3);
          Vector lambda(3), norms(3);
 
-         T_gf->GetTrueDofs(T);
+         T_gf->GetTrueDofs(Tsrc);
          N_gf.GetTrueDofs(N);
          U_gf.GetTrueDofs(U);
          D_gf.GetTrueDofs(D);
+
+         // Project the temperature field to the target space (if needed)
+         ProjectTemperature(Tsrc, T);
 
          for (int i = 0; i < fes_truevsize; ++i)
          {
@@ -97,12 +158,12 @@ namespace mfem
             k3 = A3 * exp(-deltaE3 / (R * Tval)); // k3
 
             // Symbolic computation
-            real_t sqrt_factor = std::sqrt( std::pow(k1, 2) + 2.0 * k1 * k2 - 2.0 * k1 * k3 + std::pow(k2, 2) + 2.0 * k2 * k3 + std::pow(k3, 2) );
+            real_t sqrt_factor = std::sqrt(std::pow(k1, 2) + 2.0 * k1 * k2 - 2.0 * k1 * k3 + std::pow(k2, 2) + 2.0 * k2 * k3 + std::pow(k3, 2));
             real_t sum_factor = -0.5 * (k1 + k2 + k3);
 
             real_t lambda1 = 0.0;
-            real_t lambda2 = sum_factor - 0.5 *sqrt_factor;
-            real_t lambda3 = sum_factor + 0.5 *sqrt_factor;
+            real_t lambda2 = sum_factor - 0.5 * sqrt_factor;
+            real_t lambda3 = sum_factor + 0.5 * sqrt_factor;
 
             real_t e1x = 0.0;
             real_t e1y = 0.0;
@@ -126,7 +187,7 @@ namespace mfem
 
             // Normalize the eigenvectors
             P.Norm2(norms);
-            P.InvRightScaling(norms);            
+            P.InvRightScaling(norms);
 
             // Solve the system for the initial conditions   P C = Xn
             DenseMatrix Plu(P); // Deep copy of P since LinearSolve returns the LU factor for 3x3 matrices
@@ -147,7 +208,6 @@ namespace mfem
          N_gf.SetFromTrueDofs(N);
          U_gf.SetFromTrueDofs(U);
          D_gf.SetFromTrueDofs(D);
-
       }
 
       // Print the CellDeath-ecm2 ascii logo to the given ostream
@@ -166,7 +226,7 @@ namespace mfem
          }
       }
 
-     void
+      void
       CellDeathSolver::RegisterParaviewFields(ParaViewDataCollection &paraview_dc_)
       {
          paraview_dc = &paraview_dc_;
@@ -248,7 +308,6 @@ namespace mfem
             }
          }
       }
-
 
    } // namespace celldeath
 } // namespace mfem

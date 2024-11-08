@@ -14,7 +14,10 @@
 //    ./test_celldeath -d 3 -e 0 -n 10 -paraview -of ./output -Tmax 100
 //
 // 4. 2D Problem with higher order for temperature field:
-//    ./test_celldeath -d 2 -e 0 -n 10 -o 4 -paraview -of ./output -Tmax 100
+//    ./test_celldeath -d 2 -e 0 -n 10 -ot 4 -paraview -of ./output -Tmax 100
+//
+// 5. 2D Problem with same order for temperature and cell-death fields:
+//    ./test_celldeath -d 2 -e 0 -n 10 -ot 2 -oc 2 -paraview -of ./output -Tmax 100
 //
 
 #include "mfem.hpp"
@@ -55,7 +58,8 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
-   int order = 1;
+   int order_temperature = 1;
+   int order_celldeath = 1;
    int type = 0;
    int meshDim = 2;
    bool paraview = true;
@@ -82,7 +86,8 @@ int main(int argc, char *argv[])
                   "-rp",
                   "--refine-parallel",
                   "Number of times to refine the mesh uniformly in parallel.");
-   args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
+   args.AddOption(&order_temperature, "-ot", "--order-temperature", "Finite element polynomial degree for temperature");
+   args.AddOption(&order_celldeath, "-oc", "--order-celldeath", "Finite element polynomial degree for cell-death");
    args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&outfolder, "-of", "--out-folder", "Output folder.");
@@ -159,24 +164,17 @@ int main(int argc, char *argv[])
    // Define analytic temperature profile 
    FunctionCoefficient T0(temperature_function);
    
-   H1_FECollection fec(order, mesh->Dimension());
+   H1_FECollection fec(order_temperature, mesh->Dimension());
    ParFiniteElementSpace fespace(mesh.get(), &fec);
    ParGridFunction *T_gf = new ParGridFunction(&fespace);
    T_gf->ProjectCoefficient(T0);
-
-   int local_dofs = fespace.GetTrueVSize();
-   int total_dofs = 0;
-   MPI_Reduce(&local_dofs, &total_dofs, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-   if (Mpi::Root())
-      mfem::out << "Temperature dofs: " << total_dofs << endl;
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 5. Create the CellDeath Solver and DataCollections
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   int order_celldeath = 1;
-   celldeath::CellDeathSolver solver(mesh, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
-   celldeathgotran::CellDeathSolverGotran solver_gotran(mesh, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
+   celldeath::CellDeathSolver solver(mesh, order_celldeath, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
+   celldeathgotran::CellDeathSolverGotran solver_gotran(mesh, order_celldeath, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
 
    // Initialize Paraview visualization
    ParaViewDataCollection paraview_dc("CellDeathEigen", mesh.get());
@@ -203,6 +201,16 @@ int main(int argc, char *argv[])
       solver.WriteFields(0, 0.0);
       solver_gotran.WriteFields(0, 0.0);
    }
+
+   int temp_truevsize = fespace.GlobalTrueVSize();
+   int celldeath_truevsize = solver.GetProblemSize();
+
+   if (Mpi::Root())
+   {
+      mfem::out << "Temperature dofs: " << temp_truevsize << std::endl;
+      mfem::out << "Cell-death dofs: " << celldeath_truevsize << std::endl;
+   }
+
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Perform time-integration (looping over the time iterations, step, with a time-step dt).

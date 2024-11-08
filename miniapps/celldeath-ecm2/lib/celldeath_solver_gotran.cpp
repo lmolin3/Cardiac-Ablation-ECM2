@@ -23,17 +23,30 @@ namespace mfem
    {
 
       CellDeathSolverGotran::CellDeathSolverGotran(std::shared_ptr<ParMesh> pmesh_,
-                                       ParGridFunction *T_,
+                                       int order_, ParGridFunction *T_,
                                        real_t A1_, real_t A2_, real_t A3_,
                                        real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                        bool verbose)
           : pmesh(pmesh_), A1(A1_), A2(A2_), A3(A3_),
             deltaE1(deltaE1_), deltaE2(deltaE2_), deltaE3(deltaE3_), T_gf(T_), verbose(verbose)
       {
-         fes = T_gf->ParFESpace();         
-         fes_truevsize = fes->GetTrueVSize();
+         // Initialize the FE spaces for projection
+         fesT = T_gf->ParFESpace();
+         order = order_;
+         orderT = fesT->FEColl()->GetOrder();
 
-         order = fes->FEColl()->GetOrder();
+         if (order == orderT)
+         { // Fes have same order, no need to project
+            fes = fesT;
+         }
+         else
+         { // Fes have different order (temperaure = n, cell-death = m), at runtime need to project temperature to target space
+            SetupProjection();
+         }
+
+         // Initialize the grid functions and vectors
+         fes_truevsize = fes->GetTrueVSize();
+         fesT_truevsize = fesT->GetTrueVSize();
 
          N_gf.SetSpace(fes);
          U_gf.SetSpace(fes);
@@ -43,6 +56,7 @@ namespace mfem
          U.SetSize(fes_truevsize);
          D.SetSize(fes_truevsize);
          T.SetSize(fes_truevsize);
+         Tsrc.SetSize(fesT_truevsize);
 
          visit_dc = nullptr;
          paraview_dc = nullptr;
@@ -57,8 +71,9 @@ namespace mfem
          N_gf.GetTrueDofs(N);
          U_gf.GetTrueDofs(U);
          D_gf.GetTrueDofs(D);
-         T_gf->GetTrueDofs(T);
-         
+         T_gf->GetTrueDofs(Tsrc);
+         ProjectTemperature(Tsrc, T);
+
          for (int i = 0; i < fes_truevsize; ++i) {
             // Set the initial state
             states[i][0] = init_states[0];
@@ -88,7 +103,52 @@ namespace mfem
          //delete fes; // --> Using the Temperature grid function space
          delete [] parameters_nodes;
          delete [] states;
+
+         if (order != orderT)
+         {
+            delete fec;
+            delete fes;
+            delete transferOp;
+         }
       }
+
+      HYPRE_BigInt
+      CellDeathSolverGotran::GetProblemSize()
+      {
+         return fes->GlobalTrueVSize();
+      }
+
+      void CellDeathSolverGotran::SetupProjection()
+      {
+         // Create the FE spaces for cell-death variables
+         fec = (order == 0)
+                   ? static_cast<FiniteElementCollection *>(new L2_FECollection(order, pmesh->Dimension()))
+                   : static_cast<FiniteElementCollection *>(new H1_FECollection(order, pmesh->Dimension()));
+         fes = new ParFiniteElementSpace(pmesh.get(), fec);
+
+         // Create the TransferOperator
+         transferOp = (orderT > order) ? new TrueTransferOperator(*fes, *fesT) : new TrueTransferOperator(*fesT, *fes);
+      }
+
+      void CellDeathSolverGotran::ProjectTemperature(Vector &Tin, Vector &Tout)
+      {
+         if (order == orderT)
+         {
+            Tout = Tin;
+            return;
+         }
+
+         // Project the temperature field from the source space to the target space
+         if (orderT > order) // Fine to coarse restriction
+         {
+            transferOp->MultTranspose(Tin, Tout);
+         }
+         else // Coarse to fine prolongation
+         {
+            transferOp->Mult(Tin, Tout);
+         }
+      }
+
 
       // Solve the system using the Gotran generated ODE solver
       void CellDeathSolverGotran::Solve(real_t t, real_t dt, int method, int substeps)
@@ -101,10 +161,13 @@ namespace mfem
          MFEM_ASSERT((method >= 0 && method < 4), "Invalid method for time integration");
 
          // Get the solution and state vectors
+         T_gf->GetTrueDofs(T);
          N_gf.GetTrueDofs(N);
          U_gf.GetTrueDofs(U);
          D_gf.GetTrueDofs(D);
-         T_gf->GetTrueDofs(T);
+
+         // Project the temperature field to the target space (if needed)
+         ProjectTemperature(Tsrc, T);
 
          for (int i = 0; i < fes_truevsize; ++i)
          {
