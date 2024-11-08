@@ -60,9 +60,6 @@ namespace mfem
          T.SetSize(fes_truevsize);
          Tsrc.SetSize(fesT_truevsize);
 
-         mat = DenseMatrix(3);
-         P = DenseMatrix(3);
-         lambda = Vector(3);
          Xn = Vector(3);
          X = Vector(3);
 
@@ -130,8 +127,7 @@ namespace mfem
          const real_t invR = 1.0 / R;
 
          // Allocate reusable resources to avoid redundant allocation in each loop
-         DenseMatrix P(3, 3);
-         DenseMatrix Plu(3, 3);
+         DenseMatrix P, Plu;
          Vector lambda(3), norms(3), exp_lambda_dt(3);
 
          T_gf->GetTrueDofs(Tsrc);

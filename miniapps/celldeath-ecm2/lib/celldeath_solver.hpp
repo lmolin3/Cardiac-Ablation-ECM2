@@ -120,9 +120,6 @@ namespace mfem
                   real_t k1, k2, k3;
 
                   // Eigenvalue problem
-                  DenseMatrix mat;
-                  DenseMatrix P;   // eigenvectors
-                  Vector lambda;   // eigenvalues
                   Vector Xn;       // initial conditions
                   Vector X;        // solution
 
