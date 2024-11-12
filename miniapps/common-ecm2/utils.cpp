@@ -190,28 +190,24 @@ namespace mfem
 
         void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &dest_fes, const Vector &dest_vec, ParGridFunction &dest_gf)
         {
-
-            int sdim = dest_fes.GetMesh()->SpaceDimension();
             int vdim = dest_fes.GetVDim();
+            auto ordering = dest_fes.GetOrdering();
+            const int dof = dest_fes.GetTypicalBE()->GetNodes().GetNPoints();
 
-            int dof, idx, be_idx, qp_idx;
-            Vector qoi_loc(vdim), loc_values;
-            for (int be = 0; be < elem_idx.size(); be++) // iterate over each BE on interface boundary and construct FE value from quadrature point
+            int idx, be_idx, qp_idx;
+            Vector qoi_loc(vdim), loc_values(dof * vdim);
+            Array<int> vdofs(dof * vdim);
+            for (int be = 0; be < elem_idx.size(); be++)
             {
-                Array<int> vdofs;
                 be_idx = elem_idx[be];
                 dest_fes.GetBdrElementVDofs(be_idx, vdofs);
-                const FiniteElement *fe = dest_fes.GetBE(be_idx);
-                dof = fe->GetDof();
-                loc_values.SetSize(dof * vdim);
-                auto ordering = dest_fes.GetOrdering();
                 for (int qp = 0; qp < dof; qp++)
                 {
                     qp_idx = be * dof + qp;
                     qoi_loc = Vector(dest_vec.GetData() + qp_idx * vdim, vdim);
                     for (int d = 0; d < vdim; d++)
                     {
-                        idx = ordering == Ordering::byVDIM ? qp * sdim + d : dof * d + qp;
+                        idx = ordering == Ordering::byVDIM ? qp * vdim + d : dof * d + qp;
                         loc_values(idx) = qoi_loc(d);
                     }
                 }

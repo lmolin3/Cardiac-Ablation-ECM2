@@ -71,6 +71,9 @@ namespace mfem
          N_gf.ProjectCoefficient(one);
          U_gf.ProjectCoefficient(zero);
          D_gf.ProjectCoefficient(zero);
+         N = 1.0;
+         U = 0.0;
+         D = 0.0;
       }
 
       CellDeathSolver::~CellDeathSolver()
@@ -253,6 +256,8 @@ namespace mfem
 
          ProjectTemperature(Tsrc, T); // Project the temperature field
 
+         static constexpr real_t TOL = 1e-8;
+
          for (int i = 0; i < fes_truevsize; ++i)
          {
             // Set initial state
@@ -264,9 +269,12 @@ namespace mfem
             const real_t Tval = T[i];
             bool nnz = (Tval != 0);
             const real_t invTval = nnz ? (invR / Tval) : 0;
-            const real_t k1 = nnz ? (A1 * exp(-deltaE1 * invTval)) : 0.0;
-            const real_t k2 = nnz ? (A2 * exp(-deltaE2 * invTval)) : 0.0;
-            const real_t k3 = nnz ? (A3 * exp(-deltaE3 * invTval)) : 0.0;
+            real_t k1 = nnz ? (A1 * exp(-deltaE1 * invTval)) : 0.0;
+            real_t k2 = nnz ? (A2 * exp(-deltaE2 * invTval)) : 0.0;
+            real_t k3 = nnz ? (A3 * exp(-deltaE3 * invTval)) : 0.0;
+            k1 = k1 < TOL ? 0.0 : k1;
+            k2 = k2 < TOL ? 0.0 : k2;
+            k3 = k3 < TOL ? 0.0 : k3;
 
             // Compute eigenvalues and eigenvectors based on the index
             EigenSystem( k1, k2, k3, lambda, P);
@@ -283,6 +291,11 @@ namespace mfem
             // Construct the new solution X_n+1 = P * exp(lambda * dt) * C
             Xn *= exp_lambda_dt;
             P.Mult(Xn, X);
+
+            if (std::isnan(X(0)) || std::isnan(X(1)) || std::isnan(X(2)))
+            {
+               MFEM_ABORT("Solution contains NaNs at index " << i);
+            }  
 
             // Update the solution arrays
             N[i] = X(0);

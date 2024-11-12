@@ -31,6 +31,7 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/miniapps/common
   ${CMAKE_SOURCE_DIR}/miniapps/common-ecm2
   ${CMAKE_SOURCE_DIR}/miniapps/heat-ecm2
+  ${CMAKE_SOURCE_DIR}/miniapps/celldeath-ecm2
 )
 
 # Parallel apps.
@@ -53,11 +54,23 @@ if (MFEM_USE_MPI)
     LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
   add_dependencies(multidomain-neumann-dirichlet copy_miniapps_multidomain_test_data)
 
+  add_mfem_miniapp(test-grad-transfer 
+    MAIN test-grad-transfer.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
+
   add_mfem_miniapp(multidomain-three-domains
     MAIN multidomain-three-domains.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
   add_dependencies(multidomain-three-domains copy_miniapps_multidomain_test_data)
+
+
+  add_mfem_miniapp(multidomain-three-domains-celldeath-ecm2
+    MAIN multidomain-three-domains-celldeath.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2 celldeath-ecm2)
+  add_dependencies(multidomain-three-domains-celldeath-ecm2 copy_miniapps_multidomain_test_data)
 
 
 endif()
