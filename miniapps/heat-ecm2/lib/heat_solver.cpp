@@ -81,7 +81,8 @@ namespace mfem
          fes_truevsize = H1FESpace->GetTrueVSize();
 
          // Create the ParGridFunction and Vector for Temperature
-         T = new Vector(fes_truevsize);
+         T = new Vector(fes_truevsize); 
+         *T = 0.0;
          T_gf = new ParGridFunction(H1FESpace);
          *T_gf = 0.0;
 
@@ -313,7 +314,7 @@ namespace mfem
          op->SetTimeStep(dt);
          SetTimeIntegrationCoefficients(step);
 
-         // Set solution vector to the previous solution
+         // Set solution vector to the previous solution (without new bcs)
          T_gf->GetTrueDofs(*T);
 
          // Set the time for the boundary conditions, update the temperature gf and operator time
@@ -435,30 +436,19 @@ namespace mfem
          Vector &dT_approx = op->GetDerivativeApproximation();
          dT_approx = 0.0;
 
-         // std::cout << std::setprecision(10);
-         // std::cout << "T_bc[0]: " << T[0] << endl;
-
          for (int i = 0; i < ess_tdof_list.Size(); ++i)
          {
             const int dof = ess_tdof_list[i];
-            // out << "dof: " << dof << endl;
-
             dT_approx[dof] = alpha * T[dof]; // alpha * T_{n+1}
-            // std::cout << std::setprecision(10);
-            // std::cout << "T[dof]: " << T[dof] << endl;
 
             // Sum over the previous solutions
             for (int j = 0; j < time_scheme_order; ++j)
             {
                const auto Tnmj = T_prev[j].Read();
                dT_approx[dof] += beta[j] * Tnmj[i]; // beta_j * T_{n-j}
-               // std::cout << " Tnmj[dof]: " << Tnmj[i] << endl;
-               // out << " beta[j]: " << beta[j] << endl;
             }
 
             dT_approx[dof] /= dt; // Divide by dt
-            // out << "dT_dt[dof]: " << dT_approx[dof] << endl;
-            //  out << "\n" << flush;
          }
       }
 
