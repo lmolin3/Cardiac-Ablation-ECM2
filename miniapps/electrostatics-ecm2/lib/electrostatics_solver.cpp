@@ -204,7 +204,11 @@ namespace mfem
          // Solver
          if (pa)
          {
-            prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
+            //int cheb_order = 2;
+            //Vector diag(H1FESpace->GetTrueVSize());
+            //divEpsGrad->AssembleDiagonal(diag);
+            //prec = new OperatorChebyshevSmoother(*opA, diag, ess_tdof_list, cheb_order);
+            prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);         
          }
          else
          {
@@ -320,11 +324,11 @@ namespace mfem
          prec = nullptr;
          if (pa)
          {
-            int cheb_order = 2;
-            Vector diag(H1FESpace->GetTrueVSize());
-            divEpsGrad->AssembleDiagonal(diag);
-            prec = new OperatorChebyshevSmoother(*divEpsGrad, diag, ess_tdof_list, cheb_order);
-            //prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
+            //int cheb_order = 2;
+            //Vector diag(H1FESpace->GetTrueVSize());
+            //divEpsGrad->AssembleDiagonal(diag);
+            //prec = new OperatorChebyshevSmoother(*opA, diag, ess_tdof_list, cheb_order);
+            prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
          }
          else
          {

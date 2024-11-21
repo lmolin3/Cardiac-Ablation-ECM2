@@ -29,8 +29,8 @@
 //
 // Test partial assembly
 //
-//      mpirun -np 4 ./convergence_2D -et 1 -o 1 -sattr '1' -sval '1.0' -r 7 --no-partial-assembly
-//      mpirun -np 4 ./convergence_2D -et 1 -o 1 -sattr '1' -sval '1.0' -r 7 --partial-assembly
+//      mpirun -np 4 ./convergence_2D -e 1 -o 1 -sattr '1' -sval '1.0' -r 7 --no-partial-assembly
+//      mpirun -np 4 ./convergence_2D -e 1 -o 1 -sattr '1' -sval '1.0' -r 7 --partial-assembly
 //
 
 
@@ -82,6 +82,8 @@ int main(int argc, char *argv[])
    OptionsParser args(argc, argv);
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
+   args.AddOption(&element, "-e", "--element-type",
+                  "Element type (quads=1 or triangles=0).");
    args.AddOption(&freq, "-f", "--frequency", "Set the frequency for the exact"
                                               " solution.");
    args.AddOption(&total_refinements, "-r", "--refinements",
