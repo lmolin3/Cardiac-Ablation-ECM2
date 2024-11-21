@@ -368,7 +368,7 @@ int main(int argc, char *argv[])
    // 1. Find points on the destination mesh (box)
    std::vector<int> block_element_idx;
    Vector block_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(block_inner_wall_attributes, *Heat_Block.GetFESpace(), block_element_idx, block_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(block_inner_wall_attributes, Heat_Block.GetFESpace(), block_element_idx, block_element_coords);
 
    // 2. Setup GSLIB finder on the source mesh (cylinder)
    FindPointsGSLIB finder(MPI_COMM_WORLD);
@@ -378,16 +378,15 @@ int main(int argc, char *argv[])
    // 3. Compute QoI (gradient of the temperature field) on the source mesh (cylinder)
    int qoi_size_on_qp = sdim;
    Vector qoi_src, qoi_dst; // QoI vector, used to store qoi_src in qoi_func and in call to GSLIB interpolator
-   auto qoi_func = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
+   auto qoi_func = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector& qoi_loc) 
    {
       DenseMatrix Kmat(sdim);
       Vector gradloc(sdim);
-      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
 
       Kappa_cylinder_bdr->Eval(Kmat, Tr, ip);
 
       temperature_cylinder_gf->GetGradient(Tr, gradloc);
-      Kmat.Mult(gradloc, kgradloc);
+      Kmat.Mult(gradloc, qoi_loc);
    };
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -500,8 +499,7 @@ int main(int argc, char *argv[])
 
          // Transfer k ∇T_wall from cylinder -> block
          {
-            ecm2_utils::GSLIBInterpolate(finder, *Heat_Cylinder.GetFESpace(), qoi_func, qoi_src, qoi_dst, qoi_size_on_qp);
-            ecm2_utils::TransferQoIToDest(block_element_idx, *Heat_Block.GetVectorFESpace(), qoi_dst, *k_grad_temperature_wall_gf);
+            ecm2_utils::GSLIBInterpolate(finder, block_element_idx, Heat_Cylinder.GetFESpace(), qoi_func, *k_grad_temperature_wall_gf, qoi_size_on_qp);
          }
 
          // Advance the diffusion equation on the outer block to the next time step

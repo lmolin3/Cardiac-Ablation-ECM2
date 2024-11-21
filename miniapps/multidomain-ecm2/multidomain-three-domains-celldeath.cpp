@@ -61,13 +61,8 @@ using namespace mfem;
 IdentityMatrixCoefficient *Id = NULL;
 
 // Forward declaration
-void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &fes_grad, const Vector &grad_vec, ParGridFunction &grad_gf, MatrixCoefficient *K);
 void print_matrix(const DenseMatrix &A);
 void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step);
-
-static constexpr real_t Tbody = 37.0; // Body temperature, Celsius 
-static constexpr real_t Tfluid = 30.0; // Fluid temperature, Celsius
-static constexpr real_t Tcylinder = 20.0; // Cylinder temperature, Celsius
 
 // Volumetric heat source in the sphere
 constexpr double Sphere_Radius = 0.2;
@@ -88,6 +83,10 @@ void velocity_profile(const Vector &x, Vector &b);
 double viscosity = 1.0;
 double dPdx = 1.0;
 constexpr double R = 0.25; // cylinder mesh radius
+
+static real_t T_solid = 37.0;   // Body temperature
+static real_t T_fluid = 30.0;  // Fluid temperature
+static real_t T_cylinder = 20.0; // Cylinder temperature
 
 int main(int argc, char *argv[])
 {
@@ -171,7 +170,7 @@ int main(int argc, char *argv[])
    args.AddOption(&kval_fluid, "-kf", "--k-fluid",
                   "Thermal conductivity of the fluid (W/mK).");
    args.AddOption(&dPdx, "-dPdx", "--pressure-drop",
-                  "Pressure drop for velocity profile.");
+                  "Pressure drop forvelocity profile.");
    args.AddOption(&alpha, "-alpha", "--advection-coefficient",
                   "Advection coefficient.");
    args.AddOption(&reaction, "-beta", "--reaction-coefficient",
@@ -188,10 +187,16 @@ int main(int argc, char *argv[])
 
    args.ParseCheck();
 
+   // Determine order for cell death problem
    if (order_celldeath < 0)
    {
       order_celldeath = order;
    }
+
+   // Convert temperature to kelvin
+   T_solid =  heat::CelsiusToKelvin(T_solid);
+   T_fluid =  heat::CelsiusToKelvin(T_fluid);
+   T_cylinder =  heat::CelsiusToKelvin(T_cylinder);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -272,7 +277,7 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    if (Mpi::Root())
-      mfem::out << "\033[34m\nSetting up coefficients for temperature problem... \033[0m" << std::endl;
+      mfem::out << "\033[34m\nSetting up coefficients... \033[0m";
 
    auto Id = new IdentityMatrixCoefficient(sdim);
 
@@ -354,32 +359,38 @@ int main(int argc, char *argv[])
 
    celldeath::CellDeathSolver CellDeath_Solid(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
 
-   // Grid functions for interface transfer --> need it for gridfunction coefficients
-   ParGridFunction *temperature_fc_cylinder = new ParGridFunction(Heat_Cylinder.GetFESpace());
-   ParGridFunction *temperature_fc_fluid = new ParGridFunction(Heat_Fluid.GetFESpace());
-   ParGridFunction *temperature_sc_solid = new ParGridFunction(Heat_Solid.GetFESpace());
-   ParGridFunction *temperature_sc_cylinder = new ParGridFunction(Heat_Cylinder.GetFESpace());
-   // ParGridFunction *temperature_fs_solid = new ParGridFunction(Heat_Solid.GetFESpace());
-   // ParGridFunction *temperature_fs_fluid = new ParGridFunction(Heat_Fluid.GetFESpace());
-   ParGridFunction *temperature_fluid_wall_gf = new ParGridFunction(Heat_Fluid.GetFESpace());
+   ParFiniteElementSpace *fes_cylinder = Heat_Cylinder.GetFESpace();
+   ParFiniteElementSpace *fes_solid = Heat_Solid.GetFESpace();
+   ParFiniteElementSpace *fes_fluid = Heat_Fluid.GetFESpace();
+   ParFiniteElementSpace *fes_grad_cylinder = Heat_Cylinder.GetVectorFESpace();
+   ParFiniteElementSpace *fes_grad_solid = Heat_Solid.GetVectorFESpace();
+   ParFiniteElementSpace *fes_grad_fluid = Heat_Fluid.GetVectorFESpace();
 
-   ParGridFunction *heatFlux_fs_solid = new ParGridFunction(Heat_Solid.GetVectorFESpace());
-   ParGridFunction *heatFlux_fs_fluid = new ParGridFunction(Heat_Fluid.GetVectorFESpace());
-   ParGridFunction *heatFlux_fc_cylinder = new ParGridFunction(Heat_Cylinder.GetVectorFESpace());
-   ParGridFunction *heatFlux_fc_fluid = new ParGridFunction(Heat_Fluid.GetVectorFESpace());
-   ParGridFunction *heatFlux_sc_solid = new ParGridFunction(Heat_Solid.GetVectorFESpace());
-   ParGridFunction *heatFlux_sc_cylinder = new ParGridFunction(Heat_Cylinder.GetVectorFESpace());
+   // Grid functions for interface transfer --> need it for gridfunction coefficients
+   ParGridFunction *temperature_fc_cylinder = new ParGridFunction(fes_cylinder); *temperature_fc_cylinder = 0.0;
+   ParGridFunction *temperature_fc_fluid = new ParGridFunction(fes_fluid); *temperature_fc_fluid = 0.0;
+   ParGridFunction *temperature_sc_solid = new ParGridFunction(fes_solid); *temperature_sc_solid = 0.0;
+   ParGridFunction *temperature_sc_cylinder = new ParGridFunction(fes_cylinder); *temperature_sc_cylinder = 0.0;
+   ParGridFunction *temperature_fs_solid = new ParGridFunction(fes_solid); *temperature_fs_solid = 0.0;
+   ParGridFunction *temperature_fs_fluid = new ParGridFunction(fes_fluid); *temperature_fs_fluid = 0.0;
+
+   ParGridFunction *heatFlux_fs_solid = new ParGridFunction(fes_grad_solid); *heatFlux_fs_solid = 0.0;
+   ParGridFunction *heatFlux_fs_fluid = new ParGridFunction(fes_grad_fluid); *heatFlux_fs_fluid = 0.0;
+   ParGridFunction *heatFlux_fc_cylinder = new ParGridFunction(fes_grad_cylinder); *heatFlux_fc_cylinder = 0.0;
+   ParGridFunction *heatFlux_fc_fluid = new ParGridFunction(fes_grad_fluid); *heatFlux_fc_fluid = 0.0;
+   ParGridFunction *heatFlux_sc_solid = new ParGridFunction(fes_grad_solid); *heatFlux_sc_solid = 0.0;
+   ParGridFunction *heatFlux_sc_cylinder = new ParGridFunction(fes_grad_cylinder); *heatFlux_sc_cylinder = 0.0;
 
    // Grid functions and coefficients for error computation
-   ParGridFunction *temperature_solid_prev_gf = new ParGridFunction(Heat_Solid.GetFESpace());
-   ParGridFunction *temperature_fluid_prev_gf = new ParGridFunction(Heat_Fluid.GetFESpace());
-   ParGridFunction *temperature_cylinder_prev_gf = new ParGridFunction(Heat_Cylinder.GetFESpace());
+   ParGridFunction *temperature_solid_prev_gf = new ParGridFunction(fes_solid); *temperature_solid_prev_gf = 0.0;
+   ParGridFunction *temperature_fluid_prev_gf = new ParGridFunction(fes_fluid); *temperature_fluid_prev_gf = 0.0;
+   ParGridFunction *temperature_cylinder_prev_gf = new ParGridFunction(fes_cylinder); *temperature_cylinder_prev_gf = 0.0;
    GridFunctionCoefficient temperature_solid_prev_coeff(temperature_solid_prev_gf);
    GridFunctionCoefficient temperature_fluid_prev_coeff(temperature_fluid_prev_gf);
    GridFunctionCoefficient temperature_cylinder_prev_coeff(temperature_cylinder_prev_gf);
 
    // Grid functions for visualization
-   ParGridFunction *velocity_gf = new ParGridFunction(Heat_Fluid.GetVectorFESpace());
+   ParGridFunction *velocity_gf = new ParGridFunction(fes_grad_fluid); *velocity_gf = 0.0;
 
    if (Mpi::Root())
       mfem::out << "\033[34mdone." << std::endl;
@@ -399,9 +410,9 @@ int main(int argc, char *argv[])
    Array<int> solid_lateral_attr = bdr_attr_sets.GetAttributeSet("Solid Lateral");
    Array<int> solid_bottom_attr = bdr_attr_sets.GetAttributeSet("Solid Bottom");
 
-   Array<int> solid_domain_attributes = attr_sets.GetAttributeSetMarker("Solid");
-   Array<int> fluid_domain_attributes = attr_sets.GetAttributeSetMarker("Fluid");
-   Array<int> cylinder_domain_attributes = attr_sets.GetAttributeSetMarker("Cylinder");
+   Array<int> solid_domain_attributes = AttributeSets::AttrToMarker(solid_submesh->attributes.Max(), solid_domain_attribute);
+   Array<int> fluid_domain_attributes = AttributeSets::AttrToMarker(fluid_submesh->attributes.Max(), fluid_domain_attribute);
+   Array<int> cylinder_domain_attributes = AttributeSets::AttrToMarker(cylinder_submesh->attributes.Max(), cylinder_domain_attribute);
 
    // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
    Array<int> fluid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Fluid");
@@ -414,24 +425,26 @@ int main(int argc, char *argv[])
    // Array<int> fluid_cylinder_interface_c = AttributeSets::AttrToMarker(cylinder_submesh->bdr_attributes.Max(), fluid_cylinder_interface);
    // Array<int> fluid_cylinder_interface_f = AttributeSets::AttrToMarker(fluid_submesh->bdr_attributes.Max(), fluid_cylinder_interface);
 
+
    // Fluid:
-   // - T = T_out on top/lateral walls
-   // - T = Ts   on  Γfs
-   // - T = Tc   on  Γfc
+   // - T = T_fluid on top/lateral walls
+   // - Dirichlet   on  Γfs
+   // - Dirichlet   on  Γfc
 
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for fluid domain... \033[0m" << std::endl;
 
-   GridFunctionCoefficient *temperature_fluid_wall_coeff = new GridFunctionCoefficient(temperature_fluid_wall_gf);
-   bcs_fluid->AddDirichletBC(temperature_fluid_wall_coeff, fluid_solid_interface[0]);
-   bcs_fluid->AddDirichletBC(temperature_fluid_wall_coeff, fluid_cylinder_interface[0], false); // Don't own the coefficient, it'll be deleted already in the previous line
-   bcs_fluid->AddDirichletBC(heat::CelsiusToKelvin(Tfluid), fluid_lateral_attr[0]);
-   bcs_fluid->AddDirichletBC(heat::CelsiusToKelvin(Tfluid), fluid_top_attr[0]);
-   // Solid:
-   // - T = T_out on bottom/lateral walls
-   // - T = Tc                on  Γsc
-   // - ks ∇Ts•n = ks ∇Tf•n   on  Γfs
+   GridFunctionCoefficient *temperature_fs_solid_coeff = new GridFunctionCoefficient(temperature_fs_fluid);
+   GridFunctionCoefficient *temperature_fc_cylinder_coeff = new GridFunctionCoefficient(temperature_fc_fluid);
+   bcs_fluid->AddDirichletBC(temperature_fs_solid_coeff, fluid_solid_interface[0]);
+   bcs_fluid->AddDirichletBC(temperature_fc_cylinder_coeff, fluid_cylinder_interface[0]); // Don't own the coefficient, it'll be deleted already in the previous line
+   bcs_fluid->AddDirichletBC(T_fluid, fluid_lateral_attr[0]);
+   bcs_fluid->AddDirichletBC(T_fluid, fluid_top_attr[0]);
 
+   // Solid:
+   // - T = T_solid on bottom/lateral walls
+   // - Neumann   on  Γsc
+   // - Neumann   on  Γfs
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for solid domain...\033[0m" << std::endl;
 
@@ -440,13 +453,13 @@ int main(int argc, char *argv[])
 
    bcs_solid->AddNeumannVectorBC(heatFlux_fs_solid_coeff, fluid_solid_interface[0]);
    bcs_solid->AddNeumannVectorBC(heatFlux_sc_solid_coeff, solid_cylinder_interface[0]);
-   bcs_solid->AddDirichletBC(heat::CelsiusToKelvin(Tbody), solid_lateral_attr[0]);
-   bcs_solid->AddDirichletBC(heat::CelsiusToKelvin(Tbody), solid_bottom_attr[0]);
+   bcs_solid->AddDirichletBC(T_solid, solid_lateral_attr[0]);
+   bcs_solid->AddDirichletBC(T_solid, solid_bottom_attr[0]);
 
    // Cylinder:
-   // - Homogeneous Neumann on top wall
-   // - kc ∇Tc•n = kc ∇Ts•n   on  Γsc
-   // - T = Tf   on  Γfc
+   // - T = T_cylinder on top wall
+   // - Dirichlet  on  Γsc
+   // - Neumann    on  Γfc
 
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for cylinder domain...\033[0m" << std::endl;
@@ -456,7 +469,7 @@ int main(int argc, char *argv[])
 
    bcs_cyl->AddNeumannVectorBC(heatFlux_fc_cylinder_coeff, fluid_cylinder_interface[0]);
    bcs_cyl->AddDirichletBC(temperature_sc_cylinder_coeff, solid_cylinder_interface[0]);
-   //bcs_cyl->AddDirichletBC(T_out, cylinder_top_attr[0]); 
+   bcs_cyl->AddDirichletBC(T_cylinder, cylinder_top_attr[0]);
 
    Heat_Cylinder.AddVolumetricTerm(HeatingSphere, cylinder_domain_attributes);
 
@@ -464,26 +477,18 @@ int main(int argc, char *argv[])
    /// 8. Setup interface transfer
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
+   // Note: 
+   // - GSLIB is required to transfer custom qoi (e.g. heatflux) 
+   // - Transfer of the temperature field can be done both with GSLIB or with transfer map from ParSubMesh objects
+   // - In this case GSLIB is used for both qoi and temperature field transfer
+
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
-   // Create the submesh transfer map
-   if (Mpi::Root())
-      mfem::out << "\033[34mCreating transfer maps...\033[0m";
-   auto tm_solid_to_fluid = ParSubMesh::CreateTransferMap(*temperature_solid_gf, *temperature_fluid_gf);
-   auto tm_cylinder_to_fluid = ParSubMesh::CreateTransferMap(*temperature_cylinder_gf, *temperature_fluid_gf);
-   auto tm_fluid_to_solid = ParSubMesh::CreateTransferMap(*temperature_fluid_gf, *temperature_solid_gf);
-   auto tm_fluid_to_cylinder = ParSubMesh::CreateTransferMap(*temperature_fluid_gf, *temperature_cylinder_gf);
-   auto tm_solid_to_cylinder = ParSubMesh::CreateTransferMap(*temperature_solid_gf, *temperature_cylinder_gf);
-   auto tm_cylinder_to_solid = ParSubMesh::CreateTransferMap(*temperature_cylinder_gf, *temperature_solid_gf);
-
-   if (Mpi::Root())
-      mfem::out << "\033[34mdone.\033[0m" << std::endl;
-
    // Setup GSLIB for gradient transfer:
-   // 1. Find points on the destination mesh
-   // 2. Setup GSLIB finder on the source mesh
-   // 3. Define QoI (gradient of the temperature field) on the source meshes (cylinder, solid, fluid)
+   // 1. Find points on the DESTINATION mesh
+   // 2. Setup GSLIB finder on the SOURCE mesh
+   // 3. Define QoI (gradient of the temperature field) on the SOURCE meshes (cylinder, solid, fluid)
 
    MPI_Barrier(parent_mesh.GetComm());
 
@@ -493,7 +498,7 @@ int main(int argc, char *argv[])
           << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Solid (D)\033[0m" << std::endl;
    std::vector<int> sc_solid_element_idx;
    Vector sc_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, *Heat_Solid.GetFESpace(), sc_solid_element_idx, sc_solid_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_solid, sc_solid_element_idx, sc_solid_element_coords);
 
    FindPointsGSLIB finder_cylinder_to_solid(MPI_COMM_WORLD);
    finder_cylinder_to_solid.Setup(*cylinder_submesh);
@@ -504,73 +509,96 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Cylinder (D)\033[0m" << std::endl;
    std::vector<int> sc_cylinder_element_idx;
    Vector sc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, *Heat_Cylinder.GetFESpace(), sc_cylinder_element_idx, sc_cylinder_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_cylinder, sc_cylinder_element_idx, sc_cylinder_element_coords);
 
    FindPointsGSLIB finder_solid_to_cylinder(MPI_COMM_WORLD);
    finder_solid_to_cylinder.Setup(*solid_submesh);
    finder_solid_to_cylinder.FindPoints(sc_cylinder_element_coords, Ordering::byVDIM);
+
+
 
    // Fluid (S) --> Cylinder (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Cylinder (D)\033[0m" << std::endl;
    std::vector<int> fc_cylinder_element_idx;
    Vector fc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, *Heat_Cylinder.GetFESpace(), fc_cylinder_element_idx, fc_cylinder_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_cylinder, fc_cylinder_element_idx, fc_cylinder_element_coords);
 
    FindPointsGSLIB finder_fluid_to_cylinder(MPI_COMM_WORLD);
    finder_fluid_to_cylinder.Setup(*fluid_submesh);
    finder_fluid_to_cylinder.FindPoints(fc_cylinder_element_coords, Ordering::byVDIM);
+
+   // Cylinder (S) --> Fluid (D)
+   if (Mpi::Root())
+      mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Fluid (D)\033[0m" << std::endl;
+   std::vector<int> fc_fluid_element_idx;
+   Vector fc_fluid_element_coords;
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_fluid, fc_fluid_element_idx, fc_fluid_element_coords);
+
+   FindPointsGSLIB finder_cylinder_to_fluid(MPI_COMM_WORLD);
+   finder_cylinder_to_fluid.Setup(*cylinder_submesh);
+   finder_cylinder_to_fluid.FindPoints(fc_fluid_element_coords, Ordering::byVDIM);
+
+
 
    // Fluid (S) --> Solid (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Solid (D)\033[0m" << std::endl;
    std::vector<int> fs_solid_element_idx;
    Vector fs_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, *Heat_Solid.GetFESpace(), fs_solid_element_idx, fs_solid_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_solid, fs_solid_element_idx, fs_solid_element_coords);
 
    FindPointsGSLIB finder_fluid_to_solid(MPI_COMM_WORLD);
    finder_fluid_to_solid.Setup(*fluid_submesh);
    finder_fluid_to_solid.FindPoints(fs_solid_element_coords, Ordering::byVDIM);
 
+   // Solid (S) --> Fluid (D)
+   if (Mpi::Root())
+      mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Fluid (D)\033[0m" << std::endl;
+   std::vector<int> fs_fluid_element_idx;
+   Vector fs_fluid_element_coords;
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_fluid, fs_fluid_element_idx, fs_fluid_element_coords);
+
+   FindPointsGSLIB finder_solid_to_fluid(MPI_COMM_WORLD);
+   finder_solid_to_fluid.Setup(*solid_submesh);
+   finder_solid_to_fluid.FindPoints(fs_fluid_element_coords, Ordering::byVDIM);
+
+
    // 3. Define QoI (heatflux) on the source meshes (cylinder, solid, fluid)
    int qoi_size_on_qp = sdim;
-   Vector qoi_src, qoi_dst; // QoI vector, used to store qoi_src in qoi_func and in call to GSLIB interpolator
 
    // Define lamdbas to compute gradient of the temperature field
-   auto heatFlux_cyl = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
+   auto heatFlux_cyl = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector &qoi_loc)
    {
       DenseMatrix Kmat(sdim);
       Vector gradloc(sdim);
-      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
 
       Kappa_cyl->Eval(Kmat, Tr, ip);
 
       temperature_cylinder_gf->GetGradient(Tr, gradloc);
-      Kmat.Mult(gradloc, kgradloc);
+      Kmat.Mult(gradloc, qoi_loc);
    };
 
-   auto heatFlux_solid = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
+   auto heatFlux_solid = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector &qoi_loc)
    {
       DenseMatrix Kmat(sdim);
       Vector gradloc(sdim);
-      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
 
       Kappa_solid->Eval(Kmat, Tr, ip);
 
       temperature_solid_gf->GetGradient(Tr, gradloc);
-      Kmat.Mult(gradloc, kgradloc);
+      Kmat.Mult(gradloc, qoi_loc);
    };
 
-   auto heatFlux_fluid = [&](ElementTransformation &Tr, int pt_idx, const IntegrationPoint &ip)
+   auto heatFlux_fluid = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector &qoi_loc)
    {
       DenseMatrix Kmat(sdim);
       Vector gradloc(sdim);
-      Vector kgradloc(qoi_src.GetData() + pt_idx * sdim, sdim); // ref to qoi_src
 
       Kappa_fluid->Eval(Kmat, Tr, ip);
 
       temperature_fluid_gf->GetGradient(Tr, gradloc);
-      Kmat.Mult(gradloc, kgradloc);
+      Kmat.Mult(gradloc, qoi_loc);
    };
 
    if (Mpi::Root())
@@ -600,17 +628,17 @@ int main(int argc, char *argv[])
    if (paraview)
    {
       paraview_dc_cylinder.SetPrefixPath(outfolder);
-      paraview_dc_cylinder.SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_cylinder.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_cylinder.SetCompressionLevel(9);
       Heat_Cylinder.RegisterParaviewFields(paraview_dc_cylinder);
 
       paraview_dc_solid.SetPrefixPath(outfolder);
-      paraview_dc_solid.SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_solid.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_solid.SetCompressionLevel(9);
       Heat_Solid.RegisterParaviewFields(paraview_dc_solid);
 
       paraview_dc_fluid.SetPrefixPath(outfolder);
-      paraview_dc_fluid.SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_fluid.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_fluid.SetCompressionLevel(9);
       Heat_Fluid.RegisterParaviewFields(paraview_dc_fluid);
       Heat_Fluid.AddParaviewField("velocity", velocity_gf);
@@ -624,7 +652,6 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34mdone.\033[0m" << std::endl;
 
-
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 9. Perform time-integration (looping over the time iterations, step, with a
    //     time-step dt).
@@ -633,19 +660,17 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nStarting time-integration... \033[0m" << std::endl;
 
-   // Initial conditions
-   ConstantCoefficient T0solid(heat::CelsiusToKelvin(Tbody));
+   ConstantCoefficient T0solid(T_solid);
    temperature_solid_gf->ProjectCoefficient(T0solid);
-   
-   ConstantCoefficient T0fluid(heat::CelsiusToKelvin(Tfluid));
-   temperature_fluid_gf->ProjectCoefficient(T0fluid);
-
-   ConstantCoefficient T0cylinder(heat::CelsiusToKelvin(Tcylinder));
-   temperature_cylinder_gf->ProjectCoefficient(T0cylinder);
-
    Heat_Solid.SetInitialTemperature(*temperature_solid_gf);
-   Heat_Fluid.SetInitialTemperature(*temperature_fluid_gf);
+
+   ConstantCoefficient T0cylinder(T_cylinder);
+   temperature_cylinder_gf->ProjectCoefficient(T0cylinder);
    Heat_Cylinder.SetInitialTemperature(*temperature_cylinder_gf);
+
+   ConstantCoefficient T0fluid(T_fluid);
+   temperature_fluid_gf->ProjectCoefficient(T0fluid);
+   Heat_Fluid.SetInitialTemperature(*temperature_fluid_gf);
 
    velocity_gf->ProjectCoefficient(*q);
 
@@ -666,17 +691,19 @@ int main(int argc, char *argv[])
    int max_iter = 100;
 
    // Vectors for error computation and relaxation
-   Vector temperature_solid(temperature_solid_gf->Size()); // Relaxation
-   Vector temperature_cylinder(temperature_cylinder_gf->Size());
-   Vector temperature_fluid(temperature_fluid_gf->Size());
+   Vector temperature_solid(temperature_solid_gf->Size());   temperature_solid = T_solid;
+   Vector temperature_cylinder(temperature_cylinder_gf->Size()); temperature_cylinder = T_cylinder;
+   Vector temperature_fluid(temperature_fluid_gf->Size()); temperature_fluid = T_fluid;
 
-   Vector temperature_solid_prev(temperature_solid_gf->Size()); // Subiteration (convergence/relaxation)
+   Vector temperature_solid_prev(temperature_solid_gf->Size());
+   temperature_solid_prev = T_solid;
    Vector temperature_cylinder_prev(temperature_cylinder_gf->Size());
-   Vector temperature_fluid_prev(temperature_fluid_gf->Size());
+   temperature_cylinder_prev = T_cylinder;
+   Vector temperature_fluid_prev(temperature_fluid_gf->Size()); temperature_fluid_prev = T_fluid;
 
-   Vector temperature_solid_tn(*temperature_solid_gf->GetTrueDofs()); // Initial temperature in outer time loop
-   Vector temperature_cylinder_tn(*temperature_cylinder_gf->GetTrueDofs());
-   Vector temperature_fluid_tn(*temperature_fluid_gf->GetTrueDofs());
+   Vector temperature_solid_tn(*temperature_solid_gf->GetTrueDofs()); temperature_solid_tn = T_solid;
+   Vector temperature_cylinder_tn(*temperature_cylinder_gf->GetTrueDofs()); temperature_cylinder_tn = T_cylinder;
+   Vector temperature_fluid_tn(*temperature_fluid_gf->GetTrueDofs()); temperature_fluid_tn = T_fluid;
 
    int cyl_dofs = Heat_Cylinder.GetProblemSize();
    int fluid_dofs = Heat_Fluid.GetProblemSize();
@@ -733,24 +760,18 @@ int main(int argc, char *argv[])
       double norm_diff_solid = 2 * tol;
       double norm_diff_fluid = 2 * tol;
       double norm_diff_cylinder = 2 * tol;
-      // double dt_iter = dt / 10;
-      // double t_iter = 0;
 
       bool converged_solid = false;
       bool converged_fluid = false;
       bool converged_cylinder = false;
 
-      /////////////////////////////////////////
-      //         Solve HEAT TRANSFER         //
-      /////////////////////////////////////////
-
-      while (!converged && iter <= max_iter) // START INNER LOOP
+      while (!converged && iter <= max_iter)
       {
 
          // Store the previous temperature on domains for convergence
-         temperature_solid_prev = *(temperature_solid_gf->GetTrueDofs());
-         temperature_fluid_prev = *(temperature_fluid_gf->GetTrueDofs());
-         temperature_cylinder_prev = *(temperature_cylinder_gf->GetTrueDofs());
+         temperature_solid_gf->GetTrueDofs(temperature_solid_prev);
+         temperature_fluid_gf->GetTrueDofs(temperature_fluid_prev);
+         temperature_cylinder_gf->GetTrueDofs(temperature_cylinder_prev);
          temperature_solid_prev_gf->SetFromTrueDofs(temperature_solid_prev);
          temperature_fluid_prev_gf->SetFromTrueDofs(temperature_fluid_prev);
          temperature_cylinder_prev_gf->SetFromTrueDofs(temperature_cylinder_prev);
@@ -763,8 +784,8 @@ int main(int argc, char *argv[])
 
          // if (!converged_fluid)
          { // S->F: Transfer T, C->F: Transfer T
-            tm_solid_to_fluid.Transfer(*temperature_solid_gf, *temperature_fluid_wall_gf);
-            tm_cylinder_to_fluid.Transfer(*temperature_cylinder_gf, *temperature_fluid_wall_gf);
+            ecm2_utils::GSLIBTransfer( finder_cylinder_to_fluid, fc_fluid_element_idx , *temperature_cylinder_gf, *temperature_fc_fluid);
+            ecm2_utils::GSLIBTransfer( finder_solid_to_fluid, fs_fluid_element_idx, *temperature_solid_gf, *temperature_fs_fluid);
 
             // Step in the fluid domain
             temperature_fluid_gf->SetFromTrueDofs(temperature_fluid_tn);
@@ -792,14 +813,8 @@ int main(int argc, char *argv[])
 
          // if (!converged_solid)
          { // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
-            {
-               ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid, *Heat_Fluid.GetFESpace(), heatFlux_fluid, qoi_src, qoi_dst, qoi_size_on_qp);
-               ecm2_utils::TransferQoIToDest(fs_solid_element_idx, *Heat_Solid.GetVectorFESpace(), qoi_dst, *heatFlux_fs_solid);
-            }
-            {
-               ecm2_utils::GSLIBInterpolate(finder_cylinder_to_solid, *Heat_Cylinder.GetFESpace(), heatFlux_cyl, qoi_src, qoi_dst, qoi_size_on_qp);
-               ecm2_utils::TransferQoIToDest(sc_solid_element_idx, *Heat_Solid.GetVectorFESpace(), qoi_dst, *heatFlux_sc_solid);
-            }
+            ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid, fs_solid_element_idx, fes_grad_fluid, heatFlux_fluid, *heatFlux_fs_solid, qoi_size_on_qp);
+            ecm2_utils::GSLIBInterpolate(finder_cylinder_to_solid, sc_solid_element_idx, fes_grad_cylinder, heatFlux_cyl, *heatFlux_sc_solid, qoi_size_on_qp);
 
             // Step in the solid domain
             temperature_solid_gf->SetFromTrueDofs(temperature_solid_tn);
@@ -827,11 +842,8 @@ int main(int argc, char *argv[])
 
          // if (!converged_cylinder)
          { // F->C: Transfer k ∇T_wall, S->C: Transfer T
-            {
-               ecm2_utils::GSLIBInterpolate(finder_fluid_to_cylinder, *Heat_Fluid.GetFESpace(), heatFlux_fluid, qoi_src, qoi_dst, qoi_size_on_qp);
-               ecm2_utils::TransferQoIToDest(fc_cylinder_element_idx, *Heat_Cylinder.GetVectorFESpace(), qoi_dst, *heatFlux_fc_cylinder);
-            }
-            tm_solid_to_cylinder.Transfer(*temperature_solid_gf, *temperature_sc_cylinder);
+            ecm2_utils::GSLIBInterpolate(finder_fluid_to_cylinder, fc_cylinder_element_idx, fes_grad_fluid, heatFlux_fluid, *heatFlux_fc_cylinder, qoi_size_on_qp);
+            ecm2_utils::GSLIBTransfer(finder_solid_to_cylinder, sc_cylinder_element_idx, *temperature_solid_gf, *temperature_sc_cylinder);
 
             // Step in the cylinder domain
             temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder_tn);
@@ -886,7 +898,7 @@ int main(int argc, char *argv[])
          {
             convergence_subiter.Append(norm_diff);
          }
-      } // END INNER LOOP
+      }
 
       if (Mpi::Root())
       {
@@ -924,9 +936,11 @@ int main(int argc, char *argv[])
       if (Mpi::Root())
          mfem::out << "\033[32mdone.\033[0m" << std::endl;
 
+
       ///////////////////////////////////////////////
       //         Update for next time step         //
       ///////////////////////////////////////////////
+
       // Update time step history
       Heat_Solid.UpdateTimeStepHistory();
       Heat_Cylinder.UpdateTimeStepHistory();
@@ -969,31 +983,50 @@ int main(int argc, char *argv[])
    /// 8. Cleanup
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
+   // No need to delete:
+   // - BcHandler objects: owned by HeatOperator
+   // - Coefficients provide to BCHandler: owned by CoeffContainers
+
    delete rho_fluid;
    delete rho_solid;
-   delete q;
-   delete Id;
+   delete rho_cyl;
+
+   delete Kappa_cyl;
+   delete Kappa_fluid;
+   delete Kappa_solid;
+
+   delete c_cyl;
+   delete c_fluid;
+   delete c_solid;
 
    delete temperature_fc_cylinder;
    delete temperature_fc_fluid;
    delete temperature_sc_solid;
    delete temperature_sc_cylinder;
-   delete temperature_fluid_wall_gf;
+   delete temperature_fs_solid;
+   delete temperature_fs_fluid;
+
    delete heatFlux_fs_solid;
    delete heatFlux_fs_fluid;
    delete heatFlux_fc_cylinder;
    delete heatFlux_fc_fluid;
    delete heatFlux_sc_solid;
    delete heatFlux_sc_cylinder;
+
    delete temperature_solid_prev_gf;
    delete temperature_fluid_prev_gf;
    delete temperature_cylinder_prev_gf;
+
    delete velocity_gf;
 
-   // finder_solid_to_cylinder.FreeData();
-   // finder_fluid_to_cylinder.FreeData();
-   // finder_fluid_to_solid.FreeData();
+   delete Id;
+
    finder_cylinder_to_solid.FreeData();
+   finder_solid_to_cylinder.FreeData();
+   finder_fluid_to_cylinder.FreeData();
+   finder_cylinder_to_fluid.FreeData();
+   finder_fluid_to_solid.FreeData();
+   finder_solid_to_fluid.FreeData();
 
    return 0;
 }

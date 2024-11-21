@@ -80,10 +80,14 @@ namespace mfem
         ///                                     GSLIB Interpolation utils                                         ///
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace &fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords)
+        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace *fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords)
         {
+            // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
+            if (!fes)
+                return;
+
             // Mesh
-            ParMesh &mesh = *fes.GetParMesh();
+            ParMesh &mesh = *fes->GetParMesh();
             int sdim = mesh.SpaceDimension();
 
             // Get the boundary elements with the specified attributes
@@ -99,18 +103,8 @@ namespace mfem
             }
 
             // Print the number of boundary elements on each MPI core
-            int size = mesh.GetNRanks();
-            std::vector<int> all_bdry_element_counts(size);
             int local_bdry_element_count = bdry_element_idx.size();
-            MPI_Gather(&local_bdry_element_count, 1, MPI_INT, all_bdry_element_counts.data(), 1, MPI_INT, 0, mesh.GetComm());
-
-            if (Mpi::Root())
-            {
-                for (int i = 0; i < size; i++)
-                {
-                    mfem::out << "Number of boundary elements, for MPI Core " << i << ": " << all_bdry_element_counts[i] << std::endl;
-                }
-            }
+            mfem::out << "Number of boundary elements, for MPI Core " << mesh.GetMyRank() << ": " << local_bdry_element_count << std::endl;
 
             // If no boundary elements are found, return
             if (bdry_element_idx.size() == 0)
@@ -119,7 +113,7 @@ namespace mfem
             }
 
             // Extract the coordinates of the quadrature points for each selected boundary element
-            const IntegrationRule &ir_face = (fes.GetTypicalBE())->GetNodes();
+            const IntegrationRule &ir_face = (fes->GetTypicalBE())->GetNodes();
             bdry_element_coords.SetSize(bdry_element_idx.size() *
                                         ir_face.GetNPoints() * sdim);
             bdry_element_coords = 0.0;
@@ -130,8 +124,8 @@ namespace mfem
             for (int be = 0; be < bdry_element_idx.size(); be++)
             {
                 int be_idx = bdry_element_idx[be];
-                const FiniteElement *fe = fes.GetBE(be_idx);
-                ElementTransformation *Tr = fes.GetBdrElementTransformation(be_idx);
+                const FiniteElement *fe = fes->GetBE(be_idx);
+                ElementTransformation *Tr = fes->GetBdrElementTransformation(be_idx);
                 const IntegrationRule &ir_face = fe->GetNodes();
 
                 for (int qp = 0; qp < ir_face.GetNPoints(); qp++)
@@ -151,10 +145,15 @@ namespace mfem
             return;
         }
 
-        void GSLIBInterpolate(FindPointsGSLIB &finder, ParFiniteElementSpace &fes, qoi_func_t qoi_func, Vector &qoi_src, Vector &qoi_dst, int qoi_size_on_qp)
+        void GSLIBInterpolate(FindPointsGSLIB &finder, const std::vector<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp)
         {
-            // Extarct space dimension and FE space from the mesh
-            int sdim = (fes.GetParMesh())->SpaceDimension();
+            // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
+            if (!fes)
+                return;
+
+            // Extract space dimension and FE space from the mesh
+            int sdim = (fes->GetParMesh())->SpaceDimension();
+            int vdim = fes->GetVDim();
 
             // Distribute internal GSLIB info to the corresponding mpi-rank for each point.
             Array<unsigned int>
@@ -165,7 +164,9 @@ namespace mfem
             int npt_recv = recv_elem.Size();
 
             // Compute qoi locally (on source side)
+            Vector qoi_loc, qoi_src, qoi_dst; 
             qoi_src.SetSize(npt_recv * qoi_size_on_qp);
+            qoi_loc.SetSize(qoi_size_on_qp);
             for (int i = 0; i < npt_recv; i++)
             {
                 // Get the element index
@@ -177,30 +178,48 @@ namespace mfem
                         recv_rst(sdim * i + 2));
 
                 // Get the element transformation
-                ElementTransformation *Tr = fes.GetElementTransformation(e);
+                ElementTransformation *Tr = fes->GetElementTransformation(e);
                 Tr->SetIntPoint(&ip);
 
+                // Extract the local qoi vector
+                qoi_loc.MakeRef(qoi_src, i*vdim, vdim);
+
                 // Compute the qoi_src at quadrature point (it will change the qoi_src vector)
-                qoi_func(*Tr, i, ip);
+                qoi_func(*Tr, ip, qoi_loc);
             }
 
             // Transfer the QoI from the source mesh to the destination mesh at quadrature points
             finder.DistributeInterpolatedValues(qoi_src, qoi_size_on_qp, Ordering::byVDIM, qoi_dst);
+
+            // Transfer the QoI to the destination grid function
+            TransferQoIToDest(bdry_element_idx, qoi_dst, dest_gf);
         }
 
-        void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &dest_fes, const Vector &dest_vec, ParGridFunction &dest_gf)
+        void GSLIBTransfer( FindPointsGSLIB &finder, const std::vector<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf)
         {
-            int vdim = dest_fes.GetVDim();
-            auto ordering = dest_fes.GetOrdering();
-            const int dof = dest_fes.GetTypicalBE()->GetNodes().GetNPoints();
+            // Interpolate the grid function on the source mesh to the destination mesh
+            Vector interp_vals;
+            finder.Interpolate(src_gf, interp_vals);
+
+            // Fill the grid function on destination mesh with the interpolated values
+            TransferQoIToDest(bdry_element_idx, interp_vals, dest_gf);    
+        }
+
+        inline void TransferQoIToDest(const std::vector<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf)
+        {
+            // Extract fe space from the destination grid function
+            ParFiniteElementSpace *dest_fes = dest_gf.ParFESpace();
+            int vdim = dest_fes->GetVDim();
+            auto ordering = dest_fes->GetOrdering();
+            const int dof = dest_fes->GetTypicalBE()->GetNodes().GetNPoints();
 
             int idx, be_idx, qp_idx;
             Vector qoi_loc(vdim), loc_values(dof * vdim);
             Array<int> vdofs(dof * vdim);
-            for (int be = 0; be < elem_idx.size(); be++)
+            for (int be = 0; be < bdry_element_idx.size(); be++)
             {
-                be_idx = elem_idx[be];
-                dest_fes.GetBdrElementVDofs(be_idx, vdofs);
+                be_idx = bdry_element_idx[be];
+                dest_fes->GetBdrElementVDofs(be_idx, vdofs);
                 for (int qp = 0; qp < dof; qp++)
                 {
                     qp_idx = be * dof + qp;
@@ -214,6 +233,7 @@ namespace mfem
                 dest_gf.SetSubVector(vdofs, loc_values);
             }
         }
+
 
     } // namespace ecm2_utils
 
