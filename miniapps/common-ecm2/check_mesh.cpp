@@ -73,14 +73,14 @@ int main(int argc, char *argv[])
     args.Parse();
     if (!args.Good())
     {
-        if (myrank == 0)
+        if (Mpi::Root())
         {
             args.PrintUsage(std::cout);
         }
         MPI_Finalize();
         return 1;
     }
-    if (myrank == 0)
+    if (Mpi::Root())
     {
         args.PrintOptions(std::cout);
     }
