@@ -24,7 +24,7 @@ namespace mfem
 
       ElectrostaticsSolver::ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh_, int order_,
                                                  BCHandler *bcs,
-                                                 PWMatrixCoefficient *Sigma_,
+                                                 MatrixCoefficient *Sigma_,
                                                  bool verbose_)
           : order(order_),
             bcs(bcs),
@@ -112,7 +112,7 @@ namespace mfem
          pa = pa_;
       }
 
-      void ElectrostaticsSolver::Setup()
+      void ElectrostaticsSolver::Setup(int prec_type, int pl)
       {
 
          sw_setup.Start();
@@ -204,16 +204,31 @@ namespace mfem
          // Solver
          if (pa)
          {
-            //int cheb_order = 2;
-            //Vector diag(H1FESpace->GetTrueVSize());
-            //divEpsGrad->AssembleDiagonal(diag);
-            //prec = new OperatorChebyshevSmoother(*opA, diag, ess_tdof_list, cheb_order);
-            prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);         
+            switch (prec_type)
+            {
+            case 0: // Jacobi Smoother
+               prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
+               break;
+            case 1: // LOR
+               prec = new LORSolver<HypreBoomerAMG>(*divEpsGrad, ess_tdof_list);
+               break;
+            default:
+               MFEM_ABORT("Unknown preconditioner type.");
+            }
          }
          else
          {
-            prec = new HypreBoomerAMG(*opA.As<HypreParMatrix>());
-            static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
+            switch (prec_type)
+            {
+            case 0:
+               prec = new HypreSmoother(*opA.As<HypreParMatrix>());
+               dynamic_cast<HypreSmoother *>(prec)->SetType(HypreSmoother::Jacobi, 1);
+               break;
+            case 1:
+               prec = new HypreBoomerAMG(*opA.As<HypreParMatrix>());
+               static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
+               break;
+            }
          }
 
          const double rel_tol = 1e-8;
@@ -222,7 +237,7 @@ namespace mfem
          solver.SetRelTol(rel_tol);
          solver.SetAbsTol(0.0);
          solver.SetMaxIter(1000);
-         solver.SetPrintLevel(0);
+         solver.SetPrintLevel(pl);
          solver.SetOperator(*opA);
          solver.SetPreconditioner(*prec);
       }
@@ -466,20 +481,20 @@ namespace mfem
       {
          // The w_coeff object stashes a reference to sigma and E, and it has
          // an Eval method that will be used by ProjectCoefficient.
-         JouleHeatingCoefficient w_coeff(*Sigma, E_gf);
+         JouleHeatingCoefficient w_coeff(Sigma, E_gf);
 
          // This applies the definition of the finite element degrees-of-freedom
          // to convert the function to a set of discrete values
          w_gf.ProjectCoefficient(w_coeff);
       }
 
-      double JouleHeatingCoefficient::Eval(ElementTransformation &T,
+      real_t JouleHeatingCoefficient::Eval(ElementTransformation &T,
                                            const IntegrationPoint &ip)
       {
          Vector E, J;
          DenseMatrix thisSigma;
          E_gf.GetVectorValue(T, ip, E);
-         Sigma.Eval(thisSigma, T, ip); // Evaluate sigma at the point
+         Sigma->Eval(thisSigma, T, ip); // Evaluate sigma at the point
          thisSigma.Mult(E, J);         // J = sigma * E
          return InnerProduct(J, E);    // W = J dot E
       }

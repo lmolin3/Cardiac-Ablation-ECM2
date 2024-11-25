@@ -39,7 +39,7 @@ namespace mfem
       public:
          ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh, int order,
                               BCHandler *bcs,
-                              PWMatrixCoefficient *Sigma_,
+                              MatrixCoefficient *Sigma_,
                               bool verbose_ = false);
 
          ~ElectrostaticsSolver();
@@ -50,7 +50,7 @@ namespace mfem
 
          void EnablePA(bool pa = false);
 
-         void Setup();
+         void Setup(int prec_type = 0, int pl = 0);
 
          void Update();
 
@@ -91,6 +91,7 @@ namespace mfem
          void display_banner(ostream &os);
 
          // Getters for phi and E
+         ParGridFunction *GetPotentialGfPtr() { return phi; }
          ParGridFunction &GetPotential() { return *phi; }
          ParGridFunction &GetElectricField() { return *E; }
 
@@ -132,7 +133,7 @@ namespace mfem
          ParGridFunction *phi; // Electric Scalar Potential
          ParGridFunction *E;   // Electric Field
 
-         PWMatrixCoefficient *Sigma; // Electric conductivity Coefficient
+         MatrixCoefficient *Sigma; // Electric conductivity Coefficient
 
          std::map<std::string, socketstream *> socks; // Visualization sockets
 
@@ -155,17 +156,16 @@ namespace mfem
       // JouleHeatingCoefficient object will contain a reference to the electric field
       // grid function, and the conductivity sigma, and returns sigma E dot E at a
       // point.
-      class JouleHeatingCoefficient : public Coefficient
+      class JouleHeatingCoefficient: public Coefficient
       {
       private:
          ParGridFunction &E_gf;
-         PWMatrixCoefficient Sigma;
-
+         MatrixCoefficient *Sigma;
       public:
-         JouleHeatingCoefficient(const PWMatrixCoefficient &Sigma_,
+         JouleHeatingCoefficient(MatrixCoefficient *Sigma_,
                                  ParGridFunction &E_gf_)
-             : E_gf(E_gf_), Sigma(Sigma_) {}
-         virtual double Eval(ElementTransformation &T, const IntegrationPoint &ip);
+            : E_gf(E_gf_), Sigma(Sigma_) {}
+         real_t Eval(ElementTransformation &T, const IntegrationPoint &ip) override;
          virtual ~JouleHeatingCoefficient() {}
       };
 
