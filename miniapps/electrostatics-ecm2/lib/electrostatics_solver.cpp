@@ -36,7 +36,6 @@ namespace mfem
             divEpsGrad(nullptr),
             SigmaMass(nullptr),
             rhs_form(nullptr),
-            B(nullptr),
             prec(nullptr),
             pa(false),
             Sigma(Sigma_), // Must be deleted outside solver
@@ -48,6 +47,7 @@ namespace mfem
          // mesh. Here we use arbitrary order H1 for potential and ND for the electric field.
          H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
          HCurlFESpace = new ND_ParFESpace(pmesh.get(), order, pmesh->Dimension());
+         L2FESpace = new L2_ParFESpace(pmesh.get(), order-1, pmesh->Dimension());
 
          // Discrete derivative operator
          grad = new ParDiscreteGradOperator(H1FESpace, HCurlFESpace);
@@ -58,6 +58,12 @@ namespace mfem
 
          E = new ParGridFunction(HCurlFESpace);
          *E = 0.0;
+
+         // Define Joule Heating Coefficient
+         w_coeff = new JouleHeatingCoefficient(Sigma, E);
+
+         // Initialize vector/s
+         B.SetSize(H1FESpace->GetTrueVSize());
 
          tmp_domain_attr.SetSize(pmesh->attributes.Max());
       }
@@ -75,8 +81,6 @@ namespace mfem
 
          delete H1FESpace;
          delete HCurlFESpace;
-
-         delete B;
 
          delete prec;
 
@@ -112,8 +116,9 @@ namespace mfem
          pa = pa_;
       }
 
-      void ElectrostaticsSolver::Setup(int prec_type, int pl)
+      void ElectrostaticsSolver::Setup(int prec_type_, int pl)
       {
+         prec_type = prec_type_;
 
          sw_setup.Start();
 
@@ -196,6 +201,15 @@ namespace mfem
             }
          }
 
+         // Add neumann boundary conditions (vector version)
+         if (bcs->GetNeumannVectorBcs().size() > 0)
+         {
+            for (auto &neumann_bc : bcs->GetNeumannVectorBcs())
+            {
+               rhs_form->AddBoundaryIntegrator(new BoundaryNormalLFIntegrator(*(neumann_bc.coeff)), neumann_bc.attr);
+            }
+         }
+
          sw_setup.Stop();
 
          // Assemble bilinear and linear forms
@@ -270,8 +284,7 @@ namespace mfem
          }
 
          // Assemble rhs
-         rhs_form->Assemble();
-         B = rhs_form->ParallelAssemble();
+         AssembleRHS();
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -280,6 +293,13 @@ namespace mfem
          }
 
          sw_assemble.Stop();
+      }
+
+      void ElectrostaticsSolver::AssembleRHS()
+      {
+         // Assemble rhs
+         rhs_form->Assemble();
+         rhs_form->ParallelAssemble(B);
       }
 
       void
@@ -319,8 +339,6 @@ namespace mfem
          phi->Update();
          E->Update();
          rhs_form->Update();
-         delete B;
-         B = nullptr;
 
          // Inform the bilinear forms that the space has changed.
          divEpsGrad->Update();
@@ -339,21 +357,36 @@ namespace mfem
          prec = nullptr;
          if (pa)
          {
-            //int cheb_order = 2;
-            //Vector diag(H1FESpace->GetTrueVSize());
-            //divEpsGrad->AssembleDiagonal(diag);
-            //prec = new OperatorChebyshevSmoother(*opA, diag, ess_tdof_list, cheb_order);
-            prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
+            switch (prec_type)
+            {
+            case 0: // Jacobi Smoother
+               prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
+               break;
+            case 1: // LOR
+               prec = new LORSolver<HypreBoomerAMG>(*divEpsGrad, ess_tdof_list);
+               break;
+            default:
+               MFEM_ABORT("Unknown preconditioner type.");
+            }
          }
          else
          {
-            prec = new HypreBoomerAMG(*opA.As<HypreParMatrix>());
-            static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
+            switch (prec_type)
+            {
+            case 0:
+               prec = new HypreSmoother(*opA.As<HypreParMatrix>());
+               dynamic_cast<HypreSmoother *>(prec)->SetType(HypreSmoother::Jacobi, 1);
+               break;
+            case 1:
+               prec = new HypreBoomerAMG(*opA.As<HypreParMatrix>());
+               static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
+               break;
+            }
          }
       }
 
       void
-      ElectrostaticsSolver::Solve()
+      ElectrostaticsSolver::Solve(bool updateRhs)
       {
 
          sw_solve.Start();
@@ -369,19 +402,24 @@ namespace mfem
          ProjectDirichletBCS(*phi);
          phi->GetTrueDofs(Phi);
 
+         if (updateRhs)
+         {
+            AssembleRHS();
+         }
+
          /// 2. Apply essential boundary conditions
          if (pa)
          {
             auto *divEpsGrad_C = opA.As<ConstrainedOperator>();
-            divEpsGrad_C->EliminateRHS(Phi, *B);
+            divEpsGrad_C->EliminateRHS(Phi, B);
          }
          else
          {
-            divEpsGrad->EliminateVDofsInRHS(ess_tdof_list, Phi, *B);
+            divEpsGrad->EliminateVDofsInRHS(ess_tdof_list, Phi, B);
          }
 
          /// 3. Solve the system
-         solver.Mult(*B, Phi);
+         solver.Mult(B, Phi);
 
          /// 4. Update the solution gf with the new values
          phi->SetFromTrueDofs(Phi);
@@ -476,16 +514,11 @@ namespace mfem
          return el;
       }
 
-      void ElectrostaticsSolver::GetJouleHeating(ParGridFunction &E_gf,
-                                                 ParGridFunction &w_gf) const
+      void ElectrostaticsSolver::GetJouleHeating(ParGridFunction &w_gf) const
       {
-         // The w_coeff object stashes a reference to sigma and E, and it has
-         // an Eval method that will be used by ProjectCoefficient.
-         JouleHeatingCoefficient w_coeff(Sigma, E_gf);
-
          // This applies the definition of the finite element degrees-of-freedom
          // to convert the function to a set of discrete values
-         w_gf.ProjectCoefficient(w_coeff);
+         w_gf.ProjectCoefficient(*w_coeff);
       }
 
       real_t JouleHeatingCoefficient::Eval(ElementTransformation &T,
@@ -493,10 +526,11 @@ namespace mfem
       {
          Vector E, J;
          DenseMatrix thisSigma;
-         E_gf.GetVectorValue(T, ip, E);
+         E_gf->GetVectorValue(T, ip, E);
+         J.SetSize(E.Size());
          Sigma->Eval(thisSigma, T, ip); // Evaluate sigma at the point
-         thisSigma.Mult(E, J);         // J = sigma * E
-         return InnerProduct(J, E);    // W = J dot E
+         thisSigma.Mult(E, J);          // J = sigma * E
+         return InnerProduct(J, E);     // W = J dot E
       }
 
       void ElectrostaticsSolver::GetErrorEstimates(Vector &errors)
@@ -561,7 +595,7 @@ namespace mfem
       }
 
       void
-      ElectrostaticsSolver::WriteFields(int it)
+      ElectrostaticsSolver::WriteFields(int it, const real_t &time )
       {
          if (visit_dc)
          {
@@ -572,7 +606,7 @@ namespace mfem
 
             HYPRE_BigInt prob_size = this->GetProblemSize();
             visit_dc->SetCycle(it);
-            visit_dc->SetTime(prob_size);
+            visit_dc->SetTime(time);
             visit_dc->Save();
 
             if (pmesh->GetMyRank() == 0 && verbose)
@@ -590,7 +624,7 @@ namespace mfem
 
             HYPRE_BigInt prob_size = this->GetProblemSize();
             paraview_dc->SetCycle(it);
-            paraview_dc->SetTime(prob_size);
+            paraview_dc->SetTime(time);
             paraview_dc->Save();
 
             if (pmesh->GetMyRank() == 0 && verbose)
