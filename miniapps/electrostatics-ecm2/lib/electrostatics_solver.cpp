@@ -81,8 +81,11 @@ namespace mfem
 
          delete H1FESpace;
          delete HCurlFESpace;
+         delete L2FESpace;
 
          delete prec;
+
+         delete w_coeff;
 
          delete bcs; // Solver takes ownership of the BCHandler
 
