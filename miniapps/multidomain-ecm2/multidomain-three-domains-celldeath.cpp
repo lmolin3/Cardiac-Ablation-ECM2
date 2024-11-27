@@ -496,7 +496,7 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out
           << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Solid (D)\033[0m" << std::endl;
-   std::vector<int> sc_solid_element_idx;
+   Array<int> sc_solid_element_idx;
    Vector sc_solid_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_solid, sc_solid_element_idx, sc_solid_element_coords);
 
@@ -507,7 +507,7 @@ int main(int argc, char *argv[])
    // Solid (S) --> Cylinder (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Cylinder (D)\033[0m" << std::endl;
-   std::vector<int> sc_cylinder_element_idx;
+   Array<int> sc_cylinder_element_idx;
    Vector sc_cylinder_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_cylinder, sc_cylinder_element_idx, sc_cylinder_element_coords);
 
@@ -520,7 +520,7 @@ int main(int argc, char *argv[])
    // Fluid (S) --> Cylinder (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Cylinder (D)\033[0m" << std::endl;
-   std::vector<int> fc_cylinder_element_idx;
+   Array<int> fc_cylinder_element_idx;
    Vector fc_cylinder_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_cylinder, fc_cylinder_element_idx, fc_cylinder_element_coords);
 
@@ -531,7 +531,7 @@ int main(int argc, char *argv[])
    // Cylinder (S) --> Fluid (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Fluid (D)\033[0m" << std::endl;
-   std::vector<int> fc_fluid_element_idx;
+   Array<int> fc_fluid_element_idx;
    Vector fc_fluid_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_fluid, fc_fluid_element_idx, fc_fluid_element_coords);
 
@@ -544,7 +544,7 @@ int main(int argc, char *argv[])
    // Fluid (S) --> Solid (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Solid (D)\033[0m" << std::endl;
-   std::vector<int> fs_solid_element_idx;
+   Array<int> fs_solid_element_idx;
    Vector fs_solid_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_solid, fs_solid_element_idx, fs_solid_element_coords);
 
@@ -555,7 +555,7 @@ int main(int argc, char *argv[])
    // Solid (S) --> Fluid (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Fluid (D)\033[0m" << std::endl;
-   std::vector<int> fs_fluid_element_idx;
+   Array<int> fs_fluid_element_idx;
    Vector fs_fluid_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_fluid, fs_fluid_element_idx, fs_fluid_element_coords);
 

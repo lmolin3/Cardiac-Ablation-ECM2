@@ -366,7 +366,7 @@ int main(int argc, char *argv[])
 
    // Setup GSLIB for gradient transfer cylinder -> block
    // 1. Find points on the destination mesh (box)
-   std::vector<int> block_element_idx;
+   Array<int> block_element_idx;
    Vector block_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(block_inner_wall_attributes, Heat_Block.GetFESpace(), block_element_idx, block_element_coords);
 

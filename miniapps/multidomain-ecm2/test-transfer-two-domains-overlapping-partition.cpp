@@ -186,9 +186,16 @@ int main(int argc, char *argv[])
    finder_cylinder_to_fluid.Setup(*cylinder_submesh);
 
    //Determine coordinates on destination mesh (fluid)
-   std::vector<int> fc_fluid_element_idx;
+   Array<int> fc_fluid_element_idx;
    Vector fc_fluid_element_coords;
    ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, &fes_fluid, fc_fluid_element_idx, fc_fluid_element_coords);
+
+   // Print total number of points to be interpolated across all MPI ranks
+   int total_points = fc_fluid_element_coords.Size() / sdim;
+   int total_points_g;
+   MPI_Allreduce(&total_points, &total_points_g, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+   if (Mpi::Root())
+      mfem::out << "Total number of points to be interpolated: " << total_points_g << std::endl;
 
    // Internally populate the finder with the destination mesh coordinates
    finder_cylinder_to_fluid.FindPoints(fc_fluid_element_coords, Ordering::byVDIM);
