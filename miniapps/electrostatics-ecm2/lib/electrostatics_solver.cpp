@@ -568,6 +568,12 @@ namespace mfem
       {
          paraview_dc = &paraview_dc_;
 
+         if ( order > 1 )
+         {
+            paraview_dc->SetHighOrderOutput(true);
+            paraview_dc->SetLevelsOfDetail(order);
+         }
+
          paraview_dc->RegisterField("Phi", phi);
          paraview_dc->RegisterField("E", E);
       }
