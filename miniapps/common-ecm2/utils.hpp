@@ -58,7 +58,7 @@ namespace mfem
         {
         public:
             VecCoeffContainer(Array<int> attr, VectorCoefficient *coeff_, bool own = true)
-                : attr(attr)
+                : attr(attr), own(own)
             {
                 this->coeff = coeff_;
             }
@@ -269,17 +269,22 @@ namespace mfem
 
         // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes (on Destination mesh)
         // Note: when using SubMeshes, provide bdry_attributes from the parent mesh, to ensure that
-        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace *fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords);
+        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords);
+
+        // Extract the index of elements found by FindPointsGSLIB::FindPoints
+        // Can be used to restrict ComputeL2Error to the boundary elements
+        // elems is found with FindPointsGSLIB::GetElems()
+        void GSLIBAttrToMarker(int max_attr, const Array<unsigned int> elems, Array<int> &marker);
 
         // GSLIB interpolation of the QoI (given by qoi_func) on the source mesh and transfer to the destination mesh quadrature points
-        void GSLIBInterpolate(FindPointsGSLIB &finder, const std::vector<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp);
+        void GSLIBInterpolate(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp);
 
         // GSLIB transfer of the grid function on the source mesh to the destination mesh
         // Note: Assume FindPointsGSLIB has been Setup and FindPoints has been called (bdry_element_idx is the element indices on the destination mesh)
-        void GSLIBTransfer(FindPointsGSLIB &finder, const std::vector<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf);
+        void GSLIBTransfer(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf);
 
         // Fill the grid function on destination mesh with the QoI vector (on quadrature points) on the destination mesh computed with GSLIBInterpolate
-        inline void TransferQoIToDest(const std::vector<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf);
+        inline void TransferQoIToDest(const Array<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf);
 
     } // namespace ecm2_utils
 

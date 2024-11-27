@@ -80,7 +80,7 @@ namespace mfem
         ///                                     GSLIB Interpolation utils                                         ///
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace *fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords)
+        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords)
         {
             // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
             if (!fes)
@@ -91,7 +91,7 @@ namespace mfem
             int sdim = mesh.SpaceDimension();
 
             // Get the boundary elements with the specified attributes
-            bdry_element_idx.clear();
+            bdry_element_idx.DeleteAll();
             for (int be = 0; be < mesh.GetNBE(); be++)
             {
                 const int bdr_el_attr = mesh.GetBdrAttribute(be);
@@ -99,29 +99,29 @@ namespace mfem
                 {
                     continue;
                 }
-                bdry_element_idx.push_back(be);
+                bdry_element_idx.Append(be);
             }
 
             // Print the number of boundary elements on each MPI core
-            int local_bdry_element_count = bdry_element_idx.size();
+            int local_bdry_element_count = bdry_element_idx.Size();
             mfem::out << "Number of boundary elements, for MPI Core " << mesh.GetMyRank() << ": " << local_bdry_element_count << std::endl;
 
             // If no boundary elements are found, return
-            if (bdry_element_idx.size() == 0)
+            if (bdry_element_idx.Size() == 0)
             {
                 return;
             }
 
             // Extract the coordinates of the quadrature points for each selected boundary element
             const IntegrationRule &ir_face = (fes->GetTypicalBE())->GetNodes();
-            bdry_element_coords.SetSize(bdry_element_idx.size() *
+            bdry_element_coords.SetSize(bdry_element_idx.Size() *
                                         ir_face.GetNPoints() * sdim);
             bdry_element_coords = 0.0;
 
             auto pec = Reshape(bdry_element_coords.ReadWrite(), sdim,
-                               ir_face.GetNPoints(), bdry_element_idx.size());
+                               ir_face.GetNPoints(), bdry_element_idx.Size());
 
-            for (int be = 0; be < bdry_element_idx.size(); be++)
+            for (int be = 0; be < bdry_element_idx.Size(); be++)
             {
                 int be_idx = bdry_element_idx[be];
                 const FiniteElement *fe = fes->GetBE(be_idx);
@@ -145,7 +145,25 @@ namespace mfem
             return;
         }
 
-        void GSLIBInterpolate(FindPointsGSLIB &finder, const std::vector<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp)
+
+        void GSLIBAttrToMarker(int max_attr, const Array<unsigned int> elems, Array<int> &marker)
+        {
+            // Convert the element indices to markers
+            marker.SetSize(max_attr);
+            marker = 0;
+            for (const auto &elem : elems)
+            {
+                if (elem <= 0 || elem > static_cast<unsigned int>(max_attr))
+                    continue;
+                int attr = static_cast<int>(elem);
+                marker[attr - 1] = 1;
+            }
+
+            return;
+        }
+
+
+        void GSLIBInterpolate(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp)
         {
             // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
             if (!fes)
@@ -195,7 +213,7 @@ namespace mfem
             TransferQoIToDest(bdry_element_idx, qoi_dst, dest_gf);
         }
 
-        void GSLIBTransfer( FindPointsGSLIB &finder, const std::vector<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf)
+        void GSLIBTransfer( FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf)
         {
             // Interpolate the grid function on the source mesh to the destination mesh
             Vector interp_vals;
@@ -205,7 +223,7 @@ namespace mfem
             TransferQoIToDest(bdry_element_idx, interp_vals, dest_gf);    
         }
 
-        inline void TransferQoIToDest(const std::vector<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf)
+        inline void TransferQoIToDest(const Array<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf)
         {
             // Extract fe space from the destination grid function
             ParFiniteElementSpace *dest_fes = dest_gf.ParFESpace();
@@ -216,7 +234,7 @@ namespace mfem
             int idx, be_idx, qp_idx;
             Vector qoi_loc(vdim), loc_values(dof * vdim);
             Array<int> vdofs(dof * vdim);
-            for (int be = 0; be < bdry_element_idx.size(); be++)
+            for (int be = 0; be < bdry_element_idx.Size(); be++)
             {
                 be_idx = bdry_element_idx[be];
                 dest_fes->GetBdrElementVDofs(be_idx, vdofs);
