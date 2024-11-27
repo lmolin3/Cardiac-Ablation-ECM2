@@ -123,6 +123,7 @@ namespace mfem
       HeatSolver::~HeatSolver()
       {
          delete H1FESpace;
+         delete VectorH1FESpace;
 
          delete T;
 
