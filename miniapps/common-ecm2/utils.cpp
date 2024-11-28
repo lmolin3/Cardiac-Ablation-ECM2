@@ -163,6 +163,18 @@ namespace mfem
         }
 
 
+        // Implement logic && operator for Array<int>
+        Array<int> operator&&(const Array<int> &a, const Array<int> &b)
+        {
+            MFEM_ASSERT(a.Size() == b.Size(), "Arrays must have the same size.");
+            Array<int> result(a.Size());
+            for (int i = 0; i < a.Size(); i++)
+            {
+                result[i] = a[i] && b[i];
+            }
+            return result;
+        }
+
         void GSLIBInterpolate(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp)
         {
             // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
@@ -213,7 +225,56 @@ namespace mfem
             TransferQoIToDest(bdry_element_idx, qoi_dst, dest_gf);
         }
 
+
         void GSLIBTransfer( FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf)
+        {
+            // Extract space dimension and FE space from the mesh
+            ParFiniteElementSpace *fes = src_gf.ParFESpace();
+            int sdim = (fes->GetParMesh())->SpaceDimension();
+            int vdim = fes->GetVDim();
+
+            // Distribute internal GSLIB info to the corresponding mpi-rank for each point.
+            Array<unsigned int>
+                recv_elem,
+                recv_code;   // Element and GSLIB code
+            Vector recv_rst; // (Reference) coordinates of the quadrature points
+            finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_rst, recv_code);
+            int npt_recv = recv_elem.Size();
+
+            // Compute qoi locally (on source side)
+            Vector qoi_loc, qoi_src, qoi_dst; 
+            qoi_src.SetSize(npt_recv * vdim);
+            qoi_loc.SetSize(vdim);
+            for (int i = 0; i < npt_recv; i++)
+            {
+                // Get the element index
+                const int e = recv_elem[i];
+
+                // Get the quadrature point
+                IntegrationPoint ip;
+                ip.Set3(recv_rst(sdim * i + 0), recv_rst(sdim * i + 1),
+                        recv_rst(sdim * i + 2));
+
+                // Get the element transformation
+                ElementTransformation *Tr = fes->GetElementTransformation(e);
+                Tr->SetIntPoint(&ip);
+
+                // Extract the local qoi vector
+                qoi_loc.MakeRef(qoi_src, i*vdim, vdim);
+
+                // Compute the qoi_src at quadrature point (it will change the qoi_src vector)
+                src_gf.GetVectorValue(*Tr, ip, qoi_loc);
+            }
+
+            // Transfer the QoI from the source mesh to the destination mesh at quadrature points
+            finder.DistributeInterpolatedValues(qoi_src, vdim, Ordering::byVDIM, qoi_dst);
+
+            // Fill the grid function on destination mesh with the interpolated values
+            TransferQoIToDest(bdry_element_idx, qoi_dst, dest_gf);
+        }
+
+
+        void GSLIBTransfer_old( FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf)
         {
             // Interpolate the grid function on the source mesh to the destination mesh
             Vector interp_vals;

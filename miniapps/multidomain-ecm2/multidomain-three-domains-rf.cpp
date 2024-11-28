@@ -476,7 +476,7 @@ int main(int argc, char *argv[])
 
    // Timing
    StopWatch chrono, chrono_total;
-   real_t t_transfer, t_interp, t_solve_fluid, t_solve_solid, t_relax_fluid, t_relax_solid, t_error, t_error_bdry, t_subiteration_export, t_paraview, t_joule;
+   real_t t_transfer, t_interp, t_solve_fluid, t_solve_solid, t_relax_fluid, t_relax_solid, t_error, t_error_bdry, t_paraview, t_joule;
 
    if (Mpi::Root())
    {
@@ -582,13 +582,10 @@ int main(int argc, char *argv[])
       
       iter++;
 
-      chrono.Clear(); chrono.Start();
       if (Mpi::Root())
       {
          convergence_subiter.Append(norm_diff);
       }
-      chrono.Stop();
-      t_subiteration_export = chrono.RealTime();
 
       if (Mpi::Root())
       {
@@ -611,7 +608,6 @@ int main(int argc, char *argv[])
          out << "Relaxation Solid: " << t_relax_solid << " s" << std::endl;
          //out << "Error: " << t_error << " s" << std::endl;
          out << "Error Boundary: " << t_error_bdry << " s" << std::endl;
-         out << "Subiteration Export: " << t_subiteration_export << " s" << std::endl;
          out << "Total: " << chrono_total.RealTime() << " s" << std::endl;
          out << "------------------------------------------------------------" << std::endl;
       }

@@ -43,7 +43,7 @@
 //
 //
 // Sample run:
-// mpirun -np 10 ./multidomain-three-domains -o 1 -dt 0.01 -tf 1 -kc 1 -kb 1 --relaxation-parameter 1.0  --paraview -of ./Output/ThreeDomains
+// mpirun -np 10 ./multidomain-three-domains-celldeath -o 1 -dt 0.01 -tf 1 -kc 1 -kb 1 --relaxation-parameter 1.0  --paraview -of ./Output/ThreeDomains
 //
 
 #include "mfem.hpp"
@@ -129,10 +129,12 @@ int main(int argc, char *argv[])
    real_t omega_solid;
    real_t omega_cyl;
    // Postprocessing
+   bool print_timing = false;
    bool visit = false;
    bool paraview = true;
    int save_freq = 1; // Save fields every 'save_freq' time steps
-   const char *outfolder = "";
+   const char *outfolder = "./Output/Test";
+   bool save_convergence = false;
 
    OptionsParser args(argc, argv);
    // Test
@@ -178,12 +180,16 @@ int main(int argc, char *argv[])
    args.AddOption(&Qval, "-Q", "--volumetric-heat-source",
                   "Volumetric heat source (W/m^3).");
    // Postprocessing
+   args.AddOption(&print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
+                  "Print timing data.");
    args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable VisIt visualization.");
    args.AddOption(&save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
    args.AddOption(&outfolder, "-of", "--out-folder",
                   "Output folder.");
+   args.AddOption(&save_convergence, "-sc", "--save-convergence", "-no-sc", "--no-save-convergence",
+                  "Save convergence data.");
 
    args.ParseCheck();
 
@@ -496,9 +502,9 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out
           << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Solid (D)\033[0m" << std::endl;
-   Array<int> sc_solid_element_idx;
+   Array<int> sc_solid_bdry_element_idx;
    Vector sc_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_solid, sc_solid_element_idx, sc_solid_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_solid, sc_solid_bdry_element_idx, sc_solid_element_coords);
 
    FindPointsGSLIB finder_cylinder_to_solid(MPI_COMM_WORLD);
    finder_cylinder_to_solid.Setup(*cylinder_submesh);
@@ -507,9 +513,9 @@ int main(int argc, char *argv[])
    // Solid (S) --> Cylinder (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Cylinder (D)\033[0m" << std::endl;
-   Array<int> sc_cylinder_element_idx;
+   Array<int> sc_cylinder_bdry_element_idx;
    Vector sc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_cylinder, sc_cylinder_element_idx, sc_cylinder_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_cylinder, sc_cylinder_bdry_element_idx, sc_cylinder_element_coords);
 
    FindPointsGSLIB finder_solid_to_cylinder(MPI_COMM_WORLD);
    finder_solid_to_cylinder.Setup(*solid_submesh);
@@ -520,9 +526,9 @@ int main(int argc, char *argv[])
    // Fluid (S) --> Cylinder (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Cylinder (D)\033[0m" << std::endl;
-   Array<int> fc_cylinder_element_idx;
+   Array<int> fc_cylinder_bdry_element_idx;
    Vector fc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_cylinder, fc_cylinder_element_idx, fc_cylinder_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_cylinder, fc_cylinder_bdry_element_idx, fc_cylinder_element_coords);
 
    FindPointsGSLIB finder_fluid_to_cylinder(MPI_COMM_WORLD);
    finder_fluid_to_cylinder.Setup(*fluid_submesh);
@@ -531,9 +537,9 @@ int main(int argc, char *argv[])
    // Cylinder (S) --> Fluid (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Fluid (D)\033[0m" << std::endl;
-   Array<int> fc_fluid_element_idx;
+   Array<int> fc_fluid_bdry_element_idx;
    Vector fc_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_fluid, fc_fluid_element_idx, fc_fluid_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_fluid, fc_fluid_bdry_element_idx, fc_fluid_element_coords);
 
    FindPointsGSLIB finder_cylinder_to_fluid(MPI_COMM_WORLD);
    finder_cylinder_to_fluid.Setup(*cylinder_submesh);
@@ -544,9 +550,9 @@ int main(int argc, char *argv[])
    // Fluid (S) --> Solid (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Solid (D)\033[0m" << std::endl;
-   Array<int> fs_solid_element_idx;
+   Array<int> fs_solid_bdry_element_idx;
    Vector fs_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_solid, fs_solid_element_idx, fs_solid_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_solid, fs_solid_bdry_element_idx, fs_solid_element_coords);
 
    FindPointsGSLIB finder_fluid_to_solid(MPI_COMM_WORLD);
    finder_fluid_to_solid.Setup(*fluid_submesh);
@@ -555,15 +561,33 @@ int main(int argc, char *argv[])
    // Solid (S) --> Fluid (D)
    if (Mpi::Root())
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Fluid (D)\033[0m" << std::endl;
-   Array<int> fs_fluid_element_idx;
+   Array<int> fs_fluid_bdry_element_idx;
    Vector fs_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_fluid, fs_fluid_element_idx, fs_fluid_element_coords);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_fluid, fs_fluid_bdry_element_idx, fs_fluid_element_coords);
 
    FindPointsGSLIB finder_solid_to_fluid(MPI_COMM_WORLD);
    finder_solid_to_fluid.Setup(*solid_submesh);
    finder_solid_to_fluid.FindPoints(fs_fluid_element_coords, Ordering::byVDIM);
 
 
+   // Extract the indices of elements at the interface and convert them to markers
+   // Useful to restrict the computation of the L2 error to the interface
+   Array<int> tmp1, tmp2;
+   ecm2_utils::GSLIBAttrToMarker(solid_submesh->GetNE(), finder_solid_to_fluid.GetElem(), tmp1);
+   ecm2_utils::GSLIBAttrToMarker(solid_submesh->GetNE(), finder_solid_to_cylinder.GetElem(), tmp2);
+   Array<int> solid_interfaces_element_idx = tmp1 && tmp2;
+
+   ecm2_utils::GSLIBAttrToMarker(fluid_submesh->GetNE(), finder_fluid_to_cylinder.GetElem(), tmp1);
+   ecm2_utils::GSLIBAttrToMarker(fluid_submesh->GetNE(), finder_fluid_to_solid.GetElem(), tmp2);
+   Array<int> fluid_interfaces_element_idx = tmp1 && tmp2;
+
+   ecm2_utils::GSLIBAttrToMarker(cylinder_submesh->GetNE(), finder_cylinder_to_fluid.GetElem(), tmp1);
+   ecm2_utils::GSLIBAttrToMarker(cylinder_submesh->GetNE(), finder_cylinder_to_solid.GetElem(), tmp2);
+   Array<int> cylinder_interfaces_element_idx = tmp1 && tmp2;
+
+   tmp1.DeleteAll();
+   tmp2.DeleteAll();
+   
    // 3. Define QoI (heatflux) on the source meshes (cylinder, solid, fluid)
    int qoi_size_on_qp = sdim;
 
@@ -710,6 +734,14 @@ int main(int argc, char *argv[])
    int solid_temperature_dofs = Heat_Solid.GetProblemSize();
    int solid_celldeath_dofs = CellDeath_Solid.GetProblemSize();
 
+   // Integration rule for the L2 error
+   int order_quad = std::max(2, order + 1);
+   const IntegrationRule *irs[Geometry::NumGeom];
+   for (int i = 0; i < Geometry::NumGeom; ++i)
+   {
+      irs[i] = &(IntRules.Get(i, order_quad));
+   }
+
    if (Mpi::Root())
    {
       out << " Cylinder dofs: " << cyl_dofs << std::endl;
@@ -717,6 +749,10 @@ int main(int argc, char *argv[])
       out << " Solid temperature dofs: " << solid_temperature_dofs << std::endl;
       out << " Solid celldeath dofs: " << solid_celldeath_dofs << std::endl;
    }
+
+   // Timing
+   StopWatch chrono, chrono_total_subiter, chrono_total;
+   real_t t_total_subiter, t_transfer_fluid, t_transfer_solid, t_transfer_cylinder, t_solve_fluid, t_solve_solid, t_solve_cylinder, t_solve_celldeath, t_relax_fluid, t_relax_solid, t_relax_cylinder, t_error_bdry, t_paraview;
 
    if (Mpi::Root())
    {
@@ -764,9 +800,12 @@ int main(int argc, char *argv[])
       bool converged_solid = false;
       bool converged_fluid = false;
       bool converged_cylinder = false;
+      
+      chrono_total.Clear(); chrono_total.Start();
 
       while (!converged && iter <= max_iter)
       {
+         chrono_total_subiter.Clear(); chrono_total_subiter.Start();
 
          // Store the previous temperature on domains for convergence
          temperature_solid_gf->GetTrueDofs(temperature_solid_prev);
@@ -784,23 +823,32 @@ int main(int argc, char *argv[])
 
          // if (!converged_fluid)
          { // S->F: Transfer T, C->F: Transfer T
-            ecm2_utils::GSLIBTransfer( finder_cylinder_to_fluid, fc_fluid_element_idx , *temperature_cylinder_gf, *temperature_fc_fluid);
-            ecm2_utils::GSLIBTransfer( finder_solid_to_fluid, fs_fluid_element_idx, *temperature_solid_gf, *temperature_fs_fluid);
+            chrono.Clear(); chrono.Start();
+            ecm2_utils::GSLIBTransfer( finder_cylinder_to_fluid, fc_fluid_bdry_element_idx , *temperature_cylinder_gf, *temperature_fc_fluid);
+            ecm2_utils::GSLIBTransfer( finder_solid_to_fluid, fs_fluid_bdry_element_idx, *temperature_solid_gf, *temperature_fs_fluid);
+            chrono.Stop(); 
+            t_transfer_fluid = chrono.RealTime();
 
             // Step in the fluid domain
+            chrono.Clear(); chrono.Start();
             temperature_fluid_gf->SetFromTrueDofs(temperature_fluid_tn);
             Heat_Fluid.Step(t, dt, step, false);
             temperature_fluid_gf->GetTrueDofs(temperature_fluid);
             t -= dt; // Reset t to same time step, since t is incremented in the Step function
+            chrono.Stop();
+            t_solve_fluid = chrono.RealTime();
 
             // Relaxation
             // T_fluid(j+1) = ω * T_fluid,j+1 + (1 - ω) * T_fluid,j
+            chrono.Clear(); chrono.Start();
             if (iter > 0)
             {
                temperature_fluid *= omega_fluid;
                temperature_fluid.Add(1 - omega_fluid, temperature_fluid_prev);
                temperature_fluid_gf->SetFromTrueDofs(temperature_fluid);
             }
+            chrono.Stop();
+            t_relax_fluid = chrono.RealTime();
 
             iter_fluid++;
          }
@@ -813,23 +861,32 @@ int main(int argc, char *argv[])
 
          // if (!converged_solid)
          { // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
-            ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid, fs_solid_element_idx, fes_grad_fluid, heatFlux_fluid, *heatFlux_fs_solid, qoi_size_on_qp);
-            ecm2_utils::GSLIBInterpolate(finder_cylinder_to_solid, sc_solid_element_idx, fes_grad_cylinder, heatFlux_cyl, *heatFlux_sc_solid, qoi_size_on_qp);
+            chrono.Clear(); chrono.Start();
+            ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid, fs_solid_bdry_element_idx, fes_grad_fluid, heatFlux_fluid, *heatFlux_fs_solid, qoi_size_on_qp);
+            ecm2_utils::GSLIBInterpolate(finder_cylinder_to_solid, sc_solid_bdry_element_idx, fes_grad_cylinder, heatFlux_cyl, *heatFlux_sc_solid, qoi_size_on_qp);
+            chrono.Stop();
+            t_transfer_solid = chrono.RealTime();
 
             // Step in the solid domain
+            chrono.Clear(); chrono.Start();
             temperature_solid_gf->SetFromTrueDofs(temperature_solid_tn);
             Heat_Solid.Step(t, dt, step, false);
             temperature_solid_gf->GetTrueDofs(temperature_solid);
             t -= dt; // Reset t to same time step, since t is incremented in the Step function
+            chrono.Stop();
+            t_solve_solid = chrono.RealTime();
 
             // Relaxation
             // T_wall(j+1) = ω * T_solid,j+1 + (1 - ω) * T_solid,j
+            chrono.Clear(); chrono.Start();
             if (iter > 0)
             {
                temperature_solid *= omega_solid;
                temperature_solid.Add(1 - omega_solid, temperature_solid_prev);
                temperature_solid_gf->SetFromTrueDofs(temperature_solid);
             }
+            chrono.Stop();
+            t_relax_solid = chrono.RealTime();
 
             iter_solid++;
          }
@@ -842,23 +899,32 @@ int main(int argc, char *argv[])
 
          // if (!converged_cylinder)
          { // F->C: Transfer k ∇T_wall, S->C: Transfer T
-            ecm2_utils::GSLIBInterpolate(finder_fluid_to_cylinder, fc_cylinder_element_idx, fes_grad_fluid, heatFlux_fluid, *heatFlux_fc_cylinder, qoi_size_on_qp);
-            ecm2_utils::GSLIBTransfer(finder_solid_to_cylinder, sc_cylinder_element_idx, *temperature_solid_gf, *temperature_sc_cylinder);
+            chrono.Clear(); chrono.Start();
+            ecm2_utils::GSLIBInterpolate(finder_fluid_to_cylinder, fc_cylinder_bdry_element_idx, fes_grad_fluid, heatFlux_fluid, *heatFlux_fc_cylinder, qoi_size_on_qp);
+            ecm2_utils::GSLIBTransfer(finder_solid_to_cylinder, sc_cylinder_bdry_element_idx, *temperature_solid_gf, *temperature_sc_cylinder);
+            chrono.Stop();
+            t_transfer_cylinder = chrono.RealTime();
 
             // Step in the cylinder domain
+            chrono.Clear(); chrono.Start();
             temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder_tn);
             Heat_Cylinder.Step(t, dt, step, false);
             temperature_cylinder_gf->GetTrueDofs(temperature_cylinder);
             t -= dt; // Reset t to same time step, since t is incremented in the Step function
+            chrono.Stop();
+            t_solve_cylinder = chrono.RealTime();
 
             // Relaxation
             // T_cylinder(j+1) = ω * T_cylinder,j+1 + (1 - ω) * T_cylinder,j
+            chrono.Clear(); chrono.Start();
             if (iter > 0)
             {
                temperature_cylinder *= omega_cyl;
                temperature_cylinder.Add(1 - omega_cyl, temperature_cylinder_prev);
                temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder);
             }
+            chrono.Stop();
+            t_relax_cylinder = chrono.RealTime();
 
             iter_cylinder++;
          }
@@ -867,16 +933,14 @@ int main(int argc, char *argv[])
          //                        Check convergence                         //
          //////////////////////////////////////////////////////////////////////
 
-         // Compute local norms
-         double local_norm_diff_solid = temperature_solid_gf->ComputeL2Error(temperature_solid_prev_coeff);
-         double local_norm_diff_fluid = temperature_fluid_gf->ComputeL2Error(temperature_fluid_prev_coeff);
-         double local_norm_diff_cylinder = temperature_cylinder_gf->ComputeL2Error(temperature_cylinder_prev_coeff);
 
-         // Perform global reduction to find the maximum norm across all processes
-         double global_norm_diff_solid, global_norm_diff_fluid, global_norm_diff_cylinder;
-         MPI_Allreduce(&local_norm_diff_solid, &global_norm_diff_solid, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-         MPI_Allreduce(&local_norm_diff_fluid, &global_norm_diff_fluid, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-         MPI_Allreduce(&local_norm_diff_cylinder, &global_norm_diff_cylinder, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+         // Compute local norms
+         chrono.Clear(); chrono.Start();
+         real_t global_norm_diff_solid = temperature_solid_gf->ComputeL2Error(temperature_solid_prev_coeff, irs, &solid_interfaces_element_idx);
+         real_t global_norm_diff_fluid = temperature_fluid_gf->ComputeL2Error(temperature_fluid_prev_coeff, irs, &fluid_interfaces_element_idx);
+         real_t global_norm_diff_cylinder = temperature_cylinder_gf->ComputeL2Error(temperature_cylinder_prev_coeff, irs, &cylinder_interfaces_element_idx);   
+         chrono.Stop();
+         t_error_bdry = chrono.RealTime();
 
          // Check convergence on domains
          converged_solid = global_norm_diff_solid < tol;
@@ -888,19 +952,16 @@ int main(int argc, char *argv[])
 
          iter++;
 
-         // Output of subiterations   --> TODO: Create a new paraview collection for saving subiterations data (there's no copy constructor for ParaViewDataCollection)
-         // t_iter += dt_iter;
-         // Heat_Solid.WriteFields(iter, t_iter);
-         // Heat_Cylinder.WriteFields(iter, t_iter);
-         // Heat_Fluid.WriteFields(iter, t_iter);
-
          if (Mpi::Root())
          {
             convergence_subiter.Append(norm_diff);
          }
+
+         chrono_total_subiter.Stop();
+         t_total_subiter = chrono_total_subiter.RealTime();
       }
 
-      if (Mpi::Root())
+      if (Mpi::Root() && save_convergence)
       {
          convergence(step - 1, 0) = t;
          convergence(step - 1, 1) = iter;
@@ -928,6 +989,7 @@ int main(int argc, char *argv[])
       //         Solve CELL DEATH         //
       /////////////////////////////////////////
       
+      chrono.Clear(); chrono.Start();
       if (Mpi::Root())
          mfem::out << "\033[32mSolving CellDeath problem on solid ... \033[0m";
       
@@ -935,7 +997,8 @@ int main(int argc, char *argv[])
       
       if (Mpi::Root())
          mfem::out << "\033[32mdone.\033[0m" << std::endl;
-
+      chrono.Stop();
+      t_solve_celldeath = chrono.RealTime();
 
       ///////////////////////////////////////////////
       //         Update for next time step         //
@@ -954,6 +1017,7 @@ int main(int argc, char *argv[])
       converged = false;
 
       // Output of time steps
+      chrono.Clear(); chrono.Start();
       if (paraview && (step % save_freq == 0))
       {
          Heat_Solid.WriteFields(step, t);
@@ -961,10 +1025,34 @@ int main(int argc, char *argv[])
          Heat_Fluid.WriteFields(step, t);
          CellDeath_Solid.WriteFields(step, t);
       }
+      chrono.Stop();
+      t_paraview = chrono.RealTime();
+
+      chrono_total.Stop();
+
+      if (Mpi::Root() && print_timing )
+      {
+         out << "------------------------------------------------------------" << std::endl;
+         out << "Transfer (Fluid): " << t_transfer_fluid << " s" << std::endl;
+         out << "Transfer (Solid): " << t_transfer_solid << " s" << std::endl;
+         out << "Transfer (Cylinder): " << t_transfer_cylinder << " s" << std::endl;
+         out << "Solve Heat (Fluid): " << t_solve_fluid << " s" << std::endl;
+         out << "Solve Heat (Solid): " << t_solve_solid << " s" << std::endl;
+         out << "Solve Heat (Cylinder): " << t_solve_cylinder << " s" << std::endl;
+         out << "Relax (Fluid): " << t_relax_fluid << " s" << std::endl;
+         out << "Relax (Solid): " << t_relax_solid << " s" << std::endl;
+         out << "Relax (Cylinder): " << t_relax_cylinder << " s" << std::endl;
+         out << "Error (Boundary): " << t_error_bdry << " s" << std::endl;
+         out << "Total (Subiter): " << t_total_subiter << " s" << std::endl;
+         out << "Solve CellDeath (Solid): " << t_solve_celldeath << " s" << std::endl;
+         out << "Paraview: " << t_paraview << " s" << std::endl;
+         out << "Total: " << chrono_total.RealTime() << " s" << std::endl;
+         out << "------------------------------------------------------------" << std::endl;
+      }
    }
 
    // Save convergence data
-   if (Mpi::Root())
+   if (Mpi::Root() && save_convergence)
    {
       std::string outputFilePath = std::string(outfolder) + "/convergence" + "/convergence.txt";
       std::ofstream outFile(outputFilePath);
@@ -979,6 +1067,7 @@ int main(int argc, char *argv[])
       }
    }
 
+   
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Cleanup
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -998,6 +1087,8 @@ int main(int argc, char *argv[])
    delete c_cyl;
    delete c_fluid;
    delete c_solid;
+
+   delete q;
 
    delete temperature_fc_cylinder;
    delete temperature_fc_fluid;

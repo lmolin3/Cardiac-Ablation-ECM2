@@ -276,12 +276,16 @@ namespace mfem
         // elems is found with FindPointsGSLIB::GetElems()
         void GSLIBAttrToMarker(int max_attr, const Array<unsigned int> elems, Array<int> &marker);
 
+        // Logical and operation between two arrays
+        Array<int> operator&&(const Array<int> &a, const Array<int> &b);
+
         // GSLIB interpolation of the QoI (given by qoi_func) on the source mesh and transfer to the destination mesh quadrature points
         void GSLIBInterpolate(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp);
 
         // GSLIB transfer of the grid function on the source mesh to the destination mesh
         // Note: Assume FindPointsGSLIB has been Setup and FindPoints has been called (bdry_element_idx is the element indices on the destination mesh)
         void GSLIBTransfer(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf);
+        void GSLIBTransfer_old(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf);
 
         // Fill the grid function on destination mesh with the QoI vector (on quadrature points) on the destination mesh computed with GSLIBInterpolate
         inline void TransferQoIToDest(const Array<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf);
