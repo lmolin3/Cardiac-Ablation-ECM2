@@ -453,9 +453,9 @@ namespace mfem
          }
       }
 
-      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, Array<int> &attr)
+      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, Array<int> &attr, bool own)
       {
-         op->AddVolumetricTerm(coeff, attr);
+         op->AddVolumetricTerm(coeff, attr, own);
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -471,9 +471,9 @@ namespace mfem
          }
       }
 
-      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr)
+      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr, bool own)
       {
-         op->AddVolumetricTerm(func, attr);
+         op->AddVolumetricTerm(func, attr, own);
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -489,24 +489,24 @@ namespace mfem
          }
       }
 
-      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, int &attr)
+      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, int &attr, bool own)
       {
          // Create array for attributes and mark given mesh boundary
          tmp_domain_attr = 0;
          tmp_domain_attr[attr - 1] = 1;
 
          // Add the volumetric term to the operator
-         AddVolumetricTerm(coeff, tmp_domain_attr);
+         AddVolumetricTerm(coeff, tmp_domain_attr, own);
       }
 
-      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, int &attr)
+      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, int &attr, bool own)
       {
          // Create array for attributes and mark given mesh boundary
          tmp_domain_attr = 0;
          tmp_domain_attr[attr - 1] = 1;
 
          // Add the volumetric term to the operator
-         AddVolumetricTerm(func, tmp_domain_attr);
+         AddVolumetricTerm(func, tmp_domain_attr, own);
       }
 
       void

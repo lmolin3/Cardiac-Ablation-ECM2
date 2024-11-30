@@ -162,8 +162,9 @@ namespace mfem
 
       // Add Volumetric heat term
       void AddVolumetricTerm(Coefficient *coeff,
-                             Array<int> &attr);                   // Using scalar coefficient
-      void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr); // Using function
+                             Array<int> &attr,
+                             bool own = true);                   // Using scalar coefficient
+      void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr, bool own = true); // Using function
 
       void ProjectDirichletBCS(const double &time, ParGridFunction &gf);
 

@@ -77,12 +77,15 @@ namespace mfem
 
                   // Add Volumetric heat term (to AdvectionReactionDiffusionOperator)
                   void AddVolumetricTerm(Coefficient *coeff,
-                                         Array<int> &attr);                   // Using scalar coefficient
-                  void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr); // Using function
+                                         Array<int> &attr,
+                                         bool own = true);                   // Using scalar coefficient
+                  void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr, bool own = true); // Using function
                   void AddVolumetricTerm(Coefficient *coeff,
-                                         int &attr); // Using coefficient and single attribute
+                                         int &attr,
+                                         bool own = true); // Using coefficient and single attribute
                   void AddVolumetricTerm(ScalarFuncT func,
-                                         int &attr); // Using function and single attribute
+                                         int &attr,
+                                         bool own = true); // Using function and single attribute
 
                   // Visualization and Postprocessing
                   void RegisterVisItFields(VisItDataCollection &visit_dc_);

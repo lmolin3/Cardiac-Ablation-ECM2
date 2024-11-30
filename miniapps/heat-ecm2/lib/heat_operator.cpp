@@ -404,14 +404,15 @@ namespace mfem
       }
 
       void AdvectionReactionDiffusionOperator::AddVolumetricTerm(Coefficient *coeff,
-                                                                 Array<int> &attr)
+                                                                 Array<int> &attr,
+                                                                 bool own)
       {
-         volumetric_terms.emplace_back(attr, coeff);
+         volumetric_terms.emplace_back(attr, coeff, own);
       }
 
-      void AdvectionReactionDiffusionOperator::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr)
+      void AdvectionReactionDiffusionOperator::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr, bool own)
       {
-         AddVolumetricTerm(new FunctionCoefficient(func), attr);
+         AddVolumetricTerm(new FunctionCoefficient(func), attr, own);
       }
 
       AdvectionReactionDiffusionOperator::~AdvectionReactionDiffusionOperator()
