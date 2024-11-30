@@ -368,7 +368,8 @@ int main(int argc, char *argv[])
    // 1. Find points on the destination mesh (box)
    Array<int> block_element_idx;
    Vector block_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(block_inner_wall_attributes, Heat_Block.GetFESpace(), block_element_idx, block_element_coords);
+   ecm2_utils::FindBdryElements(block_submesh.get(), block_inner_wall_attributes, block_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(Heat_Block.GetFESpace(), block_element_idx, block_element_coords);
 
    // 2. Setup GSLIB finder on the source mesh (cylinder)
    FindPointsGSLIB finder(MPI_COMM_WORLD);

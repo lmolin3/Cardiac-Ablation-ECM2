@@ -267,9 +267,11 @@ namespace mfem
         ///                                          GSLIB utils                                                ///
         ///////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes (on Destination mesh)
-        // Note: when using SubMeshes, provide bdry_attributes from the parent mesh, to ensure that
-        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords);
+        // Find boundary elements with the specified attributes
+        void FindBdryElements(ParMesh *mesh, Array<int> &bdry_attributes, Array<int> &bdry_element_idx);
+
+        // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes
+        void ComputeBdrQuadraturePointsCoords(ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords);
 
         // Extract the index of elements found by FindPointsGSLIB::FindPoints
         // Can be used to restrict ComputeL2Error to the boundary elements

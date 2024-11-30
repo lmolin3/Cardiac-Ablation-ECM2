@@ -80,21 +80,13 @@ namespace mfem
         ///                                     GSLIB Interpolation utils                                         ///
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords)
+        void FindBdryElements(ParMesh *mesh, Array<int> &bdry_attributes, Array<int> &bdry_element_idx)
         {
-            // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
-            if (!fes)
-                return;
-
-            // Mesh
-            ParMesh &mesh = *fes->GetParMesh();
-            int sdim = mesh.SpaceDimension();
-
             // Get the boundary elements with the specified attributes
             bdry_element_idx.DeleteAll();
-            for (int be = 0; be < mesh.GetNBE(); be++)
+            for (int be = 0; be < mesh->GetNBE(); be++)
             {
-                const int bdr_el_attr = mesh.GetBdrAttribute(be);
+                const int bdr_el_attr = mesh->GetBdrAttribute(be);
                 if (bdry_attributes[bdr_el_attr - 1] == 0)
                 {
                     continue;
@@ -104,15 +96,20 @@ namespace mfem
 
             // Print the number of boundary elements on each MPI core
             int local_bdry_element_count = bdry_element_idx.Size();
-            mfem::out << "Number of boundary elements, for MPI Core " << mesh.GetMyRank() << ": " << local_bdry_element_count << std::endl;
+            mfem::out << "Number of boundary elements, for MPI Core " << mesh->GetMyRank() << ": " << local_bdry_element_count << std::endl;
 
-            // If no boundary elements are found, return
-            if (bdry_element_idx.Size() == 0)
-            {
+            return;
+        }
+
+        
+        void ComputeBdrQuadraturePointsCoords(ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords)
+        {
+            // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
+            if (!fes || bdry_element_idx.Size() == 0)
                 return;
-            }
 
             // Extract the coordinates of the quadrature points for each selected boundary element
+            int sdim = fes->GetParMesh()->SpaceDimension();
             const IntegrationRule &ir_face = (fes->GetTypicalBE())->GetNodes();
             bdry_element_coords.SetSize(bdry_element_idx.Size() *
                                         ir_face.GetNPoints() * sdim);

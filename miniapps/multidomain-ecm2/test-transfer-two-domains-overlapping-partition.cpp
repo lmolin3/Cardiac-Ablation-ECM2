@@ -188,7 +188,8 @@ int main(int argc, char *argv[])
    //Determine coordinates on destination mesh (fluid)
    Array<int> fc_fluid_element_idx;
    Vector fc_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, &fes_fluid, fc_fluid_element_idx, fc_fluid_element_coords);
+   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_cylinder_interface_marker, fc_fluid_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(&fes_fluid, fc_fluid_element_idx, fc_fluid_element_coords);
 
    // Print total number of points to be interpolated across all MPI ranks
    int total_points = fc_fluid_element_coords.Size() / sdim;

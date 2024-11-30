@@ -504,7 +504,8 @@ int main(int argc, char *argv[])
           << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Solid (D)\033[0m" << std::endl;
    Array<int> sc_solid_bdry_element_idx;
    Vector sc_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_solid, sc_solid_bdry_element_idx, sc_solid_element_coords);
+   ecm2_utils::FindBdryElements(solid_submesh.get(), solid_cylinder_interface_marker, sc_solid_bdry_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_solid, sc_solid_bdry_element_idx, sc_solid_element_coords);
 
    FindPointsGSLIB finder_cylinder_to_solid(MPI_COMM_WORLD);
    finder_cylinder_to_solid.Setup(*cylinder_submesh);
@@ -515,7 +516,8 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Cylinder (D)\033[0m" << std::endl;
    Array<int> sc_cylinder_bdry_element_idx;
    Vector sc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(solid_cylinder_interface_marker, fes_cylinder, sc_cylinder_bdry_element_idx, sc_cylinder_element_coords);
+   ecm2_utils::FindBdryElements(cylinder_submesh.get(), solid_cylinder_interface_marker, sc_cylinder_bdry_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_cylinder, sc_cylinder_bdry_element_idx, sc_cylinder_element_coords);
 
    FindPointsGSLIB finder_solid_to_cylinder(MPI_COMM_WORLD);
    finder_solid_to_cylinder.Setup(*solid_submesh);
@@ -528,7 +530,8 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Cylinder (D)\033[0m" << std::endl;
    Array<int> fc_cylinder_bdry_element_idx;
    Vector fc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_cylinder, fc_cylinder_bdry_element_idx, fc_cylinder_element_coords);
+   ecm2_utils::FindBdryElements(cylinder_submesh.get(), fluid_cylinder_interface_marker, fc_cylinder_bdry_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_cylinder, fc_cylinder_bdry_element_idx, fc_cylinder_element_coords);
 
    FindPointsGSLIB finder_fluid_to_cylinder(MPI_COMM_WORLD);
    finder_fluid_to_cylinder.Setup(*fluid_submesh);
@@ -539,7 +542,8 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Cylinder (S) --> Fluid (D)\033[0m" << std::endl;
    Array<int> fc_fluid_bdry_element_idx;
    Vector fc_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_cylinder_interface_marker, fes_fluid, fc_fluid_bdry_element_idx, fc_fluid_element_coords);
+   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_cylinder_interface_marker, fc_fluid_bdry_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_fluid, fc_fluid_bdry_element_idx, fc_fluid_element_coords);
 
    FindPointsGSLIB finder_cylinder_to_fluid(MPI_COMM_WORLD);
    finder_cylinder_to_fluid.Setup(*cylinder_submesh);
@@ -552,7 +556,8 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Solid (D)\033[0m" << std::endl;
    Array<int> fs_solid_bdry_element_idx;
    Vector fs_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_solid, fs_solid_bdry_element_idx, fs_solid_element_coords);
+   ecm2_utils::FindBdryElements(solid_submesh.get(), fluid_solid_interface_marker, fs_solid_bdry_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_solid, fs_solid_bdry_element_idx, fs_solid_element_coords);
 
    FindPointsGSLIB finder_fluid_to_solid(MPI_COMM_WORLD);
    finder_fluid_to_solid.Setup(*fluid_submesh);
@@ -563,7 +568,8 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Fluid (D)\033[0m" << std::endl;
    Array<int> fs_fluid_bdry_element_idx;
    Vector fs_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_fluid, fs_fluid_bdry_element_idx, fs_fluid_element_coords);
+   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_solid_interface_marker, fs_fluid_bdry_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_fluid, fs_fluid_bdry_element_idx, fs_fluid_element_coords);
 
    FindPointsGSLIB finder_solid_to_fluid(MPI_COMM_WORLD);
    finder_solid_to_fluid.Setup(*solid_submesh);

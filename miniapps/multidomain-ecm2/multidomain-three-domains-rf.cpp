@@ -180,9 +180,6 @@ int main(int argc, char *argv[])
 
    auto Id = new IdentityMatrixCoefficient(sdim);
 
-   Array<int> attr_solid(0), attr_fluid(0), attr_cyl(0);
-   attr_solid.Append(1), attr_fluid.Append(2);
-
    real_t sigma_fluid = 1.0;
    real_t sigma_solid = 1.0;
 
@@ -322,7 +319,8 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Solid (D)\033[0m" << std::endl;
    Array<int> fs_solid_bdr_element_idx;
    Vector fs_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_solid, fs_solid_bdr_element_idx, fs_solid_element_coords);
+   ecm2_utils::FindBdryElements(solid_submesh.get(), fluid_solid_interface_marker, fs_solid_bdr_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_solid, fs_solid_bdr_element_idx, fs_solid_element_coords);
 
    FindPointsGSLIB finder_fluid_to_solid(MPI_COMM_WORLD);
    finder_fluid_to_solid.Setup(*fluid_submesh);
@@ -334,7 +332,8 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Fluid (D)\033[0m" << std::endl;
    Array<int> fs_fluid_bdr_element_idx;
    Vector fs_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fluid_solid_interface_marker, fes_fluid, fs_fluid_bdr_element_idx, fs_fluid_element_coords);
+   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_solid_interface_marker, fs_fluid_bdr_element_idx);
+   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_fluid, fs_fluid_bdr_element_idx, fs_fluid_element_coords);
 
    FindPointsGSLIB finder_solid_to_fluid(MPI_COMM_WORLD);
    finder_solid_to_fluid.Setup(*solid_submesh);
