@@ -11,7 +11,7 @@
 //
 // Sample run:
 // mpirun -np 4 ./multidomain-three-domains-rf -o 4 --relaxation-parameter 0.5 --no-paraview --print-timing
-// mpirun -np 4 ./multidomain-three-domains-rf -o 4 --relaxation-parameter 0.5 --paraview -of ./Output/RF/o3
+// mpirun -np 4 ./multidomain-three-domains-rf -o 4 --relaxation-parameter 0.5 --paraview -of ./Output/RF/o3 
 
 #include "mfem.hpp"
 #include "lib/celldeath_solver.hpp"
