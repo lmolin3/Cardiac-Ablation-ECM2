@@ -95,8 +95,8 @@ namespace mfem
             }
 
             // Print the number of boundary elements on each MPI core
-            int local_bdry_element_count = bdry_element_idx.Size();
-            mfem::out << "Number of boundary elements, for MPI Core " << mesh->GetMyRank() << ": " << local_bdry_element_count << std::endl;
+            //int local_bdry_element_count = bdry_element_idx.Size();
+            //mfem::out << "Number of boundary elements, for MPI Core " << mesh->GetMyRank() << ": " << local_bdry_element_count << std::endl;
 
             return;
         }
