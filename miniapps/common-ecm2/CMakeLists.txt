@@ -35,7 +35,7 @@ mfem_add_library(mfem-common-ecm2 ${SRCS} ${HDRS})
 target_link_libraries(mfem-common-ecm2 mfem)
 
 
-add_mfem_miniapp(check-mesh
-    MAIN check_mesh.cpp
-    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common )
+add_mfem_miniapp(extract-mesh-ids
+  MAIN extract-mesh-ids.cpp
+  ${MFEM_MINIAPPS_COMMON_HEADERS}
+  LIBRARIES mfem-common stdc++fs)

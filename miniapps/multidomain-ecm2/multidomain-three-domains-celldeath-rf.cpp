@@ -69,6 +69,9 @@ static real_t T_solid = 37;    // 37.0;   // Body temperature
 static real_t T_fluid = 37;    // 30.0;  // Fluid temperature
 static real_t T_cylinder = 37; // 20.0; // Cylinder temperature
 
+static real_t phi_applied = 10;
+static real_t phi_gnd = 0.0;
+
 int main(int argc, char *argv[])
 {
 
@@ -157,6 +160,8 @@ int main(int argc, char *argv[])
                   "Thermal conductivity of the fluid (W/mK).");
    args.AddOption(&reaction, "-beta", "--reaction-coefficient",
                   "Reaction coefficient.");
+   args.AddOption(&phi_applied, "-phi", "--applied-potential",
+                  "Applied potential.");
    // Postprocessing
    args.AddOption(&print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
@@ -536,8 +541,6 @@ int main(int argc, char *argv[])
    // - Homogeneous Neumann lateral wall
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up RF BCs for solid domain...\033[0m" << std::endl;
-   real_t phi_gnd = 0.0;
-   real_t phi_applied = 1.0;
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
    rf_bcs_solid->AddDirichletBC(phi_gnd, solid_bottom_attr[0]);
    rf_bcs_solid->AddDirichletBC(phi_applied, solid_cylinder_interface[0]);
