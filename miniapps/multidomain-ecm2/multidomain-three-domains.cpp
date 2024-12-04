@@ -127,6 +127,7 @@ int main(int argc, char *argv[])
    bool paraview = true;
    int save_freq = 1; // Save fields every 'save_freq' time steps
    const char *outfolder = "";
+   bool hex = false;
 
    OptionsParser args(argc, argv);
    // Test
@@ -138,6 +139,8 @@ int main(int argc, char *argv[])
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
                   "Enable or disable partial assembly.");
    // Mesh
+   args.AddOption(&hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
+                  "Use hexahedral mesh.");   
    args.AddOption(&serial_ref_levels, "-rs", "--serial-ref-levels",
                   "Number of serial refinement levels.");
    args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
@@ -187,7 +190,19 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34m\nLoading mesh... \033[0m";
 
    // Load serial mesh
-   Mesh *serial_mesh = new Mesh("../../data/three-domains.msh");
+   Mesh *serial_mesh = nullptr;
+   if (hex)
+   { // Load Hex mesh (NETCDF required)
+#ifdef MFEM_USE_NETCDF
+      serial_mesh = new Mesh("../../data/three-domains.e");
+#else
+      MFEM_ABORT("MFEM is not built with NetCDF support!");
+#endif
+   }
+   else
+   {
+      serial_mesh = new Mesh("../../data/three-domains.msh");
+   }
    int sdim = serial_mesh->SpaceDimension();
 
    for (int l = 0; l < serial_ref_levels; l++)
@@ -237,9 +252,25 @@ int main(int argc, char *argv[])
    AttributeSets &attr_sets = parent_mesh.attribute_sets;
    AttributeSets &bdr_attr_sets = parent_mesh.bdr_attribute_sets;
 
-   Array<int> solid_domain_attribute = attr_sets.GetAttributeSet("Solid");
-   Array<int> fluid_domain_attribute = attr_sets.GetAttributeSet("Fluid");
-   Array<int> cylinder_domain_attribute = attr_sets.GetAttributeSet("Cylinder");
+   Array<int> solid_domain_attribute;
+   Array<int> fluid_domain_attribute;
+   Array<int> cylinder_domain_attribute;
+
+   if (hex)
+   {
+      solid_domain_attribute.SetSize(1);
+      fluid_domain_attribute.SetSize(1);
+      cylinder_domain_attribute.SetSize(1);
+      solid_domain_attribute = 3;
+      fluid_domain_attribute = 1;
+      cylinder_domain_attribute = 2;
+   }
+   else
+   {
+      solid_domain_attribute = attr_sets.GetAttributeSet("Solid");
+      fluid_domain_attribute = attr_sets.GetAttributeSet("Fluid");
+      cylinder_domain_attribute = attr_sets.GetAttributeSet("Cylinder");
+   }
 
    auto solid_submesh =
        std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, solid_domain_attribute));
@@ -368,25 +399,68 @@ int main(int argc, char *argv[])
    /// 7. Populate BC Handler
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   // Extract boundary attributes
-   Array<int> fluid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Fluid");
-   Array<int> fluid_solid_interface = bdr_attr_sets.GetAttributeSet("Solid-Fluid");
-   Array<int> solid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Solid");
+   Array<int> fluid_cylinder_interface;
+   Array<int> fluid_solid_interface;
+   Array<int> solid_cylinder_interface;
 
-   Array<int> fluid_lateral_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral");
-   Array<int> fluid_top_attr = bdr_attr_sets.GetAttributeSet("Fluid Top");
-   Array<int> cylinder_top_attr = bdr_attr_sets.GetAttributeSet("Cylinder Top");
-   Array<int> solid_lateral_attr = bdr_attr_sets.GetAttributeSet("Solid Lateral");
-   Array<int> solid_bottom_attr = bdr_attr_sets.GetAttributeSet("Solid Bottom");
+   Array<int> fluid_lateral_attr;
+   Array<int> fluid_top_attr;
+   Array<int> solid_lateral_attr;
+   Array<int> solid_bottom_attr;
+   Array<int> cylinder_top_attr;
+
+   Array<int> fluid_cylinder_interface_marker;
+   Array<int> fluid_solid_interface_marker;
+   Array<int> solid_cylinder_interface_marker;
+
+   if (hex)
+   {
+      // Extract boundary attributes
+      fluid_cylinder_interface.SetSize(1);
+      fluid_cylinder_interface = 8;
+      fluid_solid_interface.SetSize(1);
+      fluid_solid_interface = 3;
+      solid_cylinder_interface.SetSize(1);
+      solid_cylinder_interface = 4;
+
+      fluid_lateral_attr.SetSize(1);
+      fluid_lateral_attr = 5;
+      fluid_top_attr.SetSize(1);
+      fluid_top_attr = 6;
+      solid_lateral_attr.SetSize(1);
+      solid_lateral_attr = 2;
+      solid_bottom_attr.SetSize(1);
+      solid_bottom_attr = 1;
+      cylinder_top_attr.SetSize(1);
+      cylinder_top_attr = 7;
+
+      // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
+      fluid_cylinder_interface_marker = AttributeSets::AttrToMarker(parent_mesh.bdr_attributes.Max(), fluid_cylinder_interface);
+      fluid_solid_interface_marker = AttributeSets::AttrToMarker(parent_mesh.bdr_attributes.Max(), fluid_solid_interface);
+      solid_cylinder_interface_marker = AttributeSets::AttrToMarker(parent_mesh.bdr_attributes.Max(), solid_cylinder_interface);
+   }
+   else
+   {
+      // Extract boundary attributes
+      fluid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Fluid");
+      fluid_solid_interface = bdr_attr_sets.GetAttributeSet("Solid-Fluid");
+      solid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Solid");
+
+      fluid_lateral_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral");
+      fluid_top_attr = bdr_attr_sets.GetAttributeSet("Fluid Top");
+      solid_lateral_attr = bdr_attr_sets.GetAttributeSet("Solid Lateral");
+      solid_bottom_attr = bdr_attr_sets.GetAttributeSet("Solid Bottom");
+      cylinder_top_attr = bdr_attr_sets.GetAttributeSet("Cylinder Top");
+
+      // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
+      fluid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Fluid");
+      fluid_solid_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Solid-Fluid");
+      solid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Solid");
+   }
 
    Array<int> solid_domain_attributes = AttributeSets::AttrToMarker(solid_submesh->attributes.Max(), solid_domain_attribute);
    Array<int> fluid_domain_attributes = AttributeSets::AttrToMarker(fluid_submesh->attributes.Max(), fluid_domain_attribute);
    Array<int> cylinder_domain_attributes = AttributeSets::AttrToMarker(cylinder_submesh->attributes.Max(), cylinder_domain_attribute);
-
-   // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
-   Array<int> fluid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Fluid");
-   Array<int> fluid_solid_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Solid-Fluid");
-   Array<int> solid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Solid");
 
    // NOTE: each submesh requires a different marker set as bdr attributes are generated per submesh (size can be different)
    // They can be converted as below using the attribute sets and the max attribute number for the specific submesh
