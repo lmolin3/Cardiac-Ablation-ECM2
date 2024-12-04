@@ -228,6 +228,7 @@ namespace mfem
                break;
             case 1: // LOR
                prec = new LORSolver<HypreBoomerAMG>(*divEpsGrad, ess_tdof_list);
+               static_cast<LORSolver<HypreBoomerAMG>*>(prec)->GetSolver().SetPrintLevel(0);
                break;
             default:
                MFEM_ABORT("Unknown preconditioner type.");
@@ -367,6 +368,7 @@ namespace mfem
                break;
             case 1: // LOR
                prec = new LORSolver<HypreBoomerAMG>(*divEpsGrad, ess_tdof_list);
+               static_cast<LORSolver<HypreBoomerAMG>*>(prec)->GetSolver().SetPrintLevel(0);
                break;
             default:
                MFEM_ABORT("Unknown preconditioner type.");
