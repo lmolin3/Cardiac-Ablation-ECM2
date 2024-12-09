@@ -10,7 +10,7 @@
 // CONTRIBUTING.md for details.
 //
 // Sample run: 
-//             mpirun -np 10 ./test-transfer-three-domains -o 1 -of ./Output/ThreeDomains
+//             mpirun -np 10 ./test-nonoverlapping-partition -np1 3 -np2 2 -np3 7
 
 #include "mfem.hpp"
 
@@ -134,10 +134,14 @@ int main(int argc, char *argv[])
           myid, num_procs, myidlocal, numproclocal, domain_names[color].c_str(),color);
 
 
+   MPI_Barrier(MPI_COMM_WORLD);
    if (numproclocal < np_list[color])
    {
-      mfem::out << "\033[1;33mWarning: Mesh " << domain_names[color] << " has fewer ranks (" << numproclocal << ") than expected (" << np_list[color] << ").\033[0m" << std::endl;
+      if(myidlocal == 0)
+         mfem::out << "\033[1;33mWarning: Mesh " << domain_names[color] << " has fewer ranks (" << numproclocal << ") than expected (" << np_list[color] << ").\033[0m" << std::endl;
    }
+
+   MPI_Barrier(MPI_COMM_WORLD);
 
    // 2. Load serial mesh
    if (Mpi::Root())

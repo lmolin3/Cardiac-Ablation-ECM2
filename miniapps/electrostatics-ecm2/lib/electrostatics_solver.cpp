@@ -505,7 +505,7 @@ namespace mfem
 
       double ElectrostaticsSolver::ElectricLosses(ParGridFunction &E_gf) const
       {
-         // Compute E^T M1 E, where M1 is the H1 mass matrix with conductivity
+         // Compute E^T M1 E, where M1 is the HCurl mass matrix with conductivity
          double el = 0.0;
 
          int true_vsize =  HCurlFESpace->GetTrueVSize(); 

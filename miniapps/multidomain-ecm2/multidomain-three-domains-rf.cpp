@@ -462,11 +462,15 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up solvers and assembling forms... \033[0m" << std::endl;
 
+   StopWatch chrono_assembly;
+   chrono_assembly.Start();
    RF_Solid.EnablePA(pa);
    RF_Solid.Setup();
 
    RF_Fluid.EnablePA(pa);
    RF_Fluid.Setup();
+   chrono_assembly.Stop();
+   real_t assembly_time = chrono_assembly.RealTime();
 
    // Setup ouput
    ParaViewDataCollection paraview_dc_solid("RF-Solid", solid_submesh.get());
@@ -713,6 +717,7 @@ int main(int argc, char *argv[])
    if (Mpi::Root() && print_timing)
    { // Print times
       out << "------------------------------------------------------------" << std::endl;
+      out << "Assembly: " << assembly_time << " s" << std::endl;
       out << "Joule: " << t_joule << " s" << std::endl;
       out << "Paraview: " << t_paraview << " s" << std::endl;
       out << "------------------------------------------------------------" << std::endl;

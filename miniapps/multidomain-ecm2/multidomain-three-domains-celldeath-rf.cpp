@@ -852,29 +852,35 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[0mHeat Transfer problem ... \033[0m";
 
+   StopWatch chrono_assembly;
+   chrono_assembly.Start();
    Heat_Solid.EnablePA(pa_heat);
    Heat_Solid.Setup();
-
+   
    Heat_Cylinder.EnablePA(pa_heat);
    Heat_Cylinder.Setup();
 
    Heat_Fluid.EnablePA(pa_heat);
    Heat_Fluid.Setup();
+   chrono_assembly.Stop();
    if (Mpi::Root())
-      mfem::out << "\033[0mdone.\033[0m" << std::endl;
+      mfem::out << "\033[0mdone, in " << chrono_assembly.RealTime() << "s.\033[0m" << std::endl;
 
 
    if (Mpi::Root())
       mfem::out << "\033[0mRF problem... \033[0m";
 
+   chrono_assembly.Clear();
+   chrono_assembly.Start();
    RF_Solid.EnablePA(pa_rf);
    RF_Solid.Setup();
 
    RF_Fluid.EnablePA(pa_rf);
    RF_Fluid.Setup();
+   chrono_assembly.Stop();
 
    if (Mpi::Root())
-      mfem::out << "\033[0mdone.\033[0m" << std::endl;
+      mfem::out << "\033[0mdone, in " << chrono_assembly.RealTime() << "s.\033[0m" << std::endl;
 
    // Setup ouput
    ParaViewDataCollection paraview_dc_cylinder_heat("Heat-Cylinder", cylinder_submesh.get());
@@ -991,14 +997,14 @@ int main(int argc, char *argv[])
    int rf_solid_dofs = RF_Solid.GetProblemSize();
 
    // Integration rule for the L2 error
-   int order_quad_heat = std::max(2, order_heat + 1);
+   int order_quad_heat = std::max(2, 2*order_heat + 2);
    const IntegrationRule *irs_heat[Geometry::NumGeom];
    for (int i = 0; i < Geometry::NumGeom; ++i)
    {
       irs_heat[i] = &(IntRules.Get(i, order_quad_heat));
    }
 
-   int order_quad_rf = std::max(2, order_rf + 1);
+   int order_quad_rf = std::max(2, 2*order_rf + 2);
    const IntegrationRule *irs_rf[Geometry::NumGeom];
    for (int i = 0; i < Geometry::NumGeom; ++i)
    {

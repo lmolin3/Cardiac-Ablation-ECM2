@@ -25,6 +25,9 @@ using namespace mfem;
 
 void ExportMeshwithPartitioning(const std::string &outfolder, Mesh &mesh, const int *partitioning_);
 
+static constexpr real_t Tfluid = 303.15;    // Fluid temperature
+static constexpr real_t Tcylinder = 293.15; // Cylinder temperature
+
 int main(int argc, char *argv[])
 {
 
@@ -275,9 +278,13 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nTransfer solution from cylinder --> fluid domain... \033[0m" << std::endl;
 
-   // Initial conditions on cykinder
-   FunctionCoefficient Tfunc(func);
-   temperature_cylinder_gf.ProjectCoefficient(Tfunc);
+   // Initial conditions on cylinder
+   //FunctionCoefficient Tfunc(func);
+   ConstantCoefficient Tcyl(Tcylinder);
+   temperature_cylinder_gf.ProjectCoefficient(Tcyl);
+
+   ConstantCoefficient Tfluid(Tfluid);
+   temperature_fluid_gf.ProjectCoefficient(Tfluid);
 
    VectorFunctionCoefficient grad_Tfunc(vdim, func_grad);
    grad_cylinder_exact_gf.ProjectCoefficient(grad_Tfunc);
