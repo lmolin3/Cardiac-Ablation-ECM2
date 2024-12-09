@@ -42,13 +42,13 @@ namespace mfem
                              real_t advection = 0.0,
                              VectorCoefficient *u = nullptr,
                              real_t reaction = 0.0,
-                             int ode_solver_type = 1, bool verbose = true);
+                             int ode_solver_type = 1, bool verbose = false);
 
                   // overload for the case of purely conductive heat transfer
                   HeatSolver(std::shared_ptr<ParMesh> pmesh, int order, BCHandler *bcs,
                              MatrixCoefficient *Kappa,
                              Coefficient *c_, Coefficient *rho_,
-                             int ode_solver_type, bool verbose = true);
+                             int ode_solver_type, bool verbose = false);
 
                   ~HeatSolver();
 
@@ -64,7 +64,8 @@ namespace mfem
                   void EnablePA(bool pa) { op->EnablePA(pa); }
 
                   /// Set the solver and AdvectionReactionDiffusionOperator
-                  void Setup();
+                  // If dt is proivided we set the time step in the internal operator so ImplicitSolverPA doesn't need to be reassembled in the first step
+                  void Setup(real_t dt = 0.0, int prec_type = 1);
 
                   void SetInitialTemperature(ParGridFunction &T0);
 

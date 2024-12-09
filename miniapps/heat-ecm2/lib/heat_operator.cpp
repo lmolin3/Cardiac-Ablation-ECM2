@@ -64,9 +64,10 @@ namespace mfem
 
       void AdvectionReactionDiffusionOperator::EnablePA(bool pa_) { pa = pa_; }
 
-      void AdvectionReactionDiffusionOperator::Setup()
+      void AdvectionReactionDiffusionOperator::Setup(real_t dt, int prec_type)
       {
          // cout << "\033[31mCheckpoint 0, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
+         current_dt = dt;
 
          /// 1. Check partial assembly
          // bool tensor = false;
@@ -158,8 +159,7 @@ namespace mfem
          if (pa)
          {
             M_prec = new OperatorJacobiSmoother(*M, ess_tdof_list);
-            T_solver = nullptr; // Implicit time integration not supported with partial
-                                // assembly
+            T_solver_pa = new ImplicitSolverPA(&H1FESpace, current_dt, bcs, ess_tdof_list, Kappa, rhoC, alpha, u, beta, prec_type);
          }
          else
          {
@@ -171,7 +171,7 @@ namespace mfem
             Mfull =
                 Add(1.0, *opM.As<HypreParMatrix>(), 1.0, *opMe.As<HypreParMatrix>());
             T_solver =
-                new ImplicitSolver(Mfull, opK.As<HypreParMatrix>(), ess_tdof_list, pmesh->Dimension(), has_advection);
+                new ImplicitSolverFA(Mfull, opK.As<HypreParMatrix>(), ess_tdof_list, pmesh->Dimension(), has_advection);
          }
 
          const double rel_tol = 1e-8;
@@ -252,8 +252,9 @@ namespace mfem
          // Inform the linear forms that the space has changed.
          fform->Update();
 
-         // Reset the ImplicitSolver
-         T_solver->Reset();
+         // Reset the ImplicitSolverFA
+         if (!pa)
+            T_solver->Reset();
       }
 
       void AdvectionReactionDiffusionOperator::SetTime(const double time)
@@ -352,12 +353,12 @@ namespace mfem
       void AdvectionReactionDiffusionOperator::ImplicitSolve(const double dt, const Vector &u,
                                                              Vector &du_dt)
       {
-         MFEM_VERIFY(!pa,
-                     "Partial assembly not supported for implicit time integraton");
+         //MFEM_VERIFY(!pa,
+         //            "Partial assembly not supported for implicit time integraton");
 
          // Solve the equation:
          //    du_dt = M^{-1}*[-K(u + f + dt*du_dt)]
-         if (!T_solver->IsFinalized())
+         if (!pa && !T_solver->IsFinalized())
          {
             T_solver->BuildOperator(Mfull, opK.As<HypreParMatrix>(),
                                     opRobinMass.As<HypreParMatrix>());
@@ -381,10 +382,21 @@ namespace mfem
          du_dt = *dT_approx;
 
          // Eliminate essential dofs
-         T_solver->EliminateBC(du_dt, z);
+         if (pa)
+            T_solver_pa->EliminateBC(du_dt, z);
+         else
+            T_solver->EliminateBC(du_dt, z);
 
          // Solve
-         T_solver->Mult(z, du_dt);
+         if (pa)
+         {
+            T_solver_pa->Mult(z, du_dt);
+         }
+         else
+         {
+            T_solver->Mult(z, du_dt);
+         }
+
 
          // set du_dt on dofs with approximation (avoid roundoff errors)
          for (int i = 0; i < ess_tdof_list.Size(); i++)
@@ -396,11 +408,19 @@ namespace mfem
 
       void AdvectionReactionDiffusionOperator::SetTimeStep(double dt)
       {
-         if (dt != current_dt && T_solver)
+         if (dt == current_dt)
+            return;
+
+         current_dt = dt;
+
+         if (!pa && T_solver)
          {
             T_solver->SetTimeStep(dt); // This also resets the solver internally to recompute the operator
          }
-         current_dt = dt;
+         else
+         {
+            T_solver_pa->SetTimeStep(dt); // This also resets the solver internally to recompute the operator
+         }
       }
 
       void AdvectionReactionDiffusionOperator::AddVolumetricTerm(Coefficient *coeff,
@@ -436,7 +456,7 @@ namespace mfem
       }
 
       // Class for solver used in implicit time integration
-      ImplicitSolver::ImplicitSolver(HypreParMatrix *M_, HypreParMatrix *K_,
+      ImplicitSolverFA::ImplicitSolverFA(HypreParMatrix *M_, HypreParMatrix *K_,
                                      Array<int> &ess_tdof_list_, int dim, bool use_advection)
           : M(M_), K(K_), RobinMassMat(nullptr), T(nullptr), Te(nullptr),
             current_dt(-1.0), ess_tdof_list(ess_tdof_list_), finalized(false)
@@ -466,7 +486,7 @@ namespace mfem
          linear_solver->SetPreconditioner(*prec);
       };
 
-      void ImplicitSolver::SetTimeStep(double dt_)
+      void ImplicitSolverFA::SetTimeStep(double dt_)
       {
          if (dt_ != current_dt)
          {
@@ -475,17 +495,17 @@ namespace mfem
          }
       }
 
-      void ImplicitSolver::SetOperator(const Operator &op)
+      void ImplicitSolverFA::SetOperator(const Operator &op)
       {
          linear_solver->SetOperator(op);
       }
 
-      void ImplicitSolver::Mult(const Vector &x, Vector &y) const
+      void ImplicitSolverFA::Mult(const Vector &x, Vector &y) const
       {
          linear_solver->Mult(x, y);
       }
 
-      void ImplicitSolver::Reset()
+      void ImplicitSolverFA::Reset()
       {
          delete T;
          T = nullptr;
@@ -494,9 +514,9 @@ namespace mfem
          finalized = false;
       }
 
-      bool ImplicitSolver::IsFinalized() const { return finalized; }
+      bool ImplicitSolverFA::IsFinalized() const { return finalized; }
 
-      void ImplicitSolver::BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
+      void ImplicitSolverFA::BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
                                          HypreParMatrix *RobinMass_)
       {
          // T = M + dt*K + dt RobinMass = M + dt*(D + A - R) + dt RobinMass
@@ -523,7 +543,7 @@ namespace mfem
          finalized = true;
       }
 
-      void ImplicitSolver::EliminateBC(const Vector &x, Vector &b) const
+      void ImplicitSolverFA::EliminateBC(const Vector &x, Vector &b) const
       {
          if (finalized)
          {
@@ -531,11 +551,11 @@ namespace mfem
          }
          else
          {
-            MFEM_ABORT("ImplicitSolver not finalized");
+            MFEM_ABORT("ImplicitSolverFA not finalized");
          }
       }
 
-      ImplicitSolver::~ImplicitSolver()
+      ImplicitSolverFA::~ImplicitSolverFA()
       {
          delete linear_solver;
          linear_solver = nullptr;
@@ -545,6 +565,204 @@ namespace mfem
          T = nullptr;
          delete Te;
          Te = nullptr;
+      }
+
+      // Class for solver used in implicit time integration (PA test)
+      ImplicitSolverPA::ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
+                                         BCHandler *bcs_, Array<int> &ess_tdof_list_, 
+                                         MatrixCoefficient *Kappa_, Coefficient *rhoC_,
+                                         real_t alpha_, VectorCoefficient *u_,
+                                         Coefficient * beta_, int prec_type_)
+          : fes(fes_), bcs(bcs_), current_dt(dt_), rhoC(rhoC_), alpha(alpha_), Beta(beta_), Kappa(Kappa_), u(u_), ess_tdof_list(ess_tdof_list_), prec_type(prec_type_)
+      {
+         // Check contributions
+         has_reaction = Beta ? true : false;
+         has_diffusion = Kappa ? true : false;
+         has_advection = alpha_ != 0 && u ? true : false;
+
+         // Create product coefficients (dependent on timestep)
+         if (has_diffusion)
+            dtKappa = new ScalarMatrixProductCoefficient(current_dt, *Kappa);
+         if (has_advection)
+            dtConv = current_dt*alpha;
+         if (has_reaction)
+            dtBeta = new ProductCoefficient(current_dt, *Beta);
+
+         // Create bilinear form for operator T = M + dt*K + dt*RobinMass
+         T = new ParBilinearForm(fes);
+         T->AddDomainIntegrator(new MassIntegrator(*rhoC));
+         if (has_diffusion)
+            T->AddDomainIntegrator(new DiffusionIntegrator(*dtKappa));
+         if (has_advection)
+            T->AddDomainIntegrator(new ConvectionIntegrator(*u, dtConv));
+         if (has_reaction)
+            T->AddDomainIntegrator(new MassIntegrator(*dtBeta));
+
+         for (auto &robin_bc : bcs->GetRobinBcs())
+         {
+            // Add a Mass integrator on the Robin boundary
+            ProductCoefficient dtH(current_dt, *robin_bc.h_coeff);
+            T->AddBoundaryIntegrator(new MassIntegrator(dtH), robin_bc.attr);
+         }
+
+         T->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+         T->Assemble();
+         T->FormSystemMatrix(ess_tdof_list, opT);
+
+         // Preconditioner
+         switch (prec_type)
+         {
+         case 0: // Jacobi Smoother
+            prec = new OperatorJacobiSmoother(*T, ess_tdof_list);
+            break;
+         case 1: // LOR
+            lor = new ParLORDiscretization(*T, ess_tdof_list);
+            prec = new HypreBoomerAMG(lor->GetAssembledMatrix());
+            static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
+            break;
+         default:
+            MFEM_ABORT("Unknown preconditioner type.");
+         }
+
+         // Linear solver
+         if (has_advection)
+         {
+            linear_solver = new GMRESSolver(fes->GetComm());
+         }
+         else
+         {
+            linear_solver = new CGSolver(fes->GetComm());
+         }
+
+         linear_solver->iterative_mode = false;
+         linear_solver->SetRelTol(1e-8);
+         linear_solver->SetAbsTol(0.0);
+         linear_solver->SetMaxIter(500);
+         linear_solver->SetPrintLevel(0);
+         linear_solver->SetOperator(*opT);
+         linear_solver->SetPreconditioner(*prec);
+      };
+
+      void ImplicitSolverPA::SetTimeStep(double dt_)
+      {
+         // If the timestep has not changed, do nothing
+         if (dt_ == current_dt)
+         {
+            return;
+         }
+
+         // If the timestep has changed:
+         // 1. Update the coefficients
+         // 2. Reassemble the operator
+         // 3. Reset the solver 
+         
+         current_dt = dt_;
+
+         // Update the coefficients
+         if (has_diffusion)
+            dtKappa->SetAConst(current_dt);
+         if (has_advection)
+            dtConv = current_dt*alpha;
+         if (has_reaction)
+            dtBeta->SetAConst(current_dt);
+
+         // Reassemble the operator
+         delete T;
+         opT.Clear();
+         T = new ParBilinearForm(fes);
+         T->AddDomainIntegrator(new MassIntegrator(*rhoC));
+         if (has_diffusion)
+            T->AddDomainIntegrator(new DiffusionIntegrator(*dtKappa));
+         if (has_advection)
+            T->AddDomainIntegrator(new ConvectionIntegrator(*u, dtConv));
+         if (has_reaction)
+            T->AddDomainIntegrator(new MassIntegrator(*dtBeta));
+
+         for (auto &robin_bc : bcs->GetRobinBcs())
+         {
+            // Add a Mass integrator on the Robin boundary
+            ProductCoefficient dtH(current_dt, *robin_bc.h_coeff);
+            T->AddBoundaryIntegrator(new MassIntegrator(dtH), robin_bc.attr);
+         }
+
+         T->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+         T->Assemble();
+         T->FormSystemMatrix(ess_tdof_list, opT);
+
+         // Recreate the preconditioner
+         delete prec;
+         switch (prec_type)
+         {
+         case 0: // Jacobi Smoother
+            prec = new OperatorJacobiSmoother(*T, ess_tdof_list);
+            break;
+         case 1: // LOR
+            delete lor; 
+            lor = new ParLORDiscretization(*T, ess_tdof_list);
+            prec = new HypreBoomerAMG(lor->GetAssembledMatrix());
+            static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
+            break;
+         default:
+            MFEM_ABORT("Unknown preconditioner type.");
+         }  
+
+         // Reset the solver
+         delete linear_solver;
+         if (has_advection)
+         {
+            linear_solver = new GMRESSolver(fes->GetComm());
+         }
+         else
+         {
+            linear_solver = new CGSolver(fes->GetComm());
+         }
+         linear_solver->iterative_mode = false;
+         linear_solver->SetRelTol(1e-8);
+         linear_solver->SetAbsTol(0.0);
+         linear_solver->SetMaxIter(500);
+         linear_solver->SetPrintLevel(0);
+         linear_solver->SetOperator(*opT);
+         linear_solver->SetPreconditioner(*prec);
+      }
+
+      void ImplicitSolverPA::SetTime(real_t time)
+      {
+         if ( current_time == time )
+         {
+            return;
+         }
+
+         current_time = time;
+
+         // Update the coefficients and reassemble the operator and solver
+         //TODO
+      }
+
+      void ImplicitSolverPA::SetOperator(const Operator &op)
+      {
+         linear_solver->SetOperator(op);
+      }
+
+      void ImplicitSolverPA::Mult(const Vector &x, Vector &y) const
+      {
+         linear_solver->Mult(x, y);
+      }
+
+
+      void ImplicitSolverPA::EliminateBC(const Vector &x, Vector &b) const
+      {
+         auto *constrainedT = opT.As<ConstrainedOperator>();
+         constrainedT->EliminateRHS(x, b);
+      }
+
+      ImplicitSolverPA::~ImplicitSolverPA()
+      {
+         delete T;
+         delete linear_solver;
+         delete prec;
+         delete dtKappa;
+         delete dtBeta;
+         delete lor;
       }
 
    } // namespace heat

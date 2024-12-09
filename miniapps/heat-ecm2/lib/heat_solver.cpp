@@ -232,7 +232,7 @@ namespace mfem
       }
 
       void
-      HeatSolver::Setup()
+      HeatSolver::Setup(real_t dt, int prec_type)
       {
          sw_setup.Start();
 
@@ -242,7 +242,7 @@ namespace mfem
          }
 
          // Set up the internal AdvectionReactionDiffusionOperator
-         op->Setup();
+         op->Setup(dt, prec_type);
 
          // Initialize every entry with zero solution (only stored essential_tdofs)
          ess_tdof_list = op->GetEssTDofList();

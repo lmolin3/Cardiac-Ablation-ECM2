@@ -31,7 +31,7 @@
 //
 // Sample runs:
 //
-//    mpirun -np 4 ./convergence -ode 1 -n 20 -a 3 -b 1.2 -kattr 1 -kval 1 -cattr 1 -cval 1 -rhoattr 1 -rhoval 1 --paraview -o 1 -r 5 -fun 2 -d 2
+//    mpirun -np 4 ./convergence_heat -ode 1 -n 20 -a 3 -b 1.2 -kattr 1 -kval 1 -cattr 1 -cval 1 -rhoattr 1 -rhoval 1 --paraview -o 1 -r 5 -fun 2 -d 2
 //
 
 #include "lib/heat_solver.hpp"
@@ -95,6 +95,7 @@ int main(int argc, char *argv[])
    // Time integrator
    int ode_solver_type = -1;
    int num_steps = 20;
+   bool pa = false;
    // Postprocessing
    bool paraview = true;
    const char *outfolder = "./Output/Convergence/";
@@ -106,6 +107,8 @@ int main(int argc, char *argv[])
                   "Dimension of the problem (2 or 3).");
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
+   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
+                  "Enable or disable partial assembly.");
    args.AddOption(&total_refinements, "-r", "--refinements",
                   "Number of total uniform refinements");
    args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
@@ -377,7 +380,7 @@ int main(int argc, char *argv[])
       /// 7. Setup solver and Assemble forms
       ///////////////////////////////////////////////////////////////////////////////////////////////
 
-      Heat.EnablePA(false);
+      Heat.EnablePA(pa);
       Heat.Setup();
 
       ///////////////////////////////////////////////////////////////////////////////////////////////
