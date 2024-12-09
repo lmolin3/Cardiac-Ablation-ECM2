@@ -1248,7 +1248,7 @@ int main(int argc, char *argv[])
    {
       if (Mpi::Root())
       {
-         mfem::out << std::left << std::setw(16) << step << std::setw(16) << t << std::setw(16) << dt << std::setw(16);
+         mfem::out << std::left << std::setw(16) << step << std::setw(16) << t << std::setw(16) << dt << std::setw(16) << std::endl;
       }
 
       if (t + dt >= t_final - dt / 2)
@@ -1473,10 +1473,13 @@ int main(int argc, char *argv[])
 
          // Reset the convergence flag and time for the next iteration
          if (Mpi::Root())
-         { // Print iterations for (fluid-solid-cylinder)
-            mfem::out << std::setw(2) << iter_fluid << std::setw(2) << "-"
-                      << std::setw(2) << iter_solid << std::setw(2) << "-"
-                      << std::setw(2) << iter_cylinder << std::endl;
+         { 
+            // Print the message and iterations on the same line
+            mfem::out << "\033[34mSolving HeatTransfer problem... "
+                     << std::setw(20) << " " // Adjust the width to align with "Sub-iterations (F-S-C)"
+                     << std::setw(2) << iter_fluid << std::setw(2) << "-"
+                     << std::setw(2) << iter_solid << std::setw(2) << "-"
+                     << std::setw(2) << iter_cylinder << "\033[0m" << std::endl;
          }
 
          if (Mpi::Root() && print_timing)
