@@ -46,7 +46,7 @@ namespace mfem
             linear_solver->iterative_mode = false;
             linear_solver->SetRelTol(1e-8);
             linear_solver->SetAbsTol(0.0);
-            linear_solver->SetMaxIter(500);
+            linear_solver->SetMaxIter(1000);
             linear_solver->SetPrintLevel(0);
             linear_solver->SetPreconditioner(*prec);
         };
@@ -192,7 +192,7 @@ namespace mfem
             linear_solver->iterative_mode = false;
             linear_solver->SetRelTol(1e-8);
             linear_solver->SetAbsTol(0.0);
-            linear_solver->SetMaxIter(500);
+            linear_solver->SetMaxIter(1000);
             linear_solver->SetPrintLevel(0);
             linear_solver->SetOperator(*opT);
             linear_solver->SetPreconditioner(*prec);
@@ -274,7 +274,7 @@ namespace mfem
             linear_solver->iterative_mode = false;
             linear_solver->SetRelTol(1e-8);
             linear_solver->SetAbsTol(0.0);
-            linear_solver->SetMaxIter(500);
+            linear_solver->SetMaxIter(1000);
             linear_solver->SetPrintLevel(0);
             linear_solver->SetOperator(*opT);
             linear_solver->SetPreconditioner(*prec);

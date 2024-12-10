@@ -166,6 +166,7 @@ namespace mfem
             // Solver for implicit solve (T_prec will be set in ImplicitSolve)
             T_solver = new ImplicitSolverFA(Mfull, opK.As<HypreParMatrix>(), ess_tdof_list, pmesh->Dimension(), has_advection);
             static_cast<ImplicitSolverFA *>(T_solver)->SetOperators(Mfull, opK.As<HypreParMatrix>(), opRobinMass.As<HypreParMatrix>());
+            static_cast<ImplicitSolverFA *>(T_solver)->SetTimeStep(current_dt);
          }
 
          const double rel_tol = 1e-8;

@@ -83,7 +83,7 @@ namespace heat
                          BCHandler *bcs_, Array<int> &ess_tdof_list_,
                          MatrixCoefficient *Kappa_ = nullptr, Coefficient *rhoC_ = nullptr,
                          real_t alpha_ = 0.0, VectorCoefficient *u_ = nullptr,
-                         Coefficient *beta_ = nullptr, int prec_type = 1);
+                         Coefficient *beta_ = nullptr, int prec_type = 0);
 
         void SetTimeStep(real_t dt_) override;
 

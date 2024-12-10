@@ -65,7 +65,7 @@ namespace mfem
 
                   /// Set the solver and AdvectionReactionDiffusionOperator
                   // If dt is proivided we set the time step in the internal operator so ImplicitSolverPA doesn't need to be reassembled in the first step
-                  void Setup(real_t dt = 0.0, int prec_type = 1);
+                  void Setup(real_t dt = 0.0, int prec_type = 0);
 
                   void SetInitialTemperature(ParGridFunction &T0);
 
