@@ -24,12 +24,14 @@ if (MFEM_USE_MPI)
   list(APPEND HEAT_SRCS
     lib/heat_solver.cpp
     lib/heat_operator.cpp
+    lib/implicit_solver.cpp
     bc/heat_bchandler.cpp
   )
 
   list(APPEND HEAT_HDRS
     lib/heat_solver.hpp
     lib/heat_operator.hpp
+    lib/implicit_solver.hpp
     bc/heat_bchandler.hpp
   )
 

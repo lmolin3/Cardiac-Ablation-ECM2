@@ -312,7 +312,6 @@ namespace mfem
          sw_solve.Start();
 
          // Update the operator
-         op->SetTimeStep(dt);
          SetTimeIntegrationCoefficients(step);
 
          // Set solution vector to the previous solution (without new bcs)

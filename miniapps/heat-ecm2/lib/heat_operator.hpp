@@ -43,6 +43,7 @@
 #include "mesh_extras.hpp"
 #include "pfem_extras.hpp"
 #include "bc/heat_bchandler.hpp"
+#include "implicit_solver.hpp"
 #include "utils.hpp"
 #include <deque>
 
@@ -62,9 +63,9 @@ namespace mfem
   namespace heat
   {
     // Forward declaration of ImplicitSolverFA
+    class ImplicitSolverBase;
     class ImplicitSolverFA;
     class ImplicitSolverPA;
-    class ImplicitOperator;
 
     class AdvectionReactionDiffusionOperator : public TimeDependentOperator
     {
@@ -92,7 +93,7 @@ namespace mfem
       OperatorHandle opMe;
       OperatorHandle opK;
       OperatorHandle opRobinMass; // Mass matrix with Robin BCs
-      HypreParMatrix *Mfull;
+      HypreParMatrix *Mfull = nullptr;
 
       double current_dt = 0.0;
       int current_step = 0;
@@ -100,8 +101,7 @@ namespace mfem
       CGSolver M_solver; // Krylov solver for inverting the mass matrix M
       Solver *M_prec;    // Preconditioner for the mass matrix M
 
-      ImplicitSolverFA *T_solver;       // Implicit solver for T = M + dt K
-      ImplicitSolverPA *T_solver_pa;  // Implicit (PA) solver for T = M + dt K
+      ImplicitSolverBase *T_solver;       // Implicit solver for T = M + dt K
 
       ProductCoefficient *rhoC;
       MatrixCoefficient *Kappa; // Diffusion term
@@ -181,88 +181,6 @@ namespace mfem
 
       virtual ~AdvectionReactionDiffusionOperator();
     };
-
-    // Solver for implicit time integration Top du/dt = -K(T) + f
-    // where Top = M + dt*K + dt RobinMass = M + dt*(D + A - R) + dt RobinMass
-    class ImplicitSolverFA : public Solver
-    {
-    private:
-      HypreParMatrix *M, *K, *RobinMassMat;
-      HypreParMatrix *T, *Te;
-      IterativeSolver *linear_solver;
-      HypreBoomerAMG *prec;
-      double current_dt;
-      bool finalized;
-      Array<int> ess_tdof_list;
-
-    public:
-      ImplicitSolverFA(HypreParMatrix *M_, HypreParMatrix *K_,
-                     Array<int> &ess_tdof_list_, int dim, bool use_advection);
-
-      void SetOperator(const Operator &op);
-
-      void SetTimeStep(double dt_);
-
-      void Reset();
-
-      void BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
-                         HypreParMatrix *RobinMass_ = nullptr);
-
-      void EliminateBC(const Vector &x, Vector &b) const;
-
-      virtual void Mult(const Vector &x, Vector &y) const;
-
-      bool IsFinalized() const;
-
-      ~ImplicitSolverFA();
-    };
-
-    // Solver for implicit time integration Top du/dt = -K(T) + f
-    // where Top = M + dt*K + dt RobinMass = M + dt*(D + A - R) + dt RobinMass
-    class ImplicitSolverPA : public Solver
-    {
-    private:
-      ParFiniteElementSpace *fes;
-      ParBilinearForm *T;
-      OperatorHandle opT;
-      IterativeSolver *linear_solver;
-      Solver *prec;
-      ParLORDiscretization *lor;
-      double current_dt, current_time;
-      Array<int> ess_tdof_list;
-      ScalarMatrixProductCoefficient *dtKappa;
-      ProductCoefficient *dtBeta;
-      real_t dtConv;
-      Coefficient *rhoC, *Beta;
-      VectorCoefficient *u;
-      MatrixCoefficient *Kappa;
-      real_t alpha;
-      BCHandler *bcs;
-      bool has_diffusion, has_advection, has_reaction;
-      int prec_type;
-    public:
-      ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
-                       BCHandler *bcs_, Array<int> &ess_tdof_list_,
-                       MatrixCoefficient *Kappa_ = nullptr, Coefficient *rhoC_ = nullptr,
-                       real_t alpha_ = 0.0, VectorCoefficient *u_ = nullptr,
-                       Coefficient *beta_ = nullptr, int prec_type = 1);
-
-      void SetOperator(const Operator &op);
-
-      void SetTimeStep(real_t dt_);
-
-      void SetTime( real_t time);
-
-      void BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
-                         HypreParMatrix *RobinMass_ = nullptr);
-
-      void EliminateBC(const Vector &x, Vector &b) const;
-
-      virtual void Mult(const Vector &x, Vector &y) const;
-
-      ~ImplicitSolverPA();
-    };
-
 
   } // namespace heat
 
