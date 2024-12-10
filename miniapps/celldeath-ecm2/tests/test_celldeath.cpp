@@ -173,8 +173,8 @@ int main(int argc, char *argv[])
    /// 5. Create the CellDeath Solver and DataCollections
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   celldeath::CellDeathSolver solver(mesh, order_celldeath, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
-   celldeathgotran::CellDeathSolverGotran solver_gotran(mesh, order_celldeath, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
+   celldeath::CellDeathSolverEigen solver(mesh, order_celldeath, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
+   celldeath::CellDeathSolverGotran solver_gotran(mesh, order_celldeath, T_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
 
    // Initialize Paraview visualization
    ParaViewDataCollection paraview_dc("CellDeathEigen", mesh.get());

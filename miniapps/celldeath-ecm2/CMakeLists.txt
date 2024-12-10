@@ -24,10 +24,12 @@ if (MFEM_USE_MPI)
   # Eigen version
   list(APPEND CELLDEATH_SRCS
     lib/celldeath_solver.cpp
+    lib/ThreeStateCellDeath.cpp
   )
 
   list(APPEND CELLDEATH_HDRS
     lib/celldeath_solver.hpp
+    lib/ThreeStateCellDeath.h
   )
 
   convert_filenames_to_full_paths(CELLDEATH_SRCS)
@@ -40,33 +42,11 @@ if (MFEM_USE_MPI)
     mfem-common-ecm2
     mfem-common
     ${TPL_LIBRARIES})
-
- # Gotran version
- list(APPEND CELLDEATH_GOTRAN_SRCS
- lib/celldeath_solver_gotran.cpp
-  lib/ThreeStateCellDeath.cpp
-)
-
-list(APPEND CELLDEATH_GOTRAN_HDRS
- lib/celldeath_solver_gotran.hpp
- lib/ThreeStateCellDeath.h
-)
-
-convert_filenames_to_full_paths(CELLDEATH_GOTRAN_SRCS)
-convert_filenames_to_full_paths(CELLDEATH_GOTRAN_HDRS)
-
-mfem_add_library(celldeath-gotran-ecm2 ${CELLDEATH_GOTRAN_SRCS} ${CELLDEATH_GOTRAN_HDRS})
- 
-target_link_libraries(celldeath-gotran-ecm2
- mfem
- mfem-common-ecm2
- mfem-common
- ${TPL_LIBRARIES})
-
+    
 add_mfem_miniapp(test_celldeath
     MAIN tests/test_celldeath.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common celldeath-ecm2 celldeath-gotran-ecm2)
+    LIBRARIES mfem mfem-common celldeath-ecm2)
 
 endif () #MFEM_USE_MPI
 
