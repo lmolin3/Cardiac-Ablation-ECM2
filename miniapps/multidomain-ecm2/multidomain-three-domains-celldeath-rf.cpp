@@ -95,12 +95,9 @@ int main(int argc, char *argv[])
    int order_celldeath = -1;
    bool pa_heat = false; // Enable partial assembly for HeatSolver
    bool pa_rf = false;   // Enable partial assembly for ElectrostaticsSolver
+   int celldeath_solver_type = 0; // 0: Eigen, 1: GoTran
    // Physics
-   double kval_cyl = 1.0;   // W/mK
-   double kval_solid = 1.0; // W/mK
-   double kval_fluid = 1.0; // W/mK
-   double alpha = 0.0;      // Advection coefficient
-   double reaction = 0.0;   // Reaction term
+
    // Test selection
    int test = 1; // 0 - Box heating, 1 - Cylinder heating
    // Mesh
@@ -125,9 +122,6 @@ int main(int argc, char *argv[])
    bool save_convergence = false;
 
    OptionsParser args(argc, argv);
-   // Test
-   args.AddOption(&test, "-p", "--problem",
-                  "Test selection: 0 - Box heating, 1 - Cylinder heating.");
    // FE
    args.AddOption(&order_heat, "-oh", "--order-heat",
                   "Finite element order for heat transfer (polynomial degree).");
@@ -139,6 +133,8 @@ int main(int argc, char *argv[])
                   "Enable or disable partial assembly.");
    args.AddOption(&pa_rf, "-pa_rf", "--partial-assembly-rf", "-no-pa_rf", "--no-partial-assembly-rf",
                   "Enable or disable partial assembly for RF problem.");   
+   args.AddOption(&celldeath_solver_type, "-cdt", "--celldeath-solver-type",
+                  "Cell-death solver type: 0 - Eigen, 1 - GoTran.");
    // Mesh
    args.AddOption(&hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
                   "Use hexahedral mesh.");
@@ -159,14 +155,6 @@ int main(int argc, char *argv[])
    args.AddOption(&omega, "-omega", "--relaxation-parameter",
                   "Relaxation parameter.");
    // Physics
-   args.AddOption(&kval_cyl, "-kc", "--k-cylinder",
-                  "Thermal conductivity of the cylinder (W/mK).");
-   args.AddOption(&kval_solid, "-kb", "--k-solid",
-                  "Thermal conductivity of the solid (W/mK).");
-   args.AddOption(&kval_fluid, "-kf", "--k-fluid",
-                  "Thermal conductivity of the fluid (W/mK).");
-   args.AddOption(&reaction, "-beta", "--reaction-coefficient",
-                  "Reaction coefficient.");
    args.AddOption(&phi_applied, "-phi", "--applied-potential",
                   "Applied potential.");
    // Postprocessing
@@ -315,18 +303,24 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[0mHeat transfer problem... \033[0m";
 
-   double cval_cyl, rhoval_cyl;
+   double alpha = 0.0;      // Advection coefficient
+   double reaction = 0.0;   // Reaction term
+
+   double cval_cyl, rhoval_cyl, kval_cyl;
    cval_cyl = 1.0;   // J/kgK
    rhoval_cyl = 1.0; // kg/m^3
+   kval_cyl = 1.0;   // W/mK
 
-   double cval_solid, rhoval_solid;
+   double cval_solid, rhoval_solid, kval_solid;
    cval_solid = 1.0;   // J/kgK
    rhoval_solid = 1.0; // kg/m^3
+   kval_solid = 1.0;   // W/mK
 
-   double cval_fluid, rhoval_fluid;
+   double cval_fluid, rhoval_fluid, kval_fluid;
    cval_fluid = 1.0;   // J/kgK
    rhoval_fluid = 1.0; // kg/m^3
-
+   kval_fluid = 1.0;   // W/mK
+   
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
    auto *Kappa_cyl = new ScalarMatrixProductCoefficient(kval_cyl, *Id);
@@ -416,7 +410,13 @@ int main(int argc, char *argv[])
    ParGridFunction *phi_fluid_gf = RF_Fluid.GetPotentialGfPtr();
 
    // Cell Death solver (needs pointer to temperature grid function)
-   celldeath::CellDeathSolver CellDeath_Solid(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3); 
+   celldeath::CellDeathSolver *CellDeath_Solid = nullptr;
+   if (celldeath_solver_type == 0)
+      CellDeath_Solid = new celldeath::CellDeathSolverEigen(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3);
+   else if (celldeath_solver_type == 1)
+      CellDeath_Solid = new celldeath::CellDeathSolverGotran(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3);
+   else
+      MFEM_ABORT("Invalid cell death solver type.");
 
    // Finite element spaces 
    ParFiniteElementSpace *heat_fes_cylinder = Heat_Cylinder.GetFESpace();
@@ -909,7 +909,7 @@ int main(int argc, char *argv[])
       paraview_dc_celldeath.SetPrefixPath(outfolder);
       paraview_dc_celldeath.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_celldeath.SetCompressionLevel(9);
-      CellDeath_Solid.RegisterParaviewFields(paraview_dc_celldeath);
+      CellDeath_Solid->RegisterParaviewFields(paraview_dc_celldeath);
 
       paraview_dc_solid_rf.SetPrefixPath(outfolder);
       paraview_dc_solid_rf.SetDataFormat(VTKFormat::BINARY);
@@ -963,7 +963,7 @@ int main(int argc, char *argv[])
       Heat_Solid.WriteFields(0, 0.0);
       Heat_Cylinder.WriteFields(0, 0.0);
       Heat_Fluid.WriteFields(0, 0.0);
-      CellDeath_Solid.WriteFields(0, 0.0);
+      CellDeath_Solid->WriteFields(0, 0.0);
       RF_Solid.WriteFields(0, 0.0);
       RF_Fluid.WriteFields(0, 0.0);
    }
@@ -992,7 +992,7 @@ int main(int argc, char *argv[])
    int heat_cyl_dofs = Heat_Cylinder.GetProblemSize();
    int heat_fluid_dofs = Heat_Fluid.GetProblemSize();
    int heat_solid_dofs = Heat_Solid.GetProblemSize();
-   int celldeath_solid_dofs = CellDeath_Solid.GetProblemSize();
+   int celldeath_solid_dofs = CellDeath_Solid->GetProblemSize();
    int rf_fluid_dofs = RF_Fluid.GetProblemSize();
    int rf_solid_dofs = RF_Solid.GetProblemSize();
 
@@ -1510,7 +1510,7 @@ int main(int argc, char *argv[])
          if (Mpi::Root())
             mfem::out << "\033[32mSolving CellDeath problem on solid ... \033[0m";
 
-         CellDeath_Solid.Solve(t, dt);
+         CellDeath_Solid->Solve(t, dt);
 
          if (Mpi::Root())
             mfem::out << "\033[32mdone.\033[0m" << std::endl;
@@ -1541,7 +1541,7 @@ int main(int argc, char *argv[])
          Heat_Solid.WriteFields(step, t);
          Heat_Cylinder.WriteFields(step, t);
          Heat_Fluid.WriteFields(step, t);
-         CellDeath_Solid.WriteFields(step, t);
+         CellDeath_Solid->WriteFields(step, t);
       }
       chrono.Stop();
       t_paraview = chrono.RealTime();
@@ -1582,6 +1582,8 @@ int main(int argc, char *argv[])
    // - BcHandler objects: owned by HeatOperator
    // - Coefficients provide to BCHandler: owned by CoeffContainers
    delete Id;
+
+   delete CellDeath_Solid;
 
    delete rho_fluid;
    delete rho_solid;
