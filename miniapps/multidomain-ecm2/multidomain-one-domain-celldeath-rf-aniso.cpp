@@ -27,6 +27,9 @@
 using namespace mfem;
 
 IdentityMatrixCoefficient *Id = NULL;
+std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
+std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles);
+std::function<void(const Vector &, Vector &)> FiberDirection(std::function<void(const Vector &, Vector &)> EulerAngles, int component);
 
 // Forward declaration
 void print_matrix(const DenseMatrix &A);
@@ -65,6 +68,9 @@ int main(int argc, char *argv[])
    int serial_ref_levels = 0;
    int parallel_ref_levels = 0;
    bool hex = false;
+   // Physics
+   real_t aniso_ratio_rf = 1.0;
+   real_t aniso_ratio_temperature = 1.0;
    // Time integrator
    int ode_solver_type = 1;
    real_t t_final = 1.0;
@@ -98,6 +104,11 @@ int main(int argc, char *argv[])
                   "Number of serial refinement levels.");
    args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
+   // Physics
+   args.AddOption(&aniso_ratio_rf, "-ar", "--aniso-ratio-rf",
+                  "Anisotropy ratio for RF problem.");
+   args.AddOption(&aniso_ratio_temperature, "-at", "--aniso-ratio-temperature",
+                  "Anisotropy ratio for temperature problem.");   
    // Time integrator
    args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
                   "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
@@ -225,6 +236,11 @@ int main(int argc, char *argv[])
    auto solid_submesh =
        std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, solid_domain_attribute));
 
+   Vector pmin, pmax;
+   solid_submesh->GetBoundingBox(pmin, pmax);
+   real_t zmin = pmin[2];
+   real_t zmax = pmax[2];
+
    if (Mpi::Root())
       mfem::out << "\033[34mdone." << std::endl;
 
@@ -248,7 +264,11 @@ int main(int argc, char *argv[])
 
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
-   auto *Kappa_solid = new ScalarMatrixProductCoefficient(kval_solid, *Id);
+   Vector k_vec_solid(3);
+   k_vec_solid[0] = kval_solid;                               // Along fibers
+   k_vec_solid[1] = kval_solid/aniso_ratio_temperature;       // Sheet direction 
+   k_vec_solid[2] = kval_solid/aniso_ratio_temperature;       // Sheet Normal to fibers
+   auto *Kappa_solid = new MatrixFunctionCoefficient(3, ConductivityMatrix(k_vec_solid, EulerAngles(zmax, zmin)));
 
    // Heat Capacity
    auto *c_solid = new ConstantCoefficient(cval_solid);
@@ -279,7 +299,11 @@ int main(int argc, char *argv[])
 
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
-   auto *Sigma_solid = new ScalarMatrixProductCoefficient(sigma_solid, *Id);
+   Vector sigma_vec_solid(3);
+   sigma_vec_solid[0] = sigma_solid;                // Along fibers
+   sigma_vec_solid[1] = sigma_solid/aniso_ratio_rf; // Sheet direction
+   sigma_vec_solid[2] = sigma_solid/aniso_ratio_rf; // Sheet Normal to fibers
+   auto *Sigma_solid = new MatrixFunctionCoefficient(3, ConductivityMatrix(sigma_vec_solid, EulerAngles(zmax, zmin)));
 
    if (Mpi::Root())
       mfem::out << "\033[0mdone." << std::endl;
@@ -333,6 +357,53 @@ int main(int argc, char *argv[])
 
    if (Mpi::Root())
       mfem::out << "\033[34mdone." << std::endl;
+
+   // Export fibers to disk
+   if (Mpi::Root())
+      mfem::out << "Exporting fibers to disk... \033[0m";
+
+   ParFiniteElementSpace *fes_grad_solid = Heat_Solid.GetVectorFESpace();
+   ParGridFunction *fiber_f_gf = new ParGridFunction(fes_grad_solid);
+   ParGridFunction *fiber_t_gf = new ParGridFunction(fes_grad_solid);
+   ParGridFunction *fiber_s_gf = new ParGridFunction(fes_grad_solid);
+   ParGridFunction *euler_angles_gf = new ParGridFunction(fes_grad_solid);
+   VectorFunctionCoefficient fiber_f_coeff(sdim, FiberDirection(EulerAngles(zmax, zmin), 0));
+   VectorFunctionCoefficient fiber_t_coeff(sdim, FiberDirection(EulerAngles(zmax, zmin), 1));
+   VectorFunctionCoefficient fiber_s_coeff(sdim, FiberDirection(EulerAngles(zmax, zmin), 2));
+   VectorFunctionCoefficient euler_angles_coeff(sdim, EulerAngles(zmax, zmin));
+   fiber_f_gf->ProjectCoefficient(fiber_f_coeff);
+   fiber_t_gf->ProjectCoefficient(fiber_t_coeff);
+   fiber_s_gf->ProjectCoefficient(fiber_s_coeff);
+   euler_angles_gf->ProjectCoefficient(euler_angles_coeff);
+
+   if (paraview)
+   {
+      ParaViewDataCollection* paraview_dc_fiber = new ParaViewDataCollection("Fiber", solid_submesh.get());
+      paraview_dc_fiber->SetPrefixPath(outfolder);
+      paraview_dc_fiber->SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_fiber->SetCompressionLevel(9);
+      paraview_dc_fiber->RegisterField("Fiber", fiber_f_gf);
+      paraview_dc_fiber->RegisterField("Sheet", fiber_t_gf);
+      paraview_dc_fiber->RegisterField("Sheet-normal", fiber_s_gf);
+      paraview_dc_fiber->RegisterField("Euler Angles", euler_angles_gf);
+      if (order_heat > 1)
+      {
+         paraview_dc_fiber->SetHighOrderOutput(true);
+         paraview_dc_fiber->SetLevelsOfDetail(order_heat);
+      }
+      paraview_dc_fiber->SetTime(0.0);
+      paraview_dc_fiber->SetCycle(0);
+      paraview_dc_fiber->Save();
+      delete paraview_dc_fiber;
+   }
+
+   delete fiber_f_gf;
+   delete fiber_t_gf;
+   delete fiber_s_gf;
+
+   if (Mpi::Root())
+      mfem::out << "\033[34mdone.\033[0m" << std::endl;
+
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 7. Populate BC Handler
@@ -732,4 +803,137 @@ void print_matrix(const DenseMatrix &A)
    std::cout << std::fixed;
    std::cout << std::endl
              << std::flush; // Debugging print
+}
+
+
+std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles)
+{
+
+   return [d, EulerAngles](const Vector &x, DenseMatrix &m)
+   {
+      // Define dimension of problem
+      const int dim = x.Size();
+
+      // Compute Euler angles
+      Vector e(3);
+      EulerAngles(x, e);
+      real_t e1 = e(0); // Roll
+      real_t e2 = e(1); // Pitch
+      real_t e3 = e(2); // Yaw
+
+      // Compute rotated matrix
+      if (dim == 3)
+      {
+         // Compute cosine and sine of the angles e1, e2, e3
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         const real_t c2 = cos(e2);
+         const real_t s2 = sin(e2);
+         const real_t c3 = cos(e3);
+         const real_t s3 = sin(e3);
+
+         // Fill the rotation matrix R with the Euler angles.
+         DenseMatrix R(3, 3);
+         R(0, 0) = c3 * c2;
+         R(1, 0) = s3 * c2;
+         R(2, 0) = -s2;         
+         R(0, 1) = s1 * s2 * c3 - c1 * s3;
+         R(1, 1) = s1 * s2 * s3 + c1 * c3;
+         R(2, 1) = s1 * c2;
+         R(0, 2) = c1 * s2 * c3 + s1 * s3;
+         R(1, 2) = c1 * s2 * s3 - s1 * c3;
+         R(2, 2) = c1 * c2;
+
+         // Multiply the rotation matrix R with the diffusivity vector.
+         Vector l(3);
+         l(0) = d[0];
+         l(1) = d[1];
+         l(2) = d[2];
+
+         // Compute m = R^t diag(l) R
+         R.Transpose();
+         MultADBt(R, l, R, m);
+      }
+      else if (dim == 2)
+      {  // R^t diag(l) R
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         DenseMatrix Rt(2, 2);
+         Rt(0, 0) = c1;
+         Rt(0, 1) = s1;
+         Rt(1, 0) = -s1;
+         Rt(1, 1) = c1;
+         Vector l(2);
+         l(0) = d[0];
+         l(1) = d[1];
+         MultADAt(Rt, l, m);
+      }
+      else
+      {
+         m(0, 0) = d[0];
+      }
+   };
+}
+
+std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmin, real_t zmax)
+{
+   return [zmin, zmax](const Vector &x, Vector &e)
+   {
+      const int dim = x.Size();
+
+      // Compute the linear interpolation factor
+      real_t t = (x(2) - zmin) / (zmax - zmin);
+
+      // Compute the angle in degrees
+      real_t angle = 60.0 * (2.0 * t - 1.0);
+
+      // Convert the angle to radians
+      real_t angle_rad = angle * M_PI / 180.0;
+
+      // Set the Euler angles (assuming rotation around the z-axis)
+      e.SetSize(3);
+      e(0) = 0.0;          // Roll
+      e(1) = 0.0;          // Pitch
+      e(2) = angle_rad;    // Yaw
+   };
+}
+
+std::function<void(const Vector &, Vector &)> FiberDirection(std::function<void(const Vector &, Vector &)> EulerAngles, int component)
+{
+   return [EulerAngles, component](const Vector &x, Vector &e)
+   {
+      // Compute Euler angles
+      Vector angles(3);
+      EulerAngles(x, angles);
+      real_t e1 = angles(0); // Roll
+      real_t e2 = angles(1); // Pitch
+      real_t e3 = angles(2); // Yaw
+
+      // Compute cosine and sine of the angles e1, e2, e3
+      const real_t c1 = cos(e1);
+      const real_t s1 = sin(e1);
+      const real_t c2 = cos(e2);
+      const real_t s2 = sin(e2);
+      const real_t c3 = cos(e3);
+      const real_t s3 = sin(e3);
+
+      // Fill the rotation matrix R with the Euler angles.
+      DenseMatrix R(3, 3);
+      R(0, 0) = c3 * c2;
+      R(1, 0) = s3 * c2;
+      R(2, 0) = -s2;         
+      R(0, 1) = s1 * s2 * c3 - c1 * s3;
+      R(1, 1) = s1 * s2 * s3 + c1 * c3;
+      R(2, 1) = s1 * c2;
+      R(0, 2) = c1 * s2 * c3 + s1 * s3;
+      R(1, 2) = c1 * s2 * s3 - s1 * c3;
+      R(2, 2) = c1 * c2;
+
+      // Extract the desired column from the rotation matrix R
+      e.SetSize(3);
+      e(0) = R(0, component);
+      e(1) = R(1, component);
+      e(2) = R(2, component);
+   };
+
 }
