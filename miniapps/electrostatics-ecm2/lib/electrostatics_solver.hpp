@@ -38,11 +38,16 @@ namespace mfem
       {
       private:
          ParGridFunction *E_gf;
-         MatrixCoefficient *Sigma;
+         Coefficient *Q;
+         MatrixCoefficient *MQ;
       public:
+         JouleHeatingCoefficient(Coefficient *Sigma_,
+                                 ParGridFunction *E_gf_)
+             : E_gf(E_gf_), Q(Sigma_), MQ(NULL) {};
+
          JouleHeatingCoefficient(MatrixCoefficient *Sigma_,
                                  ParGridFunction *E_gf_)
-            : E_gf(E_gf_), Sigma(Sigma_) {}
+            : E_gf(E_gf_), Q(NULL), MQ(Sigma_) {};
          real_t Eval(ElementTransformation &T, const IntegrationPoint &ip) override;
          virtual ~JouleHeatingCoefficient() {}
       };
@@ -50,6 +55,11 @@ namespace mfem
       class ElectrostaticsSolver
       {
       public:
+         ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh, int order,
+                              BCHandler *bcs,
+                              Coefficient *Sigma_,
+                              bool verbose_ = false);
+
          ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh, int order,
                               BCHandler *bcs,
                               MatrixCoefficient *Sigma_,
@@ -156,7 +166,8 @@ namespace mfem
 
          JouleHeatingCoefficient *w_coeff; // Joule Heating Coefficient
 
-         MatrixCoefficient *Sigma; // Electric conductivity Coefficient
+         Coefficient *SigmaQ; // Electric conductivity Coefficient
+         MatrixCoefficient *SigmaMQ; // Electric conductivity Coefficient
 
          std::map<std::string, socketstream *> socks; // Visualization sockets
 
@@ -182,3 +193,4 @@ namespace mfem
 #endif // MFEM_USE_MPI
 
 #endif // MFEM_VOLTA_SOLVER
+

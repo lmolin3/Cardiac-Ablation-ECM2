@@ -24,7 +24,7 @@ namespace mfem
 
       ElectrostaticsSolver::ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh_, int order_,
                                                  BCHandler *bcs,
-                                                 MatrixCoefficient *Sigma_,
+                                                 Coefficient *Sigma_,
                                                  bool verbose_)
           : order(order_),
             bcs(bcs),
@@ -38,7 +38,8 @@ namespace mfem
             rhs_form(nullptr),
             prec(nullptr),
             pa(false),
-            Sigma(Sigma_), // Must be deleted outside solver
+            SigmaQ(Sigma_), // Must be deleted outside solver
+            SigmaMQ(NULL),
             verbose(verbose_)
       {
          const int dim = pmesh->Dimension();
@@ -60,13 +61,61 @@ namespace mfem
          *E = 0.0;
 
          // Define Joule Heating Coefficient
-         w_coeff = new JouleHeatingCoefficient(Sigma, E);
+         w_coeff = new JouleHeatingCoefficient(SigmaQ, E);
 
          // Initialize vector/s
          B.SetSize(H1FESpace->GetTrueVSize());
 
          tmp_domain_attr.SetSize(pmesh->attributes.Max());
       }
+
+      ElectrostaticsSolver::ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh_, int order_,
+                                                 BCHandler *bcs,
+                                                 MatrixCoefficient *Sigma_,
+                                                 bool verbose_)
+          : order(order_),
+            bcs(bcs),
+            pmesh(pmesh_),
+            visit_dc(nullptr),
+            paraview_dc(nullptr),
+            H1FESpace(nullptr),
+            HCurlFESpace(nullptr),
+            divEpsGrad(nullptr),
+            SigmaMass(nullptr),
+            rhs_form(nullptr),
+            prec(nullptr),
+            pa(false),
+            SigmaQ(NULL), // Must be deleted outside solver
+            SigmaMQ(Sigma_),
+            verbose(verbose_)
+      {
+         const int dim = pmesh->Dimension();
+
+         // Define compatible parallel finite element spaces on the parallel
+         // mesh. Here we use arbitrary order H1 for potential and ND for the electric field.
+         H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
+         HCurlFESpace = new ND_ParFESpace(pmesh.get(), order, pmesh->Dimension());
+         L2FESpace = new L2_ParFESpace(pmesh.get(), order-1, pmesh->Dimension());
+
+         // Discrete derivative operator
+         grad = new ParDiscreteGradOperator(H1FESpace, HCurlFESpace);
+
+         // Build grid functions
+         phi = new ParGridFunction(H1FESpace);
+         *phi = 0.0;
+
+         E = new ParGridFunction(HCurlFESpace);
+         *E = 0.0;
+
+         // Define Joule Heating Coefficient
+         w_coeff = new JouleHeatingCoefficient(SigmaMQ, E);
+
+         // Initialize vector/s
+         B.SetSize(H1FESpace->GetTrueVSize());
+
+         tmp_domain_attr.SetSize(pmesh->attributes.Max());
+      }
+
 
       ElectrostaticsSolver::~ElectrostaticsSolver()
       {
@@ -172,10 +221,18 @@ namespace mfem
 
          /// 2. Bilinear Forms, Linear Forms and Discrete Interpolators
          divEpsGrad = new ParBilinearForm(H1FESpace);
-         divEpsGrad->AddDomainIntegrator(new DiffusionIntegrator(*Sigma));
+
+         if (SigmaQ)
+            divEpsGrad->AddDomainIntegrator(new DiffusionIntegrator(*SigmaQ));
+         else
+            divEpsGrad->AddDomainIntegrator(new DiffusionIntegrator(*SigmaMQ));
+         
 
          SigmaMass = new ParBilinearForm(HCurlFESpace);
-         SigmaMass->AddDomainIntegrator(new VectorFEMassIntegrator(Sigma));
+         if (SigmaQ)
+            SigmaMass->AddDomainIntegrator(new VectorFEMassIntegrator(*SigmaQ));
+         else
+            SigmaMass->AddDomainIntegrator(new VectorFEMassIntegrator(*SigmaMQ));
 
          if (pa)
          {
@@ -530,11 +587,22 @@ namespace mfem
                                            const IntegrationPoint &ip)
       {
          Vector E, J;
-         DenseMatrix thisSigma;
          E_gf->GetVectorValue(T, ip, E);
          J.SetSize(E.Size());
-         Sigma->Eval(thisSigma, T, ip); // Evaluate sigma at the point
-         thisSigma.Mult(E, J);          // J = sigma * E
+
+         if(Q)
+         {
+            real_t q = Q->Eval(T, ip); // Evaluate sigma at the point
+            J = E;
+            J *= q;
+         }
+         else if(MQ)
+         {
+            DenseMatrix thisSigma;
+            MQ->Eval(thisSigma, T, ip); // Evaluate sigma at the point
+            thisSigma.Mult(E, J);          // J = sigma * E
+         }
+
          return InnerProduct(J, E);     // W = J dot E
       }
 
@@ -546,7 +614,12 @@ namespace mfem
          }
 
          // Space for the discontinuous (original) flux
-         DiffusionIntegrator flux_integrator(*Sigma);
+         DiffusionIntegrator *flux_integrator;
+         if (SigmaQ)
+            flux_integrator = new DiffusionIntegrator(*SigmaQ);
+         else
+            flux_integrator = new DiffusionIntegrator(*SigmaMQ);
+
          L2_FECollection flux_fec(order, pmesh->Dimension());
          // ND_FECollection flux_fec(order, pmesh->Dimension());
          ParFiniteElementSpace flux_fes(pmesh.get(), &flux_fec, pmesh->SpaceDimension());
@@ -556,7 +629,7 @@ namespace mfem
          RT_FECollection smooth_flux_fec(order - 1, pmesh->Dimension());
          ParFiniteElementSpace smooth_flux_fes(pmesh.get(), &smooth_flux_fec);
 
-         L2ZZErrorEstimator(flux_integrator, *phi,
+         L2ZZErrorEstimator(*flux_integrator, *phi,
                             smooth_flux_fes, flux_fes, errors, norm_p);
 
          if (pmesh->GetMyRank() == 0 && verbose)

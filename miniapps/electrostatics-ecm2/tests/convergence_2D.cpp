@@ -25,7 +25,7 @@
 //
 // Sample runs:
 //
-//      mpirun -np 4 ./convergence_2D -e 0 -o 1 -sattr '1' -sval '1.0' -r 0
+//      mpirun -np 4 ./convergence_2D -e 0 -o 2 -sattr '1' -sval '1.0' -r 3
 //
 // Test partial assembly
 //
