@@ -22,7 +22,6 @@
 
 #include "mfem.hpp"
 #include "lib/celldeath_solver.hpp"
-#include "lib/celldeath_solver_gotran.hpp"
 #include <fstream>
 #include <iostream>
 
