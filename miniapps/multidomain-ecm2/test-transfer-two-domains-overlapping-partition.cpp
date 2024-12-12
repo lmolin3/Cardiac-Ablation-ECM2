@@ -23,6 +23,9 @@
 
 using namespace mfem;
 
+using InterfaceTransfer = ecm2_utils::InterfaceTransfer;
+using TransferBackend = InterfaceTransfer::Backend;
+
 void ExportMeshwithPartitioning(const std::string &outfolder, Mesh &mesh, const int *partitioning_);
 
 static constexpr real_t Tfluid = 303.15;    // Fluid temperature
@@ -171,38 +174,26 @@ int main(int argc, char *argv[])
    /// 5. Setup interface transfer
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
+
    // Create the submesh transfer map
    if (Mpi::Root())
-      mfem::out << "\033[34mCreating transfer maps...\033[0m";
-
-   auto tm_cylinder_to_fluid = ParSubMesh::CreateTransferMap(temperature_cylinder_gf, temperature_fluid_gf);
+      mfem::out << "\033[34mCreating InterfaceTransfer (Native)...\033[0m";
+   
+   ecm2_utils::InterfaceTransfer cylinder_to_fluid_native(temperature_cylinder_gf, temperature_fluid_gf, fluid_cylinder_interface_marker, ecm2_utils::InterfaceTransfer::Backend::Native);
 
    if (Mpi::Root())
       mfem::out << "\033[34mdone.\033[0m" << std::endl;
 
    // Setup GSLIB interpolation
    if (Mpi::Root())
-      mfem::out << "\033[34mSetting up GSLIB interpolation...\033[0m" << std::endl;
+      mfem::out << "\033[34mCreating InterfaceTransfer (GSLIB)...\033[0m";
 
-   // Setup finder on source mesh (cylinder)
-   FindPointsGSLIB finder_cylinder_to_fluid(MPI_COMM_WORLD);
-   finder_cylinder_to_fluid.Setup(*cylinder_submesh);
 
-   //Determine coordinates on destination mesh (fluid)
-   Array<int> fc_fluid_element_idx;
-   Vector fc_fluid_element_coords;
-   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_cylinder_interface_marker, fc_fluid_element_idx);
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(&fes_fluid, fc_fluid_element_idx, fc_fluid_element_coords);
+   ecm2_utils::InterfaceTransfer cylinder_to_fluid_gslib(temperature_cylinder_gf, temperature_fluid_gf, fluid_cylinder_interface_marker, ecm2_utils::InterfaceTransfer::Backend::GSLIB);
 
-   // Print total number of points to be interpolated across all MPI ranks
-   int total_points = fc_fluid_element_coords.Size() / sdim;
-   int total_points_g;
-   MPI_Allreduce(&total_points, &total_points_g, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
    if (Mpi::Root())
-      mfem::out << "Total number of points to be interpolated: " << total_points_g << std::endl;
+      mfem::out << "\033[34mdone.\033[0m" << std::endl;
 
-   // Internally populate the finder with the destination mesh coordinates
-   finder_cylinder_to_fluid.FindPoints(fc_fluid_element_coords, Ordering::byVDIM);
 
    // Define function to compute gradient on source mesh (cylinder)
    int vdim = fes_fluid_grad.GetVDim();
@@ -212,9 +203,6 @@ int main(int argc, char *argv[])
    {
       temperature_cylinder_gf.GetGradient(Tr, qoi_loc);
    };
-
-   if (Mpi::Root())
-      mfem::out << "\033[34mdone.\033[0m" << std::endl;
 
 
    if (Mpi::Root())
@@ -279,9 +267,9 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34m\nTransfer solution from cylinder --> fluid domain... \033[0m" << std::endl;
 
    // Initial conditions on cylinder
-   //FunctionCoefficient Tfunc(func);
-   ConstantCoefficient Tcyl(Tcylinder);
-   temperature_cylinder_gf.ProjectCoefficient(Tcyl);
+   FunctionCoefficient Tfunc(func);
+   //ConstantCoefficient Tcyl(Tcylinder);
+   temperature_cylinder_gf.ProjectCoefficient(Tfunc);
 
    ConstantCoefficient Tfluid(Tfluid);
    temperature_fluid_gf.ProjectCoefficient(Tfluid);
@@ -296,25 +284,44 @@ int main(int argc, char *argv[])
       paraview_dc_fluid.SetCycle(0); paraview_dc_fluid.SetTime(0.0); paraview_dc_fluid.Save();
    }
 
+   StopWatch chrono;
+   real_t t_native, t_gslib, t_gslib_grad;
+
    // Transfer with SubMesh Transfer Map
    if (Mpi::Root())
       mfem::out << "Using SubMesh Transfer Map...";
-   tm_cylinder_to_fluid.Transfer(temperature_cylinder_gf, temperature_fluid_gf);
+
+   chrono.Start();
+   cylinder_to_fluid_native.Interpolate(temperature_cylinder_gf, temperature_fluid_gf);
+   chrono.Stop();
+   t_native = chrono.RealTime();
+
    if (Mpi::Root())
       mfem::out << "done." << std::endl;
 
    // Transfer with GSLIB
    if (Mpi::Root())
       mfem::out << "Using GSLIB...";
-   Vector interp_vals;
-   ecm2_utils::GSLIBTransfer(finder_cylinder_to_fluid, fc_fluid_element_idx, temperature_cylinder_gf, temperature_fluid_gf_copy);
+
+   chrono.Clear();
+   chrono.Start();
+   cylinder_to_fluid_gslib.Interpolate(temperature_cylinder_gf, temperature_fluid_gf_copy);
+   chrono.Stop();
+   t_gslib = chrono.RealTime();
+
    if (Mpi::Root())
       mfem::out << "done." << std::endl;
 
    // Transfer gradient with GSLIB
    if (Mpi::Root())
       mfem::out << "Using GSLIB for gradient...";
-   ecm2_utils::GSLIBInterpolate(finder_cylinder_to_fluid, fc_fluid_element_idx, &fes_cylinder, cylinder_grad_func, grad_fluid_gf, qoi_size_on_qp);
+
+   chrono.Clear();
+   chrono.Start();
+   cylinder_to_fluid_gslib.InterpolateQoI(cylinder_grad_func, grad_fluid_gf);
+   chrono.Stop();
+   t_gslib_grad = chrono.RealTime();
+
    if (Mpi::Root())
       mfem::out << "done." << std::endl;
 
@@ -327,6 +334,13 @@ int main(int argc, char *argv[])
 
    if (Mpi::Root())
       mfem::out << "\033[34mdone.\033[0m" << std::endl;
+
+   if (Mpi::Root())
+   {
+      mfem::out << "Transfer time (Native): " << t_native << " s" << std::endl;
+      mfem::out << "Transfer time (GSLIB): " << t_gslib << " s" << std::endl;
+      mfem::out << "Transfer time (GSLIB Gradient): " << t_gslib_grad << " s" << std::endl;
+   }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Cleanup

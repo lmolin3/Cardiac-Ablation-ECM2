@@ -9,11 +9,21 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 //
+// Solve quasi-static electrostatics problem with two domains (fluid and solid).
+//                            ∇•σ∇Φ = 0
+// The problem is solved using a segregated approach with two-way coupling (Neumann-Dirichlet)
+// until convergence is reached.
+// Works on both hexahedral and tetrahedral meshes, with optional partial assembly (hexahedral only). 
+// The conductivity tensor σ can be anisotropic (Change EulerAngles function).
+//
 // Sample run:
-// mpirun -np 4 ./multidomain-three-domains-rf -o 4 --relaxation-parameter 0.5 --no-paraview --print-timing
-// mpirun -np 4 ./multidomain-three-domains-rf -o 4 --relaxation-parameter 0.5 --paraview -of ./Output/RF/Tet/o4 
-// mpirun -np 4 ./multidomain-three-domains-rf -hex -o 4 --relaxation-parameter 0.5 --paraview -of ./Output/RF/Hex/o4
-// mpirun -np 4 ./multidomain-three-domains-rf -hex -o 4 --relaxation-parameter 0.5 -pa
+// 1. Tetrahedral mesh
+//    mpirun -np 4 ./multidomain-two-domains-rf -o 3 -tet --relaxation-parameter 0.8
+// 2. Hexahedral mesh
+//    mpirun -np 4 ./multidomain-two-domains-rf -o 3 -hex --relaxation-parameter 0.8 
+// 3. Hexahedral mesh with partial assembly
+//    mpirun -np 4 ./multidomain-two-domains-rf -o 3 -hex -pa --relaxation-parameter 0.8
+
 
 #include "mfem.hpp"
 #include "lib/celldeath_solver.hpp"
@@ -28,6 +38,9 @@
 #include <memory>
 
 using namespace mfem;
+
+using InterfaceTransfer = ecm2_utils::InterfaceTransfer;
+using TransferBackend = InterfaceTransfer::Backend;
 
 IdentityMatrixCoefficient *Id = NULL;
 
@@ -447,52 +460,21 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup interface transfer
    ///////////////////////////////////////////////////////////////////////////////////////////////
-
-   // Note:
-   // - GSLIB is required to transfer custom qoi (e.g. current density)
-   // - Transfer of the potential field can be done both with GSLIB or with transfer map from ParSubMesh objects
-   // - In this case GSLIB is used for both qoi and potential field transfer
+   
+   MPI_Barrier(parent_mesh.GetComm());
 
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
-   // Setup GSLIB for gradient transfer:
-   // 1. Find points on the DESTINATION mesh
-   // 2. Setup GSLIB finder on the SOURCE mesh
-   // 3. Define QoI (Electric field) on the SOURCE meshes (cylinder, solid, fluid)
-
-   // Fluid (S) --> Solid (D)
-   MPI_Barrier(parent_mesh.GetComm());
-   if (Mpi::Root())
-      mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Fluid (S) --> Solid (D)\033[0m" << std::endl;
-   Array<int> fs_solid_bdr_element_idx;
-   Vector fs_solid_element_coords;
-   ecm2_utils::FindBdryElements(solid_submesh.get(), fluid_solid_interface_marker, fs_solid_bdr_element_idx);
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_solid, fs_solid_bdr_element_idx, fs_solid_element_coords);
-
-   FindPointsGSLIB finder_fluid_to_solid(MPI_COMM_WORLD);
-   finder_fluid_to_solid.Setup(*fluid_submesh);
-   finder_fluid_to_solid.FindPoints(fs_solid_element_coords, Ordering::byVDIM);
-
-   // Solid (S) --> Fluid (D)
-   MPI_Barrier(parent_mesh.GetComm());
-   if (Mpi::Root())
-      mfem::out << "\033[34mSetting up GSLIB for gradient transfer: Solid (S) --> Fluid (D)\033[0m" << std::endl;
-   Array<int> fs_fluid_bdr_element_idx;
-   Vector fs_fluid_element_coords;
-   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_solid_interface_marker, fs_fluid_bdr_element_idx);
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(fes_fluid, fs_fluid_bdr_element_idx, fs_fluid_element_coords);
-
-   FindPointsGSLIB finder_solid_to_fluid(MPI_COMM_WORLD);
-   finder_solid_to_fluid.Setup(*solid_submesh);
-   finder_solid_to_fluid.FindPoints(fs_fluid_element_coords, Ordering::byVDIM);
+   InterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   InterfaceTransfer finder_solid_to_fluid(*phi_solid_gf, *phi_fluid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
    Array<int> fs_fluid_element_idx;
    Array<int> fs_solid_element_idx;
-   ecm2_utils::GSLIBAttrToMarker(solid_submesh->GetNE(), finder_solid_to_fluid.GetElem(), fs_solid_element_idx);
-   ecm2_utils::GSLIBAttrToMarker(fluid_submesh->GetNE(), finder_fluid_to_solid.GetElem(), fs_fluid_element_idx);
+   finder_fluid_to_solid.GetElementIdx(fs_fluid_element_idx);
+   finder_solid_to_fluid.GetElementIdx(fs_solid_element_idx);
 
    // 3. Define QoI (current density) on the source meshes (cylinder, solid, fluid)
    int qoi_size_on_qp = sdim;
@@ -655,7 +637,7 @@ int main(int argc, char *argv[])
       chrono.Clear(); chrono.Start();
       //if (!converged_fluid)
       { // S->F: Φ
-         ecm2_utils::GSLIBTransfer(finder_solid_to_fluid, fs_fluid_bdr_element_idx, *phi_solid_gf, *phi_fs_fluid);
+         finder_solid_to_fluid.Interpolate(*phi_solid_gf, *phi_fs_fluid);
       }
       chrono.Stop();
       t_transfer = chrono.RealTime();
@@ -685,7 +667,7 @@ int main(int argc, char *argv[])
       chrono.Clear(); chrono.Start();
       // if (!converged_solid)
       { // F->S: grad Φ
-         ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid, fs_solid_bdr_element_idx, fes_grad_fluid, currentDensity_fluid, *E_fs_solid, qoi_size_on_qp);
+         finder_fluid_to_solid.InterpolateQoI(currentDensity_fluid, *E_fs_solid);
       }
       chrono.Stop();
       t_interp = chrono.RealTime();
@@ -816,9 +798,6 @@ int main(int argc, char *argv[])
    delete phi_solid_prev_gf;
    delete phi_fluid_prev_gf;
    delete JouleHeating_gf;
-
-   finder_fluid_to_solid.FreeData();
-   finder_solid_to_fluid.FreeData();
 
    return 0;
 }

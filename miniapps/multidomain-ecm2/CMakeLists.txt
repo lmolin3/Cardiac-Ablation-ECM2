@@ -49,18 +49,6 @@ if (MFEM_USE_MPI)
     LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
   add_dependencies(multidomain-dirichlet copy_miniapps_multidomain_test_data)
 
-  add_mfem_miniapp(multidomain-neumann-dirichlet
-    MAIN multidomain-neumann-dirichlet.cpp
-    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
-  add_dependencies(multidomain-neumann-dirichlet copy_miniapps_multidomain_test_data)
-
-  add_mfem_miniapp(multidomain-three-domains
-    MAIN multidomain-three-domains.cpp
-    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2)
-  add_dependencies(multidomain-three-domains copy_miniapps_multidomain_test_data)
-
 
   add_mfem_miniapp(multidomain-three-domains-celldeath
     MAIN multidomain-three-domains-celldeath.cpp
@@ -79,8 +67,8 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem-common mfem)
 
-  add_mfem_miniapp(multidomain-three-domains-rf
-    MAIN multidomain-three-domains-rf.cpp
+  add_mfem_miniapp(multidomain-two-domains-rf
+    MAIN multidomain-two-domains-rf.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2 celldeath-ecm2 electrostatics_ecm2)  
 

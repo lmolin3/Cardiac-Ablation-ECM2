@@ -26,6 +26,9 @@
 
 using namespace mfem;
 
+using InterfaceTransfer = ecm2_utils::InterfaceTransfer;
+using TransferBackend = InterfaceTransfer::Backend;
+
 IdentityMatrixCoefficient *Id = NULL;
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
 std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles);

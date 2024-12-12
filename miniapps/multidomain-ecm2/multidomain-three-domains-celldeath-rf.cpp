@@ -8,44 +8,35 @@
 // MFEM is free software; you can redistribute it and/or modify it under the
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
-
-// This miniapp aims to demonstrate how to solve two PDEs, that represent
-// different physics, on the same domain. MFEM's SubMesh interface is used to
-// compute on and transfer between the spaces of predefined parts of the domain.
-// For the sake of simplicity, the spaces on each domain are using the same
-// order H1 finite elements. This does not mean that the approach is limited to
-// this configuration.
 //
-// A 3D domain comprised of three domains:
-// - solid box (S)
-// - fluid domain (F)
-// - solid cylinder (C) (embedded in the fluid domain)
+// Solve RFA (Electrostatics+HeatTransfer) problem with three domains (solid, fluid, cylinder).
+//                 rho c dT/dt = ∇•κ∇T         in  fluid, solid
+//                 rho c dT/dt = ∇•κ∇T + Q     in  cylinder
+// Q is a Joule heating term (W/m^3) and is defined as Q = J • E, where J is the current density and E is the electric field.
+// The Electrostatic problem is solved on the solid and fluid domains, before the temporal loop. 
+// The heat transfer problem is solved using a segregated approach with two-way coupling (Neumann-Dirichlet)
+// until convergence is reached.
+// After the heat transfer problem is solved, a three-state cell death model is solved in the solid domain.
+//                  dN/dt = k2U - k1N
+//                  dU/dt = k1N - k2U - k3U
+//                  dD/dt = k3U  
+// with initial conditions N(0) = 1, U(0) = 0, D(0) = 0.
+// The coefficients are defined as ki = Ai * exp(-ΔEi/RT) 
 //
-// A diffusion equation is described in the cylinder
-//
-//                 rho c dT/dt = κΔT          in cylinder
-//                           Q = Qval       inside sphere
-//
-// An advection-diffusion equation is described inside the fluid domain
-//
-//                 rho c dT/dt = κΔT - α • u ∇T      in fluid
-//
-// A reaction-diffusion equation is described in the solid box:
-//
-//                rho c dT/dt = κΔT - β T      in box
-//
-// with temperature T, coefficients κ, α, β and prescribed velocity profile u.
-//
-// To couple the solutions of both equations, a segregated solve with two way
-// coupling (Neumann-Dirichlet) approach is used to solve the timestep tn tn+dt
-//
-// F -> S -> C
-//
+// Works on both hexahedral and tetrahedral meshes, with optional partial assembly (hexahedral only).
+// Both implicit and explicit time integrators work with partial assembly.
+// Potentially each domain can have different physics (advection α • u ∇T, diffusion ∇•κ∇T, reaction β T).
+// The conductivity tensor κ can be anisotropic (Change EulerAngles function).
 //
 // Sample run:
-// mpirun -np 10 ./multidomain-three-domains-celldeath-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8  --paraview -of ./Output/ThreeDomainsCellDeathRF/Tet/oh2_or4
-// mpirun -np 10 ./multidomain-three-domains-celldeath-rf -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8  --paraview -of ./Output/ThreeDomainsCellDeathRF/Hex/oh2_or4
-// mpirun -np 10 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8  --paraview -of ./Output/ThreeDomainsCellDeathRF/Hex/oh2_or4
+// 1. Tetrahedral mesh
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -tet -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8
+// 2. Hexahedral mesh  
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8 
+// 3. Hexahedral mesh with partial assembly for RF
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa_heat -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8  
+// 4. Hexahedral mesh with partial assembly for RF and Heat
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa_heat -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8
 
 #include "mfem.hpp"
 #include "lib/heat_solver.hpp"
@@ -59,6 +50,9 @@
 #include <memory>
 
 using namespace mfem;
+
+using InterfaceTransfer = ecm2_utils::InterfaceTransfer;
+using TransferBackend = InterfaceTransfer::Backend;
 
 IdentityMatrixCoefficient *Id = NULL;
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
@@ -703,120 +697,35 @@ int main(int argc, char *argv[])
    /// 8. Setup interface transfer
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   // Note: 
-   // - GSLIB is required to transfer custom qoi (e.g. heatflux) 
-   // - Transfer of the temperature field can be done both with GSLIB or with transfer map from ParSubMesh objects
-   // - In this case GSLIB is used for both qoi and temperature field transfer
-
-
-   // Find boundary elements for interface transfer (common to both RF and Heat Transfer)
-   if (Mpi::Root())
-      mfem::out << "\033[34m\nSetting up interface transfer for Heat Transfer... \033[0m" << std::endl;
-
-   Array<int> sc_solid_bdry_element_idx; 
-   ecm2_utils::FindBdryElements(solid_submesh.get(), solid_cylinder_interface_marker, sc_solid_bdry_element_idx);
-   Array<int> sc_cylinder_bdry_element_idx;
-   ecm2_utils::FindBdryElements(cylinder_submesh.get(), solid_cylinder_interface_marker, sc_cylinder_bdry_element_idx);
-
-   Array<int> fc_cylinder_bdry_element_idx;
-   ecm2_utils::FindBdryElements(cylinder_submesh.get(), fluid_cylinder_interface_marker, fc_cylinder_bdry_element_idx);
-   Array<int> fc_fluid_bdry_element_idx;
-   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_cylinder_interface_marker, fc_fluid_bdry_element_idx);
-
-   Array<int> fs_solid_bdry_element_idx;
-   ecm2_utils::FindBdryElements(solid_submesh.get(), fluid_solid_interface_marker, fs_solid_bdry_element_idx);
-   Array<int> fs_fluid_bdry_element_idx;
-   ecm2_utils::FindBdryElements(fluid_submesh.get(), fluid_solid_interface_marker, fs_fluid_bdry_element_idx);
-
-
-   // Setup GSLIB for gradient transfer:
-   // 1. Find points on the DESTINATION mesh
-   // 2. Setup GSLIB finder on the SOURCE mesh
-   // 3. Define QoI (gradient of the temperature field) on the SOURCE meshes (cylinder, solid, fluid)
-
    /////////////////////////////////////
    //          Heat Transfer         //
    /////////////////////////////////////
 
    MPI_Barrier(parent_mesh.GetComm());
 
-   // Cylinder (S) --> Solid (D)
    if (Mpi::Root())
-      mfem::out
-          << "\033[0mSetting up GSLIB for gradient transfer (Heat): Cylinder (S) --> Solid (D)\033[0m" << std::endl;
-   Vector heat_sc_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(heat_fes_solid, sc_solid_bdry_element_idx, heat_sc_solid_element_coords);
-
-   FindPointsGSLIB finder_cylinder_to_solid_heat(MPI_COMM_WORLD);
-   finder_cylinder_to_solid_heat.Setup(*cylinder_submesh);
-   finder_cylinder_to_solid_heat.FindPoints(heat_sc_solid_element_coords, Ordering::byVDIM);
-
-   // Solid (S) --> Cylinder (D)
-   if (Mpi::Root())
-      mfem::out << "\033[0mSetting up GSLIB for gradient transfer (Heat): Solid (S) --> Cylinder (D)\033[0m" << std::endl;
-   Vector heat_sc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(heat_fes_cylinder, sc_cylinder_bdry_element_idx, heat_sc_cylinder_element_coords);
-
-   FindPointsGSLIB finder_solid_to_cylinder_heat(MPI_COMM_WORLD);
-   finder_solid_to_cylinder_heat.Setup(*solid_submesh);
-   finder_solid_to_cylinder_heat.FindPoints(heat_sc_cylinder_element_coords, Ordering::byVDIM);
-
-
-
-   // Fluid (S) --> Cylinder (D)
-   if (Mpi::Root())
-      mfem::out << "\033[0mSetting up GSLIB for gradient transfer (Heat): Fluid (S) --> Cylinder (D)\033[0m" << std::endl;
-   Vector heat_fc_cylinder_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(heat_fes_cylinder, fc_cylinder_bdry_element_idx, heat_fc_cylinder_element_coords);
-
-   FindPointsGSLIB finder_fluid_to_cylinder_heat(MPI_COMM_WORLD);
-   finder_fluid_to_cylinder_heat.Setup(*fluid_submesh);
-   finder_fluid_to_cylinder_heat.FindPoints(heat_fc_cylinder_element_coords, Ordering::byVDIM);
-
-   // Cylinder (S) --> Fluid (D)
-   if (Mpi::Root())
-      mfem::out << "\033[0mSetting up GSLIB for gradient transfer (Heat): Cylinder (S) --> Fluid (D)\033[0m" << std::endl;
-   Vector heat_fc_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(heat_fes_fluid, fc_fluid_bdry_element_idx, heat_fc_fluid_element_coords);
-
-   FindPointsGSLIB finder_cylinder_to_fluid_heat(MPI_COMM_WORLD);
-   finder_cylinder_to_fluid_heat.Setup(*cylinder_submesh);
-   finder_cylinder_to_fluid_heat.FindPoints(heat_fc_fluid_element_coords, Ordering::byVDIM);
-
-
-   // Fluid (S) --> Solid (D)
-   if (Mpi::Root())
-      mfem::out << "\033[0mSetting up GSLIB for gradient transfer (Heat): Fluid (S) --> Solid (D)\033[0m" << std::endl;
-   Vector heat_fs_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(heat_fes_solid, fs_solid_bdry_element_idx, heat_fs_solid_element_coords);
-
-   FindPointsGSLIB finder_fluid_to_solid_heat(MPI_COMM_WORLD);
-   finder_fluid_to_solid_heat.Setup(*fluid_submesh);
-   finder_fluid_to_solid_heat.FindPoints(heat_fs_solid_element_coords, Ordering::byVDIM);
-
-   // Solid (S) --> Fluid (D)
-   if (Mpi::Root())
-      mfem::out << "\033[0mSetting up GSLIB for gradient transfer (Heat): Solid (S) --> Fluid (D)\033[0m" << std::endl;
-   Vector heat_fs_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(heat_fes_fluid, fs_fluid_bdry_element_idx, heat_fs_fluid_element_coords);
-
-   FindPointsGSLIB finder_solid_to_fluid_heat(MPI_COMM_WORLD);
-   finder_solid_to_fluid_heat.Setup(*solid_submesh);
-   finder_solid_to_fluid_heat.FindPoints(heat_fs_fluid_element_coords, Ordering::byVDIM);
+      mfem::out << "\033[34m\nSetting up interface transfer for Heat Transfer... \033[0m" << std::endl;
+      
+   InterfaceTransfer finder_cylinder_to_solid_heat(*temperature_cylinder_gf, *temperature_solid_gf, solid_cylinder_interface_marker, TransferBackend::GSLIB);
+   InterfaceTransfer finder_solid_to_cylinder_heat(*temperature_solid_gf, *temperature_cylinder_gf, solid_cylinder_interface_marker, TransferBackend::GSLIB);
+   InterfaceTransfer finder_fluid_to_cylinder_heat(*temperature_fluid_gf, *temperature_cylinder_gf, fluid_cylinder_interface_marker, TransferBackend::GSLIB);
+   InterfaceTransfer finder_cylinder_to_fluid_heat(*temperature_cylinder_gf, *temperature_fluid_gf, fluid_cylinder_interface_marker, TransferBackend::GSLIB);
+   InterfaceTransfer finder_fluid_to_solid_heat(*temperature_fluid_gf, *temperature_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   InterfaceTransfer finder_solid_to_fluid_heat(*temperature_solid_gf, *temperature_fluid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
    Array<int> tmp1, tmp2;
-   ecm2_utils::GSLIBAttrToMarker(solid_submesh->GetNE(), finder_solid_to_fluid_heat.GetElem(), tmp1);
-   ecm2_utils::GSLIBAttrToMarker(solid_submesh->GetNE(), finder_solid_to_cylinder_heat.GetElem(), tmp2);
+   finder_solid_to_fluid_heat.GetElementIdx(tmp1);
+   finder_solid_to_cylinder_heat.GetElementIdx(tmp2);
    Array<int> solid_interfaces_element_idx = tmp1 && tmp2;
 
-   ecm2_utils::GSLIBAttrToMarker(fluid_submesh->GetNE(), finder_fluid_to_cylinder_heat.GetElem(), tmp1);
-   ecm2_utils::GSLIBAttrToMarker(fluid_submesh->GetNE(), finder_fluid_to_solid_heat.GetElem(), tmp2);
+   finder_fluid_to_solid_heat.GetElementIdx(tmp1);
+   finder_fluid_to_cylinder_heat.GetElementIdx(tmp2);
    Array<int> fluid_interfaces_element_idx = tmp1 && tmp2;
 
-   ecm2_utils::GSLIBAttrToMarker(cylinder_submesh->GetNE(), finder_cylinder_to_fluid_heat.GetElem(), tmp1);
-   ecm2_utils::GSLIBAttrToMarker(cylinder_submesh->GetNE(), finder_cylinder_to_solid_heat.GetElem(), tmp2);
+   finder_cylinder_to_fluid_heat.GetElementIdx(tmp1);
+   finder_cylinder_to_solid_heat.GetElementIdx(tmp2);
    Array<int> cylinder_interfaces_element_idx = tmp1 && tmp2;
 
    tmp1.DeleteAll();
@@ -863,27 +772,8 @@ int main(int argc, char *argv[])
    //               RF                //
    /////////////////////////////////////
 
-   // Fluid (S) --> Solid (D)
-   MPI_Barrier(parent_mesh.GetComm());
-   if (Mpi::Root())
-      mfem::out << "\033[0mSetting up GSLIB for gradient transfer (RF): Fluid (S) --> Solid (D)\033[0m" << std::endl;
-   Vector RF_fs_solid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(rf_fes_solid, fs_solid_bdry_element_idx, RF_fs_solid_element_coords);
-
-   FindPointsGSLIB finder_fluid_to_solid_rf(MPI_COMM_WORLD);
-   finder_fluid_to_solid_rf.Setup(*fluid_submesh);
-   finder_fluid_to_solid_rf.FindPoints(RF_fs_solid_element_coords, Ordering::byVDIM);
-
-   // Solid (S) --> Fluid (D)
-   MPI_Barrier(parent_mesh.GetComm());
-   if (Mpi::Root())
-      mfem::out << "\033[0mSetting up GSLIB for gradient transfer (RF): Solid (S) --> Fluid (D)\033[0m" << std::endl;
-   Vector RF_fs_fluid_element_coords;
-   ecm2_utils::ComputeBdrQuadraturePointsCoords(rf_fes_fluid, fs_fluid_bdry_element_idx, RF_fs_fluid_element_coords);
-
-   FindPointsGSLIB finder_solid_to_fluid_rf(MPI_COMM_WORLD);
-   finder_solid_to_fluid_rf.Setup(*solid_submesh);
-   finder_solid_to_fluid_rf.FindPoints(RF_fs_fluid_element_coords, Ordering::byVDIM);
+   InterfaceTransfer finder_fluid_to_solid_rf(*phi_fs_fluid, *phi_solid_gf, fluid_solid_interface, TransferBackend::GSLIB);
+   InterfaceTransfer finder_solid_to_fluid_rf(*phi_solid_gf, *phi_fs_fluid, solid_cylinder_interface, TransferBackend::GSLIB);
 
 
    // Define QoI (current density) on the source meshes (cylinder, solid, fluid)
@@ -1145,7 +1035,7 @@ int main(int argc, char *argv[])
          chrono.Start();
          // if (!converged_fluid)
          { // S->F: Φ
-            ecm2_utils::GSLIBTransfer(finder_solid_to_fluid_rf, fs_fluid_bdry_element_idx, *phi_solid_gf, *phi_fs_fluid);
+            finder_solid_to_fluid_rf.Interpolate(*phi_solid_gf, *phi_fs_fluid);
          }
          chrono.Stop();
          t_transfer = chrono.RealTime();
@@ -1178,7 +1068,7 @@ int main(int argc, char *argv[])
          chrono.Start();
          // if (!converged_solid)
          { // F->S: grad Φ
-            ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid_rf, fs_solid_bdry_element_idx, rf_fes_grad_fluid, currentDensity_fluid, *E_fs_solid, qoi_size_on_qp);
+            finder_fluid_to_solid_rf.InterpolateQoI(currentDensity_fluid, *E_fs_solid);   
          }
          chrono.Stop();
          t_interp = chrono.RealTime();
@@ -1381,8 +1271,8 @@ int main(int argc, char *argv[])
             { // S->F: Transfer T, C->F: Transfer T
                chrono.Clear();
                chrono.Start();
-               ecm2_utils::GSLIBTransfer(finder_cylinder_to_fluid_heat, fc_fluid_bdry_element_idx, *temperature_cylinder_gf, *temperature_fc_fluid);
-               ecm2_utils::GSLIBTransfer(finder_solid_to_fluid_heat, fs_fluid_bdry_element_idx, *temperature_solid_gf, *temperature_fs_fluid);
+               finder_cylinder_to_fluid_heat.Interpolate(*temperature_cylinder_gf, *temperature_fc_fluid);
+               finder_solid_to_fluid_heat.Interpolate(*temperature_solid_gf, *temperature_fs_fluid);
                chrono.Stop();
                t_transfer_fluid = chrono.RealTime();
 
@@ -1422,8 +1312,8 @@ int main(int argc, char *argv[])
             { // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
                chrono.Clear();
                chrono.Start();
-               ecm2_utils::GSLIBInterpolate(finder_fluid_to_solid_heat, fs_solid_bdry_element_idx, heat_fes_grad_fluid, heatFlux_fluid, *heatFlux_fs_solid, qoi_size_on_qp);
-               ecm2_utils::GSLIBInterpolate(finder_cylinder_to_solid_heat, sc_solid_bdry_element_idx, heat_fes_grad_cylinder, heatFlux_cyl, *heatFlux_sc_solid, qoi_size_on_qp);
+               finder_fluid_to_solid_heat.InterpolateQoI(heatFlux_fluid, *heatFlux_fs_solid);
+               finder_cylinder_to_solid_heat.InterpolateQoI(heatFlux_cyl, *heatFlux_sc_solid);
                chrono.Stop();
                t_transfer_solid = chrono.RealTime();
 
@@ -1463,8 +1353,8 @@ int main(int argc, char *argv[])
             { // F->C: Transfer k ∇T_wall, S->C: Transfer T
                chrono.Clear();
                chrono.Start();
-               ecm2_utils::GSLIBInterpolate(finder_fluid_to_cylinder_heat, fc_cylinder_bdry_element_idx, heat_fes_grad_fluid, heatFlux_fluid, *heatFlux_fc_cylinder, qoi_size_on_qp);
-               ecm2_utils::GSLIBTransfer(finder_solid_to_cylinder_heat, sc_cylinder_bdry_element_idx, *temperature_solid_gf, *temperature_sc_cylinder);
+               finder_fluid_to_cylinder_heat.InterpolateQoI(heatFlux_fluid, *heatFlux_fc_cylinder);
+               finder_solid_to_cylinder_heat.Interpolate(*temperature_solid_gf, *temperature_sc_cylinder);
                chrono.Stop();
                t_transfer_cylinder = chrono.RealTime();
 
@@ -1692,15 +1582,6 @@ int main(int argc, char *argv[])
    delete phi_solid_prev_gf;
    delete phi_fluid_prev_gf;
    delete JouleHeating_gf;
-
-   finder_cylinder_to_solid_heat.FreeData();
-   finder_solid_to_cylinder_heat.FreeData();
-   finder_fluid_to_cylinder_heat.FreeData();
-   finder_cylinder_to_fluid_heat.FreeData();
-   finder_fluid_to_solid_heat.FreeData();
-   finder_solid_to_fluid_heat.FreeData();
-   finder_fluid_to_solid_rf.FreeData();
-   finder_solid_to_fluid_rf.FreeData();
 
    return 0;
 }

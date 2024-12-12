@@ -76,53 +76,49 @@ namespace mfem
             paraview_dc.Save();
         }
 
-        /////////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ///                                     GSLIB Interpolation utils                                         ///
-        /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///                                     InterfaceTransfer utils                                         ///
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        void FindBdryElements(ParMesh *mesh, Array<int> &bdry_attributes, Array<int> &bdry_element_idx)
+        // Implement logic && operator for Array<int>
+        Array<int> operator&&(const Array<int> &a, const Array<int> &b)
         {
-            // Get the boundary elements with the specified attributes
-            bdry_element_idx.DeleteAll();
-            for (int be = 0; be < mesh->GetNBE(); be++)
+            MFEM_ASSERT(a.Size() == b.Size(), "Arrays must have the same size.");
+            Array<int> result(a.Size());
+            for (int i = 0; i < a.Size(); i++)
             {
-                const int bdr_el_attr = mesh->GetBdrAttribute(be);
-                if (bdry_attributes[bdr_el_attr - 1] == 0)
+                result[i] = a[i] && b[i];
+            }
+            return result;
+        }
+
+        InterfaceTransfer::InterfaceTransfer(ParGridFunction &src_gf, ParGridFunction &dst_gf, Array<int> &bdr_attributes_, Backend backend_)
+            : src_fes(src_gf.ParFESpace()), dst_fes(dst_gf.ParFESpace()), bdr_attributes(bdr_attributes_), backend(backend_),
+              src_mesh(src_gf.ParFESpace()->GetParMesh()), dst_mesh(dst_gf.ParFESpace()->GetParMesh()), sdim(src_mesh->SpaceDimension()),
+              finder(MPI_COMM_WORLD)
+        {
+            // Find boundary elements with the specified attributes (on the destination mesh)
+            for (int be = 0; be < dst_mesh->GetNBE(); be++)
+            {
+                const int bdr_el_attr = dst_mesh->GetBdrAttribute(be);
+                if (bdr_attributes[bdr_el_attr - 1] == 0)
                 {
                     continue;
                 }
-                bdry_element_idx.Append(be);
+                bdr_element_idx.Append(be);
             }
 
-            // Print the number of boundary elements on each MPI core
-            //int local_bdry_element_count = bdry_element_idx.Size();
-            //mfem::out << "Number of boundary elements, for MPI Core " << mesh->GetMyRank() << ": " << local_bdry_element_count << std::endl;
+            // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes (on the destination mesh)
+            const IntegrationRule &ir_face = (dst_fes->GetTypicalBE())->GetNodes();
+            bdr_element_coords.SetSize(bdr_element_idx.Size() * ir_face.GetNPoints() * sdim);
+            bdr_element_coords = 0.0;
 
-            return;
-        }
-
-        
-        void ComputeBdrQuadraturePointsCoords(ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords)
-        {
-            // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
-            if (!fes || bdry_element_idx.Size() == 0)
-                return;
-
-            // Extract the coordinates of the quadrature points for each selected boundary element
-            int sdim = fes->GetParMesh()->SpaceDimension();
-            const IntegrationRule &ir_face = (fes->GetTypicalBE())->GetNodes();
-            bdry_element_coords.SetSize(bdry_element_idx.Size() *
-                                        ir_face.GetNPoints() * sdim);
-            bdry_element_coords = 0.0;
-
-            auto pec = Reshape(bdry_element_coords.ReadWrite(), sdim,
-                               ir_face.GetNPoints(), bdry_element_idx.Size());
-
-            for (int be = 0; be < bdry_element_idx.Size(); be++)
+            auto pec = Reshape(bdr_element_coords.ReadWrite(), sdim, ir_face.GetNPoints(), bdr_element_idx.Size());
+            for (int be = 0; be < bdr_element_idx.Size(); be++)
             {
-                int be_idx = bdry_element_idx[be];
-                const FiniteElement *fe = fes->GetBE(be_idx);
-                ElementTransformation *Tr = fes->GetBdrElementTransformation(be_idx);
+                int be_idx = bdr_element_idx[be];
+                const FiniteElement *fe = dst_fes->GetBE(be_idx);
+                ElementTransformation *Tr = dst_fes->GetBdrElementTransformation(be_idx);
                 const IntegrationRule &ir_face = fe->GetNodes();
 
                 for (int qp = 0; qp < ir_face.GetNPoints(); qp++)
@@ -139,11 +135,131 @@ namespace mfem
                 }
             }
 
-            return;
+            // Setup finder (depeding on the backend)
+            if (backend == Backend::Native || backend == Backend::Hybrid)
+            {
+                transfer_map = new ParTransferMap(src_gf, dst_gf);
+            }
+
+            if (backend == Backend::GSLIB || backend == Backend::Hybrid)
+            {
+                finder.Setup(*src_mesh);
+                finder.FindPoints(bdr_element_coords, Ordering::byVDIM); // --> Because the coordinates are stored byVDIM
+            }
+            
+        }
+
+        InterfaceTransfer::~InterfaceTransfer()
+        {
+            if (transfer_map)
+            {
+                delete transfer_map;
+            }
+
+            if (backend == Backend::GSLIB || backend == Backend::Hybrid)
+            {
+                finder.FreeData();
+            }
+
+            // Nothing else to clean, InterfaceTransfer doesn't take ownership of the mesh or FiniteElementSpace
         }
 
 
-        void GSLIBAttrToMarker(int max_attr, const Array<unsigned int> elems, Array<int> &marker)
+        void InterfaceTransfer::Interpolate(ParGridFunction &src_gf, ParGridFunction &dst_gf)
+        {
+            if (backend == Backend::Native || backend == Backend::Hybrid)
+            {
+                transfer_map->Transfer(src_gf, dst_gf);
+            }
+            else // Backend::GSLIB
+            {
+                finder.Interpolate(src_gf, interp_vals);
+                TransferQoIToDestGf(interp_vals, dst_gf);
+            }
+        }
+
+
+        void InterfaceTransfer::InterpolateQoI(qoi_func_t qoi_func, ParGridFunction &dst_gf)
+        {
+            MFEM_VERIFY(backend == Backend::GSLIB || backend == Backend::Hybrid,
+                        "InterpolateQoI is not supported for the Native backend, and requires GSLIB.");
+
+            // Extract space dimension and FE space from the mesh
+            ParFiniteElementSpace* fes_dst = dst_gf.ParFESpace();
+            int vdim = fes_dst->GetVDim();
+
+            // Distribute internal GSLIB info to the corresponding mpi-rank for each point.
+            Array<unsigned int>
+                recv_elem,
+                recv_code;   // Element and GSLIB code
+            Vector recv_rst; // (Reference) coordinates of the quadrature points
+            finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_rst, recv_code);
+            int npt_recv = recv_elem.Size();
+
+            // Compute qoi locally (on source mesh)
+            qoi_src.SetSize(npt_recv * vdim);
+            qoi_loc.SetSize(vdim);
+            for (int i = 0; i < npt_recv; i++)
+            {
+                // Get the element index
+                const int e = recv_elem[i];
+
+                // Get the quadrature point
+                IntegrationPoint ip;
+                ip.Set3(recv_rst(sdim * i + 0), recv_rst(sdim * i + 1),
+                        recv_rst(sdim * i + 2));
+
+                // Get the element transformation
+                ElementTransformation *Tr = src_fes->GetElementTransformation(e);
+                Tr->SetIntPoint(&ip);
+
+                // Extract the local qoi vector
+                qoi_loc.MakeRef(qoi_src, i*vdim, vdim);
+
+                // Compute the qoi_src at quadrature point (it will change the qoi_src vector)
+                qoi_func(*Tr, ip, qoi_loc);
+            }
+
+            // Transfer the QoI from the source mesh to the destination mesh at quadrature points
+            finder.DistributeInterpolatedValues(qoi_src, vdim, Ordering::byVDIM, qoi_dst);
+
+            // Transfer the QoI to the destination grid function
+            TransferQoIToDestGf(qoi_dst, dst_gf);
+        }
+        
+
+        inline void InterfaceTransfer::TransferQoIToDestGf(const Vector &dst_vec, ParGridFunction &dst_gf)
+        {
+            // Extract fe space from the destination grid function
+            ParFiniteElementSpace *dst_fes = dst_gf.ParFESpace();
+            int vdim = dst_fes->GetVDim();
+            auto ordering = dst_fes->GetOrdering();
+            const int dof = dst_fes->GetTypicalBE()->GetNodes().GetNPoints();
+
+            int idx, be_idx, qp_idx;
+            qoi_loc.SetSize(vdim);
+            Vector loc_values(dof * vdim);
+            Array<int> vdofs(dof * vdim);
+            for (int be = 0; be < bdr_element_idx.Size(); be++)
+            {
+                be_idx = bdr_element_idx[be];
+                dst_fes->GetBdrElementVDofs(be_idx, vdofs);
+                for (int qp = 0; qp < dof; qp++)
+                {
+                    qp_idx = be * dof + qp;
+                    qoi_loc = Vector(dst_vec.GetData() + qp_idx * vdim, vdim);
+                    for (int d = 0; d < vdim; d++)
+                    {
+                        idx = ordering == Ordering::byVDIM ? qp * vdim + d : dof * d + qp;
+                        loc_values(idx) = qoi_loc(d);
+                    }
+                }
+                dst_gf.SetSubVector(vdofs, loc_values);
+            }
+        }
+        
+
+        void InterfaceTransfer::GSLIBAttrToMarker(int max_attr, const Array<unsigned int> elems, Array<int> &marker)
         {
             // Convert the element indices to markers
             marker.SetSize(max_attr);
@@ -160,154 +276,13 @@ namespace mfem
         }
 
 
-        // Implement logic && operator for Array<int>
-        Array<int> operator&&(const Array<int> &a, const Array<int> &b)
+        void InterfaceTransfer::GetElementIdx( Array<int> &elem_idx ) 
         {
-            MFEM_ASSERT(a.Size() == b.Size(), "Arrays must have the same size.");
-            Array<int> result(a.Size());
-            for (int i = 0; i < a.Size(); i++)
-            {
-                result[i] = a[i] && b[i];
-            }
-            return result;
-        }
+            MFEM_VERIFY(backend == Backend::GSLIB || backend == Backend::Hybrid,
+                        "GetElementIdx is not supported for the Native backend, and requires GSLIB.");
 
-        void GSLIBInterpolate(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp)
-        {
-            // Return if fes is nullptr (useful for cases in which Mpi communicator is split)
-            if (!fes)
-                return;
-
-            // Extract space dimension and FE space from the mesh
-            int sdim = (fes->GetParMesh())->SpaceDimension();
-            int vdim = fes->GetVDim();
-
-            // Distribute internal GSLIB info to the corresponding mpi-rank for each point.
-            Array<unsigned int>
-                recv_elem,
-                recv_code;   // Element and GSLIB code
-            Vector recv_rst; // (Reference) coordinates of the quadrature points
-            finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_rst, recv_code);
-            int npt_recv = recv_elem.Size();
-
-            // Compute qoi locally (on source side)
-            Vector qoi_loc, qoi_src, qoi_dst; 
-            qoi_src.SetSize(npt_recv * qoi_size_on_qp);
-            qoi_loc.SetSize(qoi_size_on_qp);
-            for (int i = 0; i < npt_recv; i++)
-            {
-                // Get the element index
-                const int e = recv_elem[i];
-
-                // Get the quadrature point
-                IntegrationPoint ip;
-                ip.Set3(recv_rst(sdim * i + 0), recv_rst(sdim * i + 1),
-                        recv_rst(sdim * i + 2));
-
-                // Get the element transformation
-                ElementTransformation *Tr = fes->GetElementTransformation(e);
-                Tr->SetIntPoint(&ip);
-
-                // Extract the local qoi vector
-                qoi_loc.MakeRef(qoi_src, i*vdim, vdim);
-
-                // Compute the qoi_src at quadrature point (it will change the qoi_src vector)
-                qoi_func(*Tr, ip, qoi_loc);
-            }
-
-            // Transfer the QoI from the source mesh to the destination mesh at quadrature points
-            finder.DistributeInterpolatedValues(qoi_src, qoi_size_on_qp, Ordering::byVDIM, qoi_dst);
-
-            // Transfer the QoI to the destination grid function
-            TransferQoIToDest(bdry_element_idx, qoi_dst, dest_gf);
-        }
-
-
-        void GSLIBTransfer( FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf)
-        {
-            // Extract space dimension and FE space from the mesh
-            ParFiniteElementSpace *fes = src_gf.ParFESpace();
-            int sdim = (fes->GetParMesh())->SpaceDimension();
-            int vdim = fes->GetVDim();
-
-            // Distribute internal GSLIB info to the corresponding mpi-rank for each point.
-            Array<unsigned int>
-                recv_elem,
-                recv_code;   // Element and GSLIB code
-            Vector recv_rst; // (Reference) coordinates of the quadrature points
-            finder.DistributePointInfoToOwningMPIRanks(recv_elem, recv_rst, recv_code);
-            int npt_recv = recv_elem.Size();
-
-            // Compute qoi locally (on source side)
-            Vector qoi_loc, qoi_src, qoi_dst; 
-            qoi_src.SetSize(npt_recv * vdim);
-            qoi_loc.SetSize(vdim);
-            for (int i = 0; i < npt_recv; i++)
-            {
-                // Get the element index
-                const int e = recv_elem[i];
-
-                // Get the quadrature point
-                IntegrationPoint ip;
-                ip.Set3(recv_rst(sdim * i + 0), recv_rst(sdim * i + 1),
-                        recv_rst(sdim * i + 2));
-
-                // Get the element transformation
-                ElementTransformation *Tr = fes->GetElementTransformation(e);
-                Tr->SetIntPoint(&ip);
-
-                // Extract the local qoi vector
-                qoi_loc.MakeRef(qoi_src, i*vdim, vdim);
-
-                // Compute the qoi_src at quadrature point (it will change the qoi_src vector)
-                src_gf.GetVectorValue(*Tr, ip, qoi_loc);
-            }
-
-            // Transfer the QoI from the source mesh to the destination mesh at quadrature points
-            finder.DistributeInterpolatedValues(qoi_src, vdim, Ordering::byVDIM, qoi_dst);
-
-            // Fill the grid function on destination mesh with the interpolated values
-            TransferQoIToDest(bdry_element_idx, qoi_dst, dest_gf);
-        }
-
-
-        void GSLIBTransfer_old( FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf)
-        {
-            // Interpolate the grid function on the source mesh to the destination mesh
-            Vector interp_vals;
-            finder.Interpolate(src_gf, interp_vals);
-
-            // Fill the grid function on destination mesh with the interpolated values
-            TransferQoIToDest(bdry_element_idx, interp_vals, dest_gf);    
-        }
-
-        inline void TransferQoIToDest(const Array<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf)
-        {
-            // Extract fe space from the destination grid function
-            ParFiniteElementSpace *dest_fes = dest_gf.ParFESpace();
-            int vdim = dest_fes->GetVDim();
-            auto ordering = dest_fes->GetOrdering();
-            const int dof = dest_fes->GetTypicalBE()->GetNodes().GetNPoints();
-
-            int idx, be_idx, qp_idx;
-            Vector qoi_loc(vdim), loc_values(dof * vdim);
-            Array<int> vdofs(dof * vdim);
-            for (int be = 0; be < bdry_element_idx.Size(); be++)
-            {
-                be_idx = bdry_element_idx[be];
-                dest_fes->GetBdrElementVDofs(be_idx, vdofs);
-                for (int qp = 0; qp < dof; qp++)
-                {
-                    qp_idx = be * dof + qp;
-                    qoi_loc = Vector(dest_vec.GetData() + qp_idx * vdim, vdim);
-                    for (int d = 0; d < vdim; d++)
-                    {
-                        idx = ordering == Ordering::byVDIM ? qp * vdim + d : dof * d + qp;
-                        loc_values(idx) = qoi_loc(d);
-                    }
-                }
-                dest_gf.SetSubVector(vdofs, loc_values);
-            }
+            auto &finder_elem = finder.GetElem();
+            GSLIBAttrToMarker(src_mesh->GetNE(), finder.GetElem(), elem_idx);
         }
 
 

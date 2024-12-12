@@ -263,34 +263,52 @@ namespace mfem
 
         void ExportMeshwithPartitioning(const std::string &outfolder, Mesh &mesh, const int *partitioning_);
 
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ///                                          GSLIB utils                                                ///
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        // Find boundary elements with the specified attributes
-        void FindBdryElements(ParMesh *mesh, Array<int> &bdry_attributes, Array<int> &bdry_element_idx);
-
-        // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes
-        void ComputeBdrQuadraturePointsCoords(ParFiniteElementSpace *fes, Array<int> &bdry_element_idx, Vector &bdry_element_coords);
-
-        // Extract the index of elements found by FindPointsGSLIB::FindPoints
-        // Can be used to restrict ComputeL2Error to the boundary elements
-        // elems is found with FindPointsGSLIB::GetElems()
-        void GSLIBAttrToMarker(int max_attr, const Array<unsigned int> elems, Array<int> &marker);
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///                                          Boundary transfer utils                                                ///
+        ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         // Logical and operation between two arrays
         Array<int> operator&&(const Array<int> &a, const Array<int> &b);
+       
+        class InterfaceTransfer
+        {
+            public:
 
-        // GSLIB interpolation of the QoI (given by qoi_func) on the source mesh and transfer to the destination mesh quadrature points
-        void GSLIBInterpolate(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParFiniteElementSpace *fes, qoi_func_t qoi_func, ParGridFunction &dest_gf, int qoi_size_on_qp);
+                enum class Backend {Native, GSLIB, Hybrid};
 
-        // GSLIB transfer of the grid function on the source mesh to the destination mesh
-        // Note: Assume FindPointsGSLIB has been Setup and FindPoints has been called (bdry_element_idx is the element indices on the destination mesh)
-        void GSLIBTransfer(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf);
-        void GSLIBTransfer_old(FindPointsGSLIB &finder, const Array<int> &bdry_element_idx, ParGridFunction &src_gf, ParGridFunction &dest_gf);
+                InterfaceTransfer(ParGridFunction &src_gf, ParGridFunction &dst_gf, Array<int> &bdr_attributes_, Backend backend_ = Backend::Hybrid);
+                ~InterfaceTransfer();
 
-        // Fill the grid function on destination mesh with the QoI vector (on quadrature points) on the destination mesh computed with GSLIBInterpolate
-        inline void TransferQoIToDest(const Array<int> &bdry_element_idx, const Vector &dest_vec, ParGridFunction &dest_gf);
+                void Interpolate(ParGridFunction &src_gf, ParGridFunction &dst_gf);
+                void InterpolateQoI(qoi_func_t qoi_func, ParGridFunction &dst_gf);
+
+                const Array<int>& GetBdrElementIdx() const { return bdr_element_idx; }
+                const Vector& GetBdrElementCoords() const { return bdr_element_coords; }
+                void GetElementIdx(Array<int> &elem_idx);
+
+            private:
+                inline void TransferQoIToDestGf(const Vector &dst_vec, ParGridFunction &dst_gf);
+                void GSLIBAttrToMarker(int max_attr, const Array<unsigned int> elems, Array<int> &marker);
+
+                InterfaceTransfer::Backend backend;
+
+                ParTransferMap *transfer_map;
+                FindPointsGSLIB finder;
+
+                ParFiniteElementSpace *src_fes;
+                ParFiniteElementSpace *dst_fes;
+                ParMesh *src_mesh;
+                ParMesh *dst_mesh;
+                int sdim;              
+
+                Array<int> bdr_attributes;
+                Array<int> bdr_element_idx;
+                Vector bdr_element_coords;
+
+                mutable Vector interp_vals;
+                mutable Vector qoi_loc, qoi_src, qoi_dst; 
+
+        };
 
     } // namespace ecm2_utils
 
