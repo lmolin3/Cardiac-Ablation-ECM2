@@ -30,13 +30,15 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -tet -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -tet -oh 2 -or 4 -dt 0.01 -tf 0.05
 // 2. Hexahedral mesh  
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8 
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 
 // 3. Hexahedral mesh with partial assembly for RF
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa_heat -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8  
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa_heat -oh 2 -or 4 -dt 0.01 -tf 0.05  
 // 4. Hexahedral mesh with partial assembly for RF and Heat
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa_heat -oh 2 -or 4 -dt 0.01 -tf 0.05 --relaxation-parameter 0.8
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa_heat -oh 2 -or 4 -dt 0.01 -tf 0.05
+// 5. Hexahedral mesh with partial assembly for RF and Heat, and anisotropic conductivity
+//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa_heat -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5
 
 #include "mfem.hpp"
 #include "lib/heat_solver.hpp"
@@ -105,10 +107,14 @@ int main(int argc, char *argv[])
    real_t t_final = 1.0;
    real_t dt = 1.0e-2;
    // Domain decomposition
-   real_t omega = 0.5; // Relaxation parameter
-   real_t omega_fluid;
-   real_t omega_solid;
-   real_t omega_cyl;
+   real_t omega_heat = 0.8; // Relaxation parameter
+   real_t omega_heat_fluid;
+   real_t omega_heat_solid;
+   real_t omega_heat_cyl;
+   real_t omega_rf = 0.8; // Relaxation parameter
+   real_t omega_rf_fluid;
+   real_t omega_rf_solid;
+   real_t omega_rf_cyl;
    // Physics
    real_t aniso_ratio_rf = 1.0;
    real_t aniso_ratio_temperature = 1.0;
@@ -144,7 +150,7 @@ int main(int argc, char *argv[])
    // Physics
    args.AddOption(&aniso_ratio_rf, "-ar", "--aniso-ratio-rf",
                   "Anisotropy ratio for RF problem.");
-   args.AddOption(&aniso_ratio_temperature, "-at", "--aniso-ratio-temperature",
+   args.AddOption(&aniso_ratio_temperature, "-at", "--aniso-ratio-heat",
                   "Anisotropy ratio for temperature problem."); 
    // Time integrator
    args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
@@ -156,8 +162,10 @@ int main(int argc, char *argv[])
    args.AddOption(&dt, "-dt", "--time-step",
                   "Time step.");
    // Domain decomposition
-   args.AddOption(&omega, "-omega", "--relaxation-parameter",
+   args.AddOption(&omega_heat, "-omegat", "--relaxation-parameter-heat",
                   "Relaxation parameter.");
+   args.AddOption(&omega_rf, "-omegarf", "--relaxation-parameter-rf",
+                  "Relaxation parameter for RF problem.");
    // Physics
    args.AddOption(&phi_applied, "-phi", "--applied-potential",
                   "Applied potential.");
@@ -187,9 +195,21 @@ int main(int argc, char *argv[])
    T_cylinder =  heat::CelsiusToKelvin(T_cylinder);
 
    // Set the relaxation parameters
-   omega_fluid = omega; // TODO: Add different relaxation parameters for each domain
-   omega_solid = omega;
-   omega_cyl = omega;
+   //if (aniso_ratio_rf > 1.5 && omega_rf > 0.5)
+   //{  
+   //   if (Mpi::Root())
+   //      mfem::out << "\033[31mAnisotropic RF problem detected. Reducing relaxation parameter to 0.5.\033[0m" << std::endl;  
+   //   omega_rf = 0.5;
+   //}
+
+   omega_rf_fluid = omega_rf; // TODO: Add different relaxation parameters for each domain
+   omega_rf_solid = omega_rf;
+   omega_rf_cyl = omega_rf;
+
+   omega_heat_fluid = omega_heat; // TODO: Add different relaxation parameters for each domain
+   omega_heat_solid = omega_heat;
+   omega_heat_cyl = omega_heat;
+
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -1045,8 +1065,8 @@ int main(int argc, char *argv[])
          if (iter > 0)
          {
             phi_fluid_gf->GetTrueDofs(phi_fluid);
-            phi_fluid *= omega_fluid;
-            phi_fluid.Add(1.0 - omega_fluid, phi_fluid_prev);
+            phi_fluid *= omega_rf_fluid;
+            phi_fluid.Add(1.0 - omega_rf_fluid, phi_fluid_prev);
             phi_fluid_gf->SetFromTrueDofs(phi_fluid);
          }
          chrono.Stop();
@@ -1078,8 +1098,8 @@ int main(int argc, char *argv[])
          if (iter > 0)
          {
             phi_solid_gf->GetTrueDofs(phi_solid);
-            phi_solid *= omega_solid;
-            phi_solid.Add(1.0 - omega_solid, phi_solid_prev);
+            phi_solid *= omega_rf_solid;
+            phi_solid.Add(1.0 - omega_rf_solid, phi_solid_prev);
             phi_solid_gf->SetFromTrueDofs(phi_solid);
          }
          chrono.Stop();
@@ -1286,8 +1306,8 @@ int main(int argc, char *argv[])
                chrono.Start();
                if (iter > 0)
                {
-                  temperature_fluid *= omega_fluid;
-                  temperature_fluid.Add(1 - omega_fluid, temperature_fluid_prev);
+                  temperature_fluid *= omega_heat_fluid;
+                  temperature_fluid.Add(1 - omega_heat_fluid, temperature_fluid_prev);
                   temperature_fluid_gf->SetFromTrueDofs(temperature_fluid);
                }
                chrono.Stop();
@@ -1327,8 +1347,8 @@ int main(int argc, char *argv[])
                chrono.Start();
                if (iter > 0)
                {
-                  temperature_solid *= omega_solid;
-                  temperature_solid.Add(1 - omega_solid, temperature_solid_prev);
+                  temperature_solid *= omega_heat_solid;
+                  temperature_solid.Add(1 - omega_heat_solid, temperature_solid_prev);
                   temperature_solid_gf->SetFromTrueDofs(temperature_solid);
                }
                chrono.Stop();
@@ -1368,8 +1388,8 @@ int main(int argc, char *argv[])
                chrono.Start();
                if (iter > 0)
                {
-                  temperature_cylinder *= omega_cyl;
-                  temperature_cylinder.Add(1 - omega_cyl, temperature_cylinder_prev);
+                  temperature_cylinder *= omega_heat_cyl;
+                  temperature_cylinder.Add(1 - omega_heat_cyl, temperature_cylinder_prev);
                   temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder);
                }
                chrono.Stop();
