@@ -51,7 +51,6 @@
 
 using namespace mfem;
 
-using InterfaceTransfer = ecm2_utils::InterfaceTransfer;
 using TransferBackend = InterfaceTransfer::Backend;
 
 IdentityMatrixCoefficient *Id = NULL;
@@ -706,26 +705,23 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer for Heat Transfer... \033[0m" << std::endl;
       
-   InterfaceTransfer finder_cylinder_to_solid_heat(*temperature_cylinder_gf, *temperature_solid_gf, solid_cylinder_interface_marker, TransferBackend::GSLIB);
-   InterfaceTransfer finder_solid_to_cylinder_heat(*temperature_solid_gf, *temperature_cylinder_gf, solid_cylinder_interface_marker, TransferBackend::GSLIB);
-   InterfaceTransfer finder_fluid_to_cylinder_heat(*temperature_fluid_gf, *temperature_cylinder_gf, fluid_cylinder_interface_marker, TransferBackend::GSLIB);
-   InterfaceTransfer finder_cylinder_to_fluid_heat(*temperature_cylinder_gf, *temperature_fluid_gf, fluid_cylinder_interface_marker, TransferBackend::GSLIB);
-   InterfaceTransfer finder_fluid_to_solid_heat(*temperature_fluid_gf, *temperature_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
-   InterfaceTransfer finder_solid_to_fluid_heat(*temperature_solid_gf, *temperature_fluid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_solid_to_cylinder_heat(*temperature_solid_gf, *temperature_cylinder_gf, solid_cylinder_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_cylinder_heat(*temperature_fluid_gf, *temperature_cylinder_gf, fluid_cylinder_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_solid_heat(*temperature_fluid_gf, *temperature_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
    Array<int> tmp1, tmp2;
-   finder_solid_to_fluid_heat.GetElementIdx(tmp1);
-   finder_solid_to_cylinder_heat.GetElementIdx(tmp2);
+   finder_fluid_to_solid_heat.GetElementIdxDst(tmp1);
+   finder_solid_to_cylinder_heat.GetElementIdxSrc(tmp2);
    Array<int> solid_interfaces_element_idx = tmp1 && tmp2;
 
-   finder_fluid_to_solid_heat.GetElementIdx(tmp1);
-   finder_fluid_to_cylinder_heat.GetElementIdx(tmp2);
+   finder_fluid_to_solid_heat.GetElementIdxSrc(tmp1);
+   finder_fluid_to_cylinder_heat.GetElementIdxSrc(tmp2);
    Array<int> fluid_interfaces_element_idx = tmp1 && tmp2;
 
-   finder_cylinder_to_fluid_heat.GetElementIdx(tmp1);
-   finder_cylinder_to_solid_heat.GetElementIdx(tmp2);
+   finder_fluid_to_cylinder_heat.GetElementIdxDst(tmp1);
+   finder_solid_to_cylinder_heat.GetElementIdxDst(tmp2);
    Array<int> cylinder_interfaces_element_idx = tmp1 && tmp2;
 
    tmp1.DeleteAll();
@@ -772,9 +768,7 @@ int main(int argc, char *argv[])
    //               RF                //
    /////////////////////////////////////
 
-   InterfaceTransfer finder_fluid_to_solid_rf(*phi_fs_fluid, *phi_solid_gf, fluid_solid_interface, TransferBackend::GSLIB);
-   InterfaceTransfer finder_solid_to_fluid_rf(*phi_solid_gf, *phi_fs_fluid, solid_cylinder_interface, TransferBackend::GSLIB);
-
+   BidirectionalInterfaceTransfer finder_fluid_to_solid_rf(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Define QoI (current density) on the source meshes (cylinder, solid, fluid)
 
@@ -1035,7 +1029,7 @@ int main(int argc, char *argv[])
          chrono.Start();
          // if (!converged_fluid)
          { // S->F: Φ
-            finder_solid_to_fluid_rf.Interpolate(*phi_solid_gf, *phi_fs_fluid);
+            finder_fluid_to_solid_rf.InterpolateBackward(*phi_solid_gf, *phi_fs_fluid);
          }
          chrono.Stop();
          t_transfer = chrono.RealTime();
@@ -1068,7 +1062,7 @@ int main(int argc, char *argv[])
          chrono.Start();
          // if (!converged_solid)
          { // F->S: grad Φ
-            finder_fluid_to_solid_rf.InterpolateQoI(currentDensity_fluid, *E_fs_solid);   
+            finder_fluid_to_solid_rf.InterpolateQoIForward(currentDensity_fluid, *E_fs_solid);
          }
          chrono.Stop();
          t_interp = chrono.RealTime();
@@ -1271,8 +1265,8 @@ int main(int argc, char *argv[])
             { // S->F: Transfer T, C->F: Transfer T
                chrono.Clear();
                chrono.Start();
-               finder_cylinder_to_fluid_heat.Interpolate(*temperature_cylinder_gf, *temperature_fc_fluid);
-               finder_solid_to_fluid_heat.Interpolate(*temperature_solid_gf, *temperature_fs_fluid);
+               finder_fluid_to_cylinder_heat.InterpolateBackward(*temperature_cylinder_gf, *temperature_fc_fluid);
+               finder_fluid_to_solid_heat.InterpolateBackward(*temperature_solid_gf, *temperature_fs_fluid);
                chrono.Stop();
                t_transfer_fluid = chrono.RealTime();
 
@@ -1312,8 +1306,8 @@ int main(int argc, char *argv[])
             { // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
                chrono.Clear();
                chrono.Start();
-               finder_fluid_to_solid_heat.InterpolateQoI(heatFlux_fluid, *heatFlux_fs_solid);
-               finder_cylinder_to_solid_heat.InterpolateQoI(heatFlux_cyl, *heatFlux_sc_solid);
+               finder_fluid_to_solid_heat.InterpolateQoIForward(heatFlux_fluid, *heatFlux_fs_solid);
+               finder_solid_to_cylinder_heat.InterpolateQoIBackward(heatFlux_cyl, *heatFlux_sc_solid);
                chrono.Stop();
                t_transfer_solid = chrono.RealTime();
 
@@ -1353,8 +1347,8 @@ int main(int argc, char *argv[])
             { // F->C: Transfer k ∇T_wall, S->C: Transfer T
                chrono.Clear();
                chrono.Start();
-               finder_fluid_to_cylinder_heat.InterpolateQoI(heatFlux_fluid, *heatFlux_fc_cylinder);
-               finder_solid_to_cylinder_heat.Interpolate(*temperature_solid_gf, *temperature_sc_cylinder);
+               finder_fluid_to_cylinder_heat.InterpolateQoIForward(heatFlux_fluid, *heatFlux_fc_cylinder);
+               finder_solid_to_cylinder_heat.InterpolateForward(*temperature_solid_gf, *temperature_sc_cylinder);
                chrono.Stop();
                t_transfer_cylinder = chrono.RealTime();
 

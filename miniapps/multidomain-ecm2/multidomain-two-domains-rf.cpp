@@ -466,15 +466,14 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
-   InterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
-   InterfaceTransfer finder_solid_to_fluid(*phi_solid_gf, *phi_fluid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
    Array<int> fs_fluid_element_idx;
    Array<int> fs_solid_element_idx;
-   finder_fluid_to_solid.GetElementIdx(fs_fluid_element_idx);
-   finder_solid_to_fluid.GetElementIdx(fs_solid_element_idx);
+   finder_fluid_to_solid.GetElementIdxSrc(fs_fluid_element_idx);
+   finder_fluid_to_solid.GetElementIdxDst(fs_solid_element_idx);
 
    // 3. Define QoI (current density) on the source meshes (cylinder, solid, fluid)
    int qoi_size_on_qp = sdim;
@@ -637,7 +636,7 @@ int main(int argc, char *argv[])
       chrono.Clear(); chrono.Start();
       //if (!converged_fluid)
       { // S->F: Φ
-         finder_solid_to_fluid.Interpolate(*phi_solid_gf, *phi_fs_fluid);
+         finder_fluid_to_solid.InterpolateBackward(*phi_solid_gf, *phi_fs_fluid);
       }
       chrono.Stop();
       t_transfer = chrono.RealTime();
@@ -667,7 +666,7 @@ int main(int argc, char *argv[])
       chrono.Clear(); chrono.Start();
       // if (!converged_solid)
       { // F->S: grad Φ
-         finder_fluid_to_solid.InterpolateQoI(currentDensity_fluid, *E_fs_solid);
+         finder_fluid_to_solid.InterpolateQoIForward(currentDensity_fluid, *E_fs_solid);
       }
       chrono.Stop();
       t_interp = chrono.RealTime();
