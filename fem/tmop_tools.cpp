@@ -437,7 +437,7 @@ real_t TMOPNewtonSolver::ComputeScalingFactor(const Vector &x,
       // Check for convergence
       if (init_fit_max_err < surf_fit_max_err_limit)
       {
-         if (print_options.iterations)
+         if (print_options.iterations || print_options.warnings)
          {
             mfem::out << "TMOPNewtonSolver converged "
                       "based on the surface fitting error.\n";
@@ -933,7 +933,7 @@ real_t TMOPNewtonSolver::ComputeMinDet(const Vector &x_loc,
    }
 #endif
    const DenseMatrix &Wideal =
-      Geometries.GetGeomToPerfGeomJac(fes.GetFE(0)->GetGeomType());
+      Geometries.GetGeomToPerfGeomJac(fes.GetMesh()->GetTypicalElementGeometry());
    min_detT_all /= Wideal.Det();
 
    return min_detT_all;
