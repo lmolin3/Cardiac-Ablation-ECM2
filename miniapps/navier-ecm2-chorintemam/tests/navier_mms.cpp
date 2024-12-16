@@ -30,8 +30,8 @@
 //
 
 
-#include "navier_unsteady_solver.hpp"
-//#include "utils.hpp"
+#include "lib/navier_unsteady_solver.hpp"
+#include "utils.hpp"
 #include <fstream>
 #include <sys/stat.h>  // Include for mkdir
 
@@ -48,11 +48,11 @@ struct s_NavierContext // Navier Stokes params
 {
    int uorder = 2;
    int porder = 2;
-   double kinvis = 0.01;
-   double a = 2.0;
-   double dt = 1e-3;
-   double t_final = 10 * dt;
-   double gamma = 1.0;
+   real_t kinvis = 0.01;
+   real_t a = 2.0;
+   real_t dt = 1e-3;
+   real_t t_final = 10 * dt;
+   real_t gamma = 1.0;
    bool verbose = true;
    bool paraview = false;
    bool checkres = false;
@@ -73,27 +73,27 @@ struct s_MeshContext // mesh
 
 
 // Forward declarations of functions
-void vel1(const Vector &x, double t, Vector &u)
+void vel1(const Vector &x, real_t t, Vector &u)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    u(0) = M_PI * sin(t) * pow(sin(M_PI * xi), 2.0) * sin(2.0 * M_PI * yi);
    u(1) = -(M_PI * sin(t) * sin(2.0 * M_PI * xi) * pow(sin(M_PI * yi), 2.0));
 }
 
-double p1(const Vector &x, double t)
+real_t p1(const Vector &x, real_t t)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    return sin(t) * cos(M_PI * xi) * sin(M_PI * yi);
 }
 
-void accel1(const Vector &x, double t, Vector &u)
+void accel1(const Vector &x, real_t t, Vector &u)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    u(0) =   M_PI * pow(sin(M_PI * xi), 2.0) * sin(2 * M_PI * yi) * cos(t)                                                        // dudt
           - 2.0 * NS_ctx.kinvis * pow(M_PI, 3.0) * sin(2.0 * M_PI * yi) * sin(t) * ( 2 * cos(2.0 * M_PI * xi) - 1.0 )            // - nu lap u
@@ -108,27 +108,27 @@ void accel1(const Vector &x, double t, Vector &u)
 
 
 // MMS2
-void vel2(const Vector &x, double t, Vector &u)
+void vel2(const Vector &x, real_t t, Vector &u)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    u(0) = sin(xi) * sin(yi+t) ;
    u(1) = cos(xi) * cos(yi+t) ;
 }
 
-double p2(const Vector &x, double t)
+real_t p2(const Vector &x, real_t t)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    return cos(xi) * sin(yi+t);
 }
 
-void accel2(const Vector &x, double t, Vector &u)
+void accel2(const Vector &x, real_t t, Vector &u)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    u(0) =   cos(t + yi)*sin(xi)                // dudt
           + 2.0 * NS_ctx.kinvis * sin(t + yi)  // - nu lap u
@@ -142,32 +142,32 @@ void accel2(const Vector &x, double t, Vector &u)
 }
 
 // Kim & Moin
-void vel3(const Vector &x, double t, Vector &u)
+void vel3(const Vector &x, real_t t, Vector &u)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    u(0) = -cos(NS_ctx.a*M_PI*xi) * sin(NS_ctx.a*M_PI*yi) * std::exp(-2.0*pow(NS_ctx.a,2.0)*pow(M_PI, 2.0)* NS_ctx.kinvis*t) ;
    u(1) =  sin(NS_ctx.a*M_PI*xi) * cos(NS_ctx.a*M_PI*yi) * std::exp(-2.0*pow(NS_ctx.a,2.0)*pow(M_PI, 2.0)* NS_ctx.kinvis*t) ;
 }
 
-double p3(const Vector &x, double t)
+real_t p3(const Vector &x, real_t t)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    return -1.0/4.0 * ( cos(2.0*NS_ctx.a*M_PI*xi) + cos(2.0*NS_ctx.a*M_PI*yi) ) * std::exp(-4.0*pow(NS_ctx.a,2.0)*pow(M_PI, 2.0)* NS_ctx.kinvis*t);
 }
 
-void accel3(const Vector &x, double t, Vector &u)
+void accel3(const Vector &x, real_t t, Vector &u)
 {
    u = 0.0;
 }
 
-/*void accel3(const Vector &x, double t, Vector &u)
+/*void accel3(const Vector &x, real_t t, Vector &u)
 {
-   double xi = x(0);
-   double yi = x(1);
+   real_t xi = x(0);
+   real_t yi = x(1);
 
    u(0) =   2.0*std::exp(-2.0*t)*cos(xi)*sin(yi)                    // dudt
           - 2.0 * NS_ctx.kinvis * std::exp(-2.0*t)*cos(xi)*sin(yi)  // - nu lap u
@@ -185,17 +185,18 @@ void accel3(const Vector &x, double t, Vector &u)
 int main(int argc, char *argv[])
 {
 
-   //
-   /// 1. Initialize MPI and Hypre.
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 1. Initialize MPI and Hypre
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
    Mpi::Init(argc, argv);
    int num_procs = Mpi::WorldSize();
    int myid = Mpi::WorldRank();
    Hypre::Init();
 
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 2. Parse command-line options.
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
 
    SolverParams sParams(1e-8, 1e-10, 1000, 0); // rtol, atol, maxiter, print-level
 
@@ -231,7 +232,7 @@ int main(int argc, char *argv[])
                   "--no-checkresult",
                   "Enable or disable checking of the result. Returns -1 on failure.");
     args.AddOption(&NS_ctx.outfolder,
-                   "-o",
+                   "-of",
                    "--output-folder",
                    "Output folder.");
     args.AddOption(&NS_ctx.gamma,
@@ -284,10 +285,10 @@ int main(int argc, char *argv[])
       args.PrintOptions(mfem::out);
    }
 
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 3. Read Mesh and create parallel
+   ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   //
-   /// 3. Read the (serial) mesh from the given mesh file on all processors.
-   //
    Element::Type type;
    switch (Mesh_ctx.elem)
    {
@@ -324,12 +325,7 @@ int main(int argc, char *argv[])
    }
 
 
-   //
-   /// 4. Define a parallel mesh by a partitioning of the serial mesh.
-   // Refine this mesh further in parallel to increase the resolution. Once the
-   // parallel mesh is defined, the serial mesh can be deleted.
-   //
-   ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, mesh);
+   auto pmesh = std::make_shared<ParMesh>(MPI_COMM_WORLD, mesh);
    mesh.Clear();
    {
       for (int l = 0; l < Mesh_ctx.par_ref_levels; l++)
@@ -338,23 +334,22 @@ int main(int argc, char *argv[])
       }
    }
 
-
-   //
-   /// 5. Create the flow solver.
-   //
-   NavierUnsteadySolver naviersolver(pmesh, NS_ctx.uorder, NS_ctx.porder, NS_ctx.kinvis, NS_ctx.verbose);
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 5. Create the NS Solver and BCHandler
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   
+   // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
+   bool verbose = false;
+   navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
+   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
 
    naviersolver.SetSolvers(sParams,sParams,sParams,sParams);
    naviersolver.SetMaxBDFOrder(NS_ctx.bdf);
    naviersolver.SetGamma(NS_ctx.gamma);
 
-   //
-   /// 6. Set initial condition and boundary conditions
-   //
-   double t = 0.0;
-   double dt = NS_ctx.dt;
-   bool last_step = false;
-
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 6. Set up boundary conditions
+   ///////////////////////////////////////////////////////////////////////////////////////////////
 
    // Set the initial condition.
    VectorFunctionCoefficient *u_excoeff = nullptr;
@@ -388,24 +383,24 @@ int main(int argc, char *argv[])
       break;
    }
 
-   u_excoeff->SetTime( t );
-   p_excoeff->SetTime( t );
+   u_excoeff->SetTime( 0.0 );
+   p_excoeff->SetTime( 0.0 );
 
    naviersolver.SetInitialConditionVel( *u_excoeff );
    naviersolver.SetInitialConditionPrevVel( *u_excoeff );
    naviersolver.SetInitialConditionPres( *p_excoeff );
 
-   ParGridFunction u_gf(naviersolver.GetUFes());
-   ParGridFunction p_gf(naviersolver.GetPFes());
-   ParGridFunction u_pred_gf(naviersolver.GetUFes());
-   ParGridFunction p_pred_gf(naviersolver.GetPFes());
+   ParGridFunction* u_gf = naviersolver.GetVelocity();
+   ParGridFunction* p_gf = naviersolver.GetPressure();
+   ParGridFunction* u_pred_gf = naviersolver.GetPredictedVelocity();
+   ParGridFunction* p_pred_gf = naviersolver.GetPredictedPressure();
 
-   ParGridFunction u_ex_gf(naviersolver.GetUFes());
-   ParGridFunction p_ex_gf(naviersolver.GetPFes());
-   ParGridFunction rhs_gf(naviersolver.GetUFes());
+   ParGridFunction u_ex_gf(naviersolver.GetFESpaceVelocity());
+   ParGridFunction p_ex_gf(naviersolver.GetFESpacePressure());
+   ParGridFunction rhs_gf(naviersolver.GetFESpaceVelocity());
 
-   ParGridFunction err_u_gf(naviersolver.GetUFes());
-   ParGridFunction err_p_gf(naviersolver.GetPFes());
+   ParGridFunction err_u_gf(naviersolver.GetFESpaceVelocity());
+   ParGridFunction err_p_gf(naviersolver.GetFESpacePressure());
 
    // Add Dirichlet boundary conditions to velocity space restricted to
    // selected attributes on the mesh.
@@ -425,7 +420,7 @@ int main(int argc, char *argv[])
       if (myid == 0) {mfem::out << "Fully Dirichlet problem."<<std::endl;};
       Array<int> ess_attr(pmesh->bdr_attributes.Max());
       ess_attr = 1;
-      naviersolver.AddVelDirichletBC(u_excoeff, ess_attr);
+      bcs->AddVelDirichletBC(u_excoeff, ess_attr);
       //naviersolver.AddPresDirichletBC(p_excoeff, ess_attr);
       break;
    }
@@ -434,10 +429,10 @@ int main(int argc, char *argv[])
       if (myid == 0) {mfem::out << "Fully Neumann problem."<<std::endl;};
       Array<int> traction_attr(pmesh->bdr_attributes.Max());
       traction_attr = 1;
-      ConstantCoefficient alpha(NS_ctx.kinvis);
-      ConstantCoefficient beta(-1.0);
-      naviersolver.AddCustomTractionBC(&alpha, &u_ex_gf, &beta, &p_ex_gf, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
-      naviersolver.AddPresDirichletBC(p_excoeff, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
+      ConstantCoefficient *alpha = new ConstantCoefficient(NS_ctx.kinvis);
+      ConstantCoefficient *beta = new ConstantCoefficient(-1.0);
+      bcs->AddCustomTractionBC(alpha, &u_ex_gf, beta, &p_ex_gf, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
+      bcs->AddPresDirichletBC(p_excoeff, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
       break;
    }
    case 2: // Mixed
@@ -447,16 +442,16 @@ int main(int argc, char *argv[])
       ess_attr = 0;
       ess_attr[bottom_attr - 1]  = 1;
       ess_attr[top_attr - 1] = 1;
-      naviersolver.AddVelDirichletBC(u_excoeff, ess_attr);
+      bcs->AddVelDirichletBC(u_excoeff, ess_attr);
 
       Array<int> traction_attr(pmesh->bdr_attributes.Max());
       traction_attr = 0;
       traction_attr[right_attr - 1]  = 1;
       traction_attr[left_attr - 1] = 1;
-      ConstantCoefficient alpha(NS_ctx.kinvis);
-      ConstantCoefficient beta(-1.0);
-      naviersolver.AddCustomTractionBC(&alpha, &u_ex_gf, &beta, &p_ex_gf, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
-      naviersolver.AddPresDirichletBC(p_excoeff, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
+      ConstantCoefficient *alpha = new ConstantCoefficient(NS_ctx.kinvis);
+      ConstantCoefficient *beta = new ConstantCoefficient(-1.0);
+      bcs->AddCustomTractionBC(alpha, &u_ex_gf, beta, &p_ex_gf, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
+      bcs->AddPresDirichletBC(p_excoeff, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
 
       break;
    }
@@ -464,65 +459,60 @@ int main(int argc, char *argv[])
       break;
    }
 
-
    Array<int> domain_attr(pmesh->attributes.Max());
    domain_attr = 1;
    naviersolver.AddAccelTerm(accel_excoeff, domain_attr);
 
-   naviersolver.Setup(dt);
-
-   double err_u = 0.0;
-   double err_p = 0.0;
 
    // Creating output directory if not existent
    ParaViewDataCollection *paraview_dc = nullptr;
    
    if( NS_ctx.paraview )
    {
-      naviersolver.SetOutputFolder(NS_ctx.outfolder);
-
       if ( (mkdir(NS_ctx.outfolder, 0777) == -1) && (pmesh->GetMyRank() == 0) ) {mfem::err << "Error :  " << strerror(errno) << std::endl;}
 
-      paraview_dc = new ParaViewDataCollection("Results-Paraview", pmesh);
+      paraview_dc = new ParaViewDataCollection("Results-Paraview", pmesh.get());
       paraview_dc->SetPrefixPath(NS_ctx.outfolder);
       paraview_dc->SetDataFormat(VTKFormat::BINARY);
-      paraview_dc->SetHighOrderOutput(true);
-      paraview_dc->RegisterField("corrected_pressure",&p_gf);
-      paraview_dc->RegisterField("corrected_velocity",&u_gf);
-      paraview_dc->RegisterField("predicted_velocity",&u_pred_gf);
-      paraview_dc->RegisterField("predicted_pressure",&p_pred_gf);
-      paraview_dc->RegisterField("exact_pressure",&p_ex_gf);
-      paraview_dc->RegisterField("error_pressure",&err_p_gf);
-      paraview_dc->RegisterField("error_velocity",&err_u_gf);
-      paraview_dc->RegisterField("exact_velocity",&u_ex_gf);
-      paraview_dc->RegisterField("exact_rhs",&rhs_gf);
-      u_gf = naviersolver.GetVelocity();
-      p_gf = naviersolver.GetPressure();
-      u_pred_gf = naviersolver.GetPredictedVelocity();
-      p_pred_gf = naviersolver.GetPredictedPressure();
+      paraview_dc->SetCompressionLevel(9);
+      naviersolver.RegisterParaviewFields(*paraview_dc);
+      naviersolver.AddParaviewField("exact_pressure",&p_ex_gf);
+      naviersolver.AddParaviewField("error_pressure",&err_p_gf);
+      naviersolver.AddParaviewField("error_velocity",&err_u_gf);
+      naviersolver.AddParaviewField("exact_velocity",&u_ex_gf);
+      naviersolver.AddParaviewField("exact_rhs",&rhs_gf);
 
-      u_excoeff->SetTime( t );
-      p_excoeff->SetTime( t );
-      accel_excoeff->SetTime( t );
+      u_excoeff->SetTime( 0.0 );
+      p_excoeff->SetTime( 0.0 );
+      accel_excoeff->SetTime( 0.0 );
 
       rhs_gf.ProjectCoefficient(*accel_excoeff);
       u_ex_gf.ProjectCoefficient(*u_excoeff);
       p_ex_gf.ProjectCoefficient(*p_excoeff);
 
       err_u_gf = u_ex_gf;
-      err_u_gf -= u_gf;
+      err_u_gf -= *u_gf;
       err_p_gf = p_ex_gf;
-      err_p_gf -= p_gf;
+      err_p_gf -= *p_gf;
 
-      paraview_dc->SetCycle(0);
-      paraview_dc->SetTime(t);
-      paraview_dc->Save();
-   }   
+      naviersolver.WriteFields(0, 0.0);
+   }
 
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 7. Setup solver and Assemble forms
+   ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   //
-   /// 7. Solve unsteady problem
-   //
+   naviersolver.Setup(NS_ctx.dt);
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 8. Solve unsteady problem
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   
+   real_t err_u = 0.0;
+   real_t err_p = 0.0;
+   real_t t = 0.0;
+   real_t dt = NS_ctx.dt;
+   bool last_step = false;
    for (int step = 0; !last_step; ++step)
    {
       if (t + dt >= NS_ctx.t_final - dt / 2)
@@ -541,13 +531,8 @@ int main(int argc, char *argv[])
       naviersolver.Step(t, dt, step);
 
       // Compare against exact solution of velocity and pressure.
-      u_gf = naviersolver.GetVelocity();
-      p_gf = naviersolver.GetPressure();
-      u_pred_gf = naviersolver.GetPredictedVelocity();
-      p_pred_gf = naviersolver.GetPredictedPressure();
-
-      err_u = u_gf.ComputeL2Error(*u_excoeff);
-      err_p = p_gf.ComputeL2Error(*p_excoeff);
+      err_u = u_gf->ComputeL2Error(*u_excoeff);
+      err_p = p_gf->ComputeL2Error(*p_excoeff);
 
       if (Mpi::Root())
       {
@@ -561,14 +546,7 @@ int main(int argc, char *argv[])
          accel_excoeff->SetTime(t);
          rhs_gf.ProjectCoefficient(*accel_excoeff);
 
-         err_u_gf = u_ex_gf;
-         err_u_gf -= u_gf;
-         err_p_gf = p_ex_gf;
-         err_p_gf -= p_gf;
-
-         paraview_dc->SetCycle(step+1);
-         paraview_dc->SetTime(t);
-         paraview_dc->Save();
+         naviersolver.WriteFields(step, t);
       }
 
    }
@@ -578,7 +556,7 @@ int main(int argc, char *argv[])
    // Test if the result for the test run is as expected.
    if (NS_ctx.checkres)
    {
-      double tol = 1e-3;
+      real_t tol = 1e-3;
       if (err_u > tol || err_p > tol)
       {
          if (Mpi::Root())
@@ -590,10 +568,10 @@ int main(int argc, char *argv[])
       }
    }
 
-   delete pmesh;
    delete paraview_dc; 
    delete u_excoeff;
    delete p_excoeff;
 
-   return 0;
+   return 0; 
+
 }

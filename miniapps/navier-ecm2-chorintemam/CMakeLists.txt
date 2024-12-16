@@ -11,52 +11,42 @@
 
 if (MFEM_USE_MPI)
 
-  list(APPEND SNAVIER_COMMON_SOURCES
-      custom_bilinteg.cpp utils.cpp navier_unsteady_solver.cpp)
-  list(APPEND SNAVIER_COMMON_HEADERS
-      custom_bilinteg.hpp utils.hpp navier_unsteady_solver.hpp)
+  set(NAVIER_DIR ${CMAKE_SOURCE_DIR}/miniapps/navier-ecm2-chorintemam)
 
-  convert_filenames_to_full_paths(SNAVIER_COMMON_SOURCES)
-  convert_filenames_to_full_paths(SNAVIER_COMMON_HEADERS)
+  include_directories(
+    ${CMAKE_SOURCE_DIR}/miniapps/common
+    ${CMAKE_SOURCE_DIR}/miniapps/common-ecm2
+    ${NAVIER_DIR}
+  )
 
-  set(SNAVIER_COMMON_FILES
-      EXTRA_SOURCES ${SNAVIER_COMMON_SOURCES}
-      EXTRA_HEADERS ${SNAVIER_COMMON_HEADERS})
+    list(APPEND NAVIER_SRCS
+    lib/navier_unsteady_solver.cpp
+    lib/custom_bilinteg.cpp
+    bc/navier_bchandler.cpp
+  )
 
-  # Tests NS
-  add_mfem_miniapp(navier_ecm2_mms_ct
-    MAIN navier_mms.cpp
-    ${SNAVIER_COMMON_FILES}
-    LIBRARIES mfem)
+  list(APPEND NAVIER_HDRS
+    lib/navier_unsteady_solver.hpp
+    lib/custom_bilinteg.hpp
+    bc/navier_bchandler.hpp
+  )
 
-  add_mfem_miniapp(navier_ecm2_poiseulle_ct
-    MAIN navier_poiseulle.cpp
-    ${SNAVIER_COMMON_FILES}
-    LIBRARIES mfem)
+  mfem_add_library(navier_ct_ecm2 ${NAVIER_SRCS} ${NAVIER_HDRS})
 
-  add_mfem_miniapp(navier_ecm2_LidDriven_ct
-    MAIN navier_lid_driven.cpp
-    ${SNAVIER_COMMON_FILES}
-    LIBRARIES mfem)
+    
+  target_link_libraries(navier_ct_ecm2
+    mfem
+    mfem-common
+    mfem-common-ecm2
+    ${TPL_LIBRARIES})
 
-  add_mfem_miniapp(navier_ecm2_flowaroundcyl_ct
-    MAIN navier_FlowAroundCyl.cpp
-    ${SNAVIER_COMMON_FILES}
-    LIBRARIES mfem)
+  add_mfem_miniapp(navier-mms
+    MAIN tests/navier_mms.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common navier_ct_ecm2)
 
-  add_mfem_miniapp(navier_ecm2_backfacingstep_ct
-    MAIN navier_BackFacingStep.cpp
-    ${SNAVIER_COMMON_FILES}
-    LIBRARIES mfem)
+  #target_include_directories(navier_test2D
+  #  PRIVATE ${NAVIER_EXTRA_INCLUDE_DIRECTORIES})
 
-    add_mfem_miniapp(navier_ecm2_benchmarkFDA_ct
-    MAIN navier_BenchmarkFDA.cpp
-    ${SNAVIER_COMMON_FILES}
-    LIBRARIES mfem)
 
-  # Create a symbolic link for meshes
-  execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink
-                ${CMAKE_CURRENT_SOURCE_DIR}/Mesh ${CMAKE_CURRENT_BINARY_DIR}/Mesh
-                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-
-endif ()
+endif () #MFEM_USE_MPI
