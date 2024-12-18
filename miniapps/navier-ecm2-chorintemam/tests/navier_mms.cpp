@@ -31,7 +31,6 @@
 
 
 #include "lib/navier_unsteady_solver.hpp"
-#include "utils.hpp"
 #include <fstream>
 #include <sys/stat.h>  // Include for mkdir
 
@@ -513,7 +512,7 @@ int main(int argc, char *argv[])
    real_t t = 0.0;
    real_t dt = NS_ctx.dt;
    bool last_step = false;
-   for (int step = 0; !last_step; ++step)
+   for (int step = 1; !last_step; ++step)
    {
       if (t + dt >= NS_ctx.t_final - dt / 2)
       {

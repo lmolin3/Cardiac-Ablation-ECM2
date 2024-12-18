@@ -528,10 +528,10 @@ void NavierUnsteadySolver::SetTimeIntegrationCoefficients(int step)
 {
    // Maximum BDF order to use at current time step
    // step + 1 <= order <= max_bdf_order
-   int bdf_order = std::min(step + 1, max_bdf_order);
+   int bdf_order = std::min(step, max_bdf_order);
 
 
-   if (step == 0 && bdf_order == 1)
+   if (step == 1 && bdf_order == 1)
    {
       alpha = 1.0;
       a1 = 1.0; 
@@ -541,7 +541,7 @@ void NavierUnsteadySolver::SetTimeIntegrationCoefficients(int step)
       b2 = 0.0; 
       b3 = 0.0; 
    }
-   else if (step >= 1 && bdf_order == 2)
+   else if (step >= 2 && bdf_order == 2)
    {
       alpha = 3.0/2.0;
       a1 = 2.0; 
@@ -551,7 +551,7 @@ void NavierUnsteadySolver::SetTimeIntegrationCoefficients(int step)
       b2 = -1.0; 
       b3 = 0.0;  
    }
-   else if (step >= 2 && bdf_order == 3)
+   else if (step >= 3 && bdf_order == 3)
    {
       alpha = 11.0/6.0;
       a1 = 3.0; 

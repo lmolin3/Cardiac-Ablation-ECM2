@@ -45,6 +45,21 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common navier_ct_ecm2)
 
+  add_mfem_miniapp(navier-poiseulle
+    MAIN tests/navier_poiseulle.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common navier_ct_ecm2)
+
+  #add_mfem_miniapp(navier-flowaroundcyl
+  #  MAIN tests/navier_flowaroundcyl.cpp
+  #  EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+  #  LIBRARIES mfem mfem-common navier_ct_ecm2)
+
+  add_custom_command(TARGET navier-poiseulle POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/Mesh Mesh
+            COMMENT "Copying the navier-ecm2 Mesh data directory ...")
+
   #target_include_directories(navier_test2D
   #  PRIVATE ${NAVIER_EXTRA_INCLUDE_DIRECTORIES})
 
