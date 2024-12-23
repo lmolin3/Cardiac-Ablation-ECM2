@@ -50,10 +50,20 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common navier_ct_ecm2)
 
-  #add_mfem_miniapp(navier-flowaroundcyl
-  #  MAIN tests/navier_flowaroundcyl.cpp
-  #  EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-  #  LIBRARIES mfem mfem-common navier_ct_ecm2)
+  add_mfem_miniapp(navier-flowaroundcyl
+    MAIN tests/navier_flowaroundcyl.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common navier_ct_ecm2)
+
+  add_mfem_miniapp(navier-liddriven
+    MAIN tests/navier_liddriven.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common navier_ct_ecm2)
+
+  add_mfem_miniapp(navier-backstep
+    MAIN tests/navier_backstep.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common navier_ct_ecm2)
 
   add_custom_command(TARGET navier-poiseulle POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

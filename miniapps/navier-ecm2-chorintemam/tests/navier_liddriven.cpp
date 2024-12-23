@@ -9,30 +9,27 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 //
-// Navier Poiseulle example
+// Navier Lid driven cavity 
 //
 // The problem domain is set up like this
 //
-//                            no slip
-//             |\     + ----------------------------------+
-//             | \    |                                   |
-// Parabolic -->  \   |                                   |   Traction free (outflow)
-//  inflow   -->  /   |                                   |
-//             | /    |                                   |
-//             |/     + ----------------------------------+
-//                            no slip
+//                 u = (1,0)
+//            + --> --> --> --> +
+//            |                 |
+//            |                 |
+// u=(0,0)    |                 |     u=(0,0)
+//            |                 |
+//            |                 |
+//            |                 |
+//            +-----------------+
+//                  u=(0,0)
 //
-// Inflow profile: u_in = 1/4kinvis dpdx (R^2 - r^2)    (Poiseulle flow)
-// 
-// Mesh attributes for 2D are:
-// inflow = 1, outflow = 2, cylinder = 3, wall = 4
-//
-// Mesh attributes for 3D are:
-// inflow = 1, outflow = 2, sphere = 3, wall = 4
+// and Dirichlet boundary conditions are applied for the velocity on every
+// boundary.
 //
 //
 // Run with:
-// mpirun -np 4 ./navier-poiseulle -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -dp 1.0 --gamma 1.0 --verbose --paraview -of ./Output/Poiseulle/
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --paraview --output-folder ./Output/LidDriven/Test/
 //
 
    
@@ -53,12 +50,12 @@ struct s_NavierContext // Navier Stokes params
 {
    int uorder = 2;
    int porder = 1;
-   real_t R = 1.0;           
-   real_t kinvis = 1.0;
-   real_t dpdx = 4.0;
-   real_t dt = 1e-3;
-   real_t t_final = 10 * dt;
-   real_t gamma = 1.0;
+   double R = 1.0;           
+   double kinvis = 1.0;
+   double re = 100;
+   double dt = 1e-3;
+   double t_final = 10 * dt;
+   double gamma = 1.0;
    bool verbose = true;
    bool paraview = false;
    const char *outfolder = "./Output/Poiseulle/Test/";
@@ -68,16 +65,18 @@ struct s_NavierContext // Navier Stokes params
 
 struct s_MeshContext // mesh
 {
+   int n = 10;                
    int dim = 2;
+   int elem = 0;
    int ser_ref_levels = 0;
    int par_ref_levels = 0;
 } Mesh_ctx;
 
 
 // Forward declarations of functions
-void inflow(const Vector &x, real_t t, Vector &u);
-void noSlip(const Vector &x, real_t t, Vector &u);
-real_t pZero(const Vector &x, real_t t);
+void inflow(const Vector &x, double t, Vector &u);
+void noSlip(const Vector &x, double t, Vector &u);
+double pZero(const Vector &x, double t);
 
 int main(int argc, char *argv[])
 {
@@ -87,8 +86,6 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    Mpi::Init(argc, argv);
-   int num_procs = Mpi::WorldSize();
-   int myid = Mpi::WorldRank();
    Hypre::Init();
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -109,8 +106,8 @@ int main(int argc, char *argv[])
                   "Order (degree) of the finite elements for pressure.");
    args.AddOption(&NS_ctx.dt, "-dt", "--time-step", "Time step.");
    args.AddOption(&NS_ctx.t_final, "-tf", "--final-time", "Final time.");
-   args.AddOption(&NS_ctx.kinvis, "-kv", "--kinematic-viscosity", "Kinematic Viscosity.");
-   args.AddOption(&NS_ctx.dpdx, "-dp", "--pressure-drop", "Pressure difference driving flow.");
+   args.AddOption(&NS_ctx.re, "-re", "--reynolds",
+                   "Reynolds number");
    args.AddOption(&NS_ctx.verbose,
                   "-v",
                   "--verbose",
@@ -123,23 +120,31 @@ int main(int argc, char *argv[])
                   "-no-pv",
                   "--no-paraview",
                   "Enable or disable Paraview output.");
-    args.AddOption(&NS_ctx.outfolder,
-                   "-of",
-                   "--output-folder",
-                   "Output folder.");
-    args.AddOption(&NS_ctx.gamma,
-                   "-g",
-                   "--gamma",
-                   "Relaxation parameter");
-    args.AddOption(&NS_ctx.bdf,
-                   "-bdf",
-                   "--bdf-order",
-                   "Maximum bdf order (1<=bdf<=3)");
+   args.AddOption(&NS_ctx.outfolder,
+                  "-o",
+                  "--output-folder",
+                  "Output folder.");
+   args.AddOption(&NS_ctx.gamma,
+                  "-g",
+                  "--gamma",
+                  "Relaxation parameter");
+   args.AddOption(&NS_ctx.bdf,
+                  "-bdf",
+                  "--bdf-order",
+                  "Maximum bdf order (1<=bdf<=3)");
 
-    args.AddOption(&Mesh_ctx.dim,
-                   "-d",
-                   "--dimension",
-                   "Dimension of the problem (2 = 2d, 3 = 3d)");
+   args.AddOption(&Mesh_ctx.dim,
+                  "-d",
+                  "--dimension",
+                  "Dimension of the problem (2 = 2d, 3 = 3d)");
+   args.AddOption(&Mesh_ctx.elem,
+                  "-e",
+                  "--element-type",
+                  "Type of elements used (0: Quad/Hex, 1: Tri/Tet)");
+   args.AddOption(&Mesh_ctx.n,
+                  "-n",
+                  "--num-elements",
+                  "Number of elements in uniform mesh.");
    args.AddOption(&Mesh_ctx.ser_ref_levels,
                   "-rs",
                   "--refine-serial",
@@ -167,24 +172,28 @@ int main(int argc, char *argv[])
    /// 3. Read Mesh and create parallel
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   Mesh mesh;
+   Element::Type type;
+   switch (Mesh_ctx.elem)
+   {
+   case 0: // quad
+      type = (Mesh_ctx.dim == 2) ? Element::QUADRILATERAL: Element::HEXAHEDRON;
+      break;
+   case 1: // tri
+      type = (Mesh_ctx.dim == 2) ? Element::TRIANGLE: Element::TETRAHEDRON;
+      break;
+   }
 
+   Mesh mesh;
    switch (Mesh_ctx.dim)
    {
-   case 2:
-   {
-      mesh = Mesh::LoadFromFile("./Mesh/channel_2D.msh");
+   case 2: // 2d
+      mesh = Mesh::MakeCartesian2D(Mesh_ctx.n,Mesh_ctx.n,type,true);
+      break;
+   case 3: // 3d
+      mesh = Mesh::MakeCartesian3D(Mesh_ctx.n,Mesh_ctx.n,Mesh_ctx.n,type,true);
       break;
    }
-   case 3:
-   {
-      mesh = Mesh::LoadFromFile("./Mesh/channel_3D.msh");
-      break;
-   }
-   default:
-      break;
-   }
-   //mesh.EnsureNodes();
+   mesh.EnsureNodes();
 
 
    for (int l = 0; l < Mesh_ctx.ser_ref_levels; l++)
@@ -194,7 +203,6 @@ int main(int argc, char *argv[])
 
 
    auto pmesh = std::make_shared<ParMesh>(MPI_COMM_WORLD, mesh);
-
    mesh.Clear();
    {
       for (int l = 0; l < Mesh_ctx.par_ref_levels; l++)
@@ -206,7 +214,7 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 5. Create the NS Solver and BCHandler
    ///////////////////////////////////////////////////////////////////////////////////////////////
-   
+
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
    bool verbose = false;
    navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
@@ -216,6 +224,7 @@ int main(int argc, char *argv[])
    naviersolver.SetMaxBDFOrder(NS_ctx.bdf);
    naviersolver.SetGamma(NS_ctx.gamma);
 
+
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Set up boundary conditions
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -223,28 +232,17 @@ int main(int argc, char *argv[])
 
    // Add Dirichlet boundary conditions to velocity space restricted to
    // selected attributes on the mesh.
-   int inflow_attr = 1;
-   int outflow_attr = 2;
-   Array<int> ess_attr(pmesh->bdr_attributes.Max());
-   ess_attr = 1;                    // Mark walls/cylinder for no-slip condition
-   ess_attr[inflow_attr - 1]  = 0;
-   ess_attr[outflow_attr - 1] = 0;
+    int inflow_attr = (Mesh_ctx.dim == 2) ? 3: 6; // for cube the top boundary is 6, for square it's 3
+    Array<int> ess_attr(pmesh->bdr_attributes.Max());
+    ess_attr = 1;
+    ess_attr[inflow_attr - 1] = 0;
 
-   // Inflow
-   VectorFunctionCoefficient *u_in = new VectorFunctionCoefficient(pmesh->Dimension(), inflow);
-   bcs->AddVelDirichletBC(u_in,inflow_attr);
+    // Inflow
+    bcs->AddVelDirichletBC(inflow,inflow_attr);
 
-   // Outflow
-   FunctionCoefficient *p_out = new FunctionCoefficient(pZero);
-   bcs->AddPresDirichletBC(p_out,outflow_attr);
+    // No Slip
+    bcs->AddVelDirichletBC(noSlip,ess_attr);
 
-   // No Slip
-   bcs->AddVelDirichletBC(noSlip,ess_attr);
-
-
-   // Initial condition
-   //naviersolver.SetInitialConditionVel( *u_in );
-   //naviersolver.SetInitialConditionPrevVel( *u_in );
 
    ParGridFunction *u_gf = naviersolver.GetVelocity();
    ParGridFunction *p_gf = naviersolver.GetPressure();
@@ -275,11 +273,11 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem
    ///////////////////////////////////////////////////////////////////////////////////////////////
- 
-   real_t t = 0.0;
-   real_t dt = NS_ctx.dt;
-   bool last_step = false;
 
+
+   double t = 0.0;
+   double dt = NS_ctx.dt;
+   bool last_step = false;
 
    for (int step = 1; !last_step; ++step)
    {
@@ -305,7 +303,6 @@ int main(int argc, char *argv[])
 
    naviersolver.PrintTimingData();
 
-   delete u_in;
    delete paraview_dc; 
 
    return 0;
@@ -313,36 +310,26 @@ int main(int argc, char *argv[])
 
 
 
-void inflow(const Vector &x, real_t t, Vector &u)
+void inflow(const Vector &x, double t, Vector &u)
 {
-
    const int dim = x.Size();
 
-   real_t xi = x[0];
-   real_t yi = x[1];
-
    u = 0.0;
+   u(0) = 1.0;
+   u(1) = 0.0;
 
    if( dim == 3)
    {
-      real_t zi = x[2];
-      real_t r = yi*yi + zi*zi;
-      // NYI
+      u(2) = 0;
    }
-   else
-   {
-      real_t r = yi;
-      u(0) = 1.0 / (4.0 * NS_ctx.kinvis ) * NS_ctx.dpdx * ( NS_ctx.R*NS_ctx.R - r*r);   // 1/ 4kinvis dpdx (R^2 - r^2)
-   }
-
 }
 
-void noSlip(const Vector &x, real_t t, Vector &u)
+void noSlip(const Vector &x, double t, Vector &u)
 {
    u = 0.0;
 }
 
-real_t pZero(const Vector &x, real_t t)
+double pZero(const Vector &x, double t)
 {
    return 0.0;
 }
