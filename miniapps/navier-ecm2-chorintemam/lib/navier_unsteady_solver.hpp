@@ -30,6 +30,8 @@ using common::H1_ParFESpace;
 namespace navier
 {
 
+class DiscretePressureLaplacian;
+
 /**
  * \class NavierUnsteadySolver
  * \brief Unsteady Incompressible Navier Stokes solver with (Picard) Algebraic Chorin-Temam splitting formulation with Pressure Correction (CTPC).
@@ -527,6 +529,31 @@ public:
    using LinearFormIntegrator::AssembleRHSElementVect;
 };
 
+
+////////////////////////////////////////////////////////////////////////////////////////
+
+
+   // Class DiscretePressureLaplacian compute the action x -> D(M^-1)G x
+   class DiscretePressureLaplacian : public TripleProductOperator
+   {
+   public:
+      // Constructor
+      DiscretePressureLaplacian(const Operator *D, const Operator *invM,
+                                const Operator *G, bool ownD, bool own_invM, bool ownG)
+          : TripleProductOperator(D, invM, G, ownD, own_invM, ownG)
+      {
+      }
+
+      // Override the Mult method
+      void Mult(const Vector &x, Vector &y) const override
+      {
+         TripleProductOperator::Mult(x, y); // Compute y = D M^-1 G x
+         //y.Neg();                           // Compute y = - D M^-1 G x
+      }
+   };
+
+
+////////////////////////////////////////////////////////////////////////////////////////
 class QuantitiesOfInterest
 {
 public:

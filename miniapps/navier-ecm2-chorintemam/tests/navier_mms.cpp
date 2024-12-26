@@ -26,7 +26,7 @@
 // Bottom=1, Right=2, Top=3, Left=4
 //
 // Run with:
-// mpirun -np 4 ./navier_ecm2_mms_mono -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --verbose --checkresult --paraview --output-folder ./Output/MMS/Test/
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --verbose --no-paraview
 //
 
 

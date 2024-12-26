@@ -315,8 +315,10 @@ void NavierUnsteadySolver::Setup(real_t dt)
    H2->SetPrintLevel(s4Params.pl);
 
    // Pressure prediction 
-   DHG = new TripleProductOperator(opD.Ptr(),H1,opG.Ptr(),false,false,false);      // operator through action: DHG = D  dt/alpha M^{-1} G
-   DHGc = new ConstrainedOperator(DHG, pres_ess_tdof, true);       // operator DHG constraining pressure dofs
+   //DHG = new TripleProductOperator(opD.Ptr(),H1,opG.Ptr(),false,false,false);      // operator through action: DHG = D  dt/alpha M^{-1} G
+   //DHGc = new ConstrainedOperator(DHG, pres_ess_tdof, true);       // operator DHG constraining pressure dofs
+   DHG = new DiscretePressureLaplacian(opD.Ptr(), H1, opG.Ptr(), false, false, false); // operator through action: -D dt/alpha M^{-1}G
+   DHGc = new ConstrainedOperator(DHG, pres_ess_tdof, true);  
 
    invDHG1 = new GMRESSolver(ufes->GetComm());
    invDHG1->iterative_mode = true;      
