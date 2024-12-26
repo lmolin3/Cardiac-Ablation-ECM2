@@ -15,7 +15,7 @@
 #define MFEM_NAVIER_UNSTEADY_VERSION 0.1
 
 #include "mfem.hpp"
-#include "custom_bilinteg.hpp"
+#include "integrators/vectorconvection_bilinteg.hpp"
 #include "bc/navier_bchandler.hpp"
 #include "utils.hpp"
 #include "mesh_extras.hpp"
