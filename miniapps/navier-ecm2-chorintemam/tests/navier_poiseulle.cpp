@@ -64,6 +64,7 @@ struct s_NavierContext // Navier Stokes params
    const char *outfolder = "./Output/Poiseulle/Test/";
    bool ExportData = false;
    int bdf = 3;
+   bool yosida = false;
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -135,27 +136,32 @@ int main(int argc, char *argv[])
                    "-bdf",
                    "--bdf-order",
                    "Maximum bdf order (1<=bdf<=3)");
-
+    args.AddOption(&NS_ctx.yosida,
+                   "-y",
+                   "--yosida",
+                   "-ct",
+                   "--chorin-temam",
+                   "Use Yosida or Chorin-Temam splitting.");
     args.AddOption(&Mesh_ctx.dim,
                    "-d",
                    "--dimension",
                    "Dimension of the problem (2 = 2d, 3 = 3d)");
-   args.AddOption(&Mesh_ctx.ser_ref_levels,
-                  "-rs",
-                  "--refine-serial",
-                  "Number of times to refine the mesh uniformly in serial.");
-   args.AddOption(&Mesh_ctx.par_ref_levels,
-                  "-rp",
-                  "--refine-parallel",
-                  "Number of times to refine the mesh uniformly in parallel.");
-   args.Parse();
-   if (!args.Good())
-   {
-      if (Mpi::Root())
-      {
-         args.PrintUsage(mfem::out);
-      }
-      return 1;
+    args.AddOption(&Mesh_ctx.ser_ref_levels,
+                   "-rs",
+                   "--refine-serial",
+                   "Number of times to refine the mesh uniformly in serial.");
+    args.AddOption(&Mesh_ctx.par_ref_levels,
+                   "-rp",
+                   "--refine-parallel",
+                   "Number of times to refine the mesh uniformly in parallel.");
+    args.Parse();
+    if (!args.Good())
+    {
+       if (Mpi::Root())
+       {
+          args.PrintUsage(mfem::out);
+       }
+       return 1;
    }
    if (Mpi::Root())
    {
@@ -210,7 +216,7 @@ int main(int argc, char *argv[])
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
    bool verbose = false;
    navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
-   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose, NS_ctx.yosida);
 
    naviersolver.SetSolvers(sParams,sParams,sParams,sParams);
    naviersolver.SetMaxBDFOrder(NS_ctx.bdf);

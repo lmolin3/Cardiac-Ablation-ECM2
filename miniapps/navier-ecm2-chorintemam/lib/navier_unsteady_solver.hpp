@@ -109,7 +109,7 @@ class NavierUnsteadySolver
 {
 public:
 
-    NavierUnsteadySolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_=2, int porder_=1,  bool verbose_=true);
+    NavierUnsteadySolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_=2, int porder_=1,  bool verbose_=true, bool yosida = false);
 
     ~NavierUnsteadySolver();
 
@@ -264,7 +264,8 @@ public:
    int udim;
    int pdim;
 
-   bool pa = false;
+   bool pa = false; // not supported yet
+   bool yosida = false;
 
    /// Grid functions
    ParGridFunction *u_gf = nullptr;      // corrected velocity
@@ -331,14 +332,13 @@ public:
    OperatorHandle opNL;     // convective term   w . grad u (Picard convection)
    OperatorHandle opS; // pressure laplacian
    OperatorHandle opDe;
+   OperatorHandle opA; // A = K + C
 
-   HypreParMatrix *C = nullptr;      // C = alpha/dt + A
+   OperatorHandle opC;      // C = alpha/dt + A
    HypreParMatrix *Ce = nullptr;       // matrix for dirichlet bc modification
    HypreParMatrix *sigmaM = nullptr; // velocity mass (modified with bdf coeff and bcs)    alpha/dt M
 
-
-
-   TripleProductOperator *DHG = nullptr;
+   DiscretePressureLaplacian *DHG = nullptr;
    ConstrainedOperator *DHGc = nullptr;
 
    /// Linear form to compute the mass matrix to set pressure mean to zero.
@@ -377,8 +377,8 @@ public:
    GMRESSolver *invC = nullptr;    // solver for velocity prediction (non-symmetric system)
    GMRESSolver *invDHG1 = nullptr; // solver for pressure prediction
    GMRESSolver *invDHG2 = nullptr; // solver for pressure correction
-   CGSolver *H1 = nullptr;         // solver for approximated momentum matrix in L-step (Schur Complement)
-   CGSolver *H2 = nullptr;         // solver for approximated momentum matrix in U-step
+   IterativeSolver *H1 = nullptr;         // solver for approximated momentum matrix in L-step (Schur Complement)
+   IterativeSolver *H2 = nullptr;         // solver for approximated momentum matrix in U-step
 
    Solver *invC_pc = nullptr;           // preconditioner for velocity block
    HypreBoomerAMG *invDHG_pc = nullptr; // preconditioner for pressure schur complement

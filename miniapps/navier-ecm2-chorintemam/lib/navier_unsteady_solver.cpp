@@ -13,7 +13,8 @@ NavierUnsteadySolver::NavierUnsteadySolver(std::shared_ptr<ParMesh> pmesh_,
                                            real_t kin_vis_,
                                            int uorder_,
                                            int porder_,
-                                           bool verbose_) : pmesh(pmesh_), bcs(bcs_), uorder(uorder_), porder(porder_), verbose(verbose_)
+                                           bool verbose_,
+                                           bool yosida_) : pmesh(pmesh_), bcs(bcs_), uorder(uorder_), porder(porder_), verbose(verbose_), yosida(yosida_)
 {
 
    // pmesh
@@ -304,8 +305,11 @@ void NavierUnsteadySolver::Setup(real_t dt)
    H1->SetOperator(*sigmaM);
    H1->SetPrintLevel(s4Params.pl);
 
-   // Chorin-Temam operator H2 = dt/alpha M^{-1}
-   H2 = new CGSolver(ufes->GetComm());
+   // Chorin-Temam operator H2 = dt/alpha M^{-1}, Yosida C^{-1}
+   if (yosida)
+      H2 = new GMRESSolver(ufes->GetComm());
+   else
+      H2 = new CGSolver(ufes->GetComm());
    H2->iterative_mode = true;        
    H2->SetAbsTol(s4Params.atol);
    H2->SetRelTol(s4Params.rtol);
@@ -371,7 +375,7 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    int skip_zeros = 0;
    delete NL_form; NL_form = nullptr;
    opNL.Clear();
-   delete C; C = nullptr;
+   opC.Clear();
    delete Ce; Ce = nullptr;
    NL_form = new ParBilinearForm(ufes);
    NL_form->AddDomainIntegrator(new VectorConvectionIntegrator(*u_ext_vc, 1.0));  // += C 
@@ -380,10 +384,19 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    
    C_visccoeff.constant = kin_vis->constant;
    C_bdfcoeff.constant = alpha / dt;
-   C = Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), C_visccoeff.constant, *(opK.As<HypreParMatrix>()));   // C = alpha/dt M + kin_vis K + NL
-   C->Add(1.0, *(opNL.As<HypreParMatrix>())); 
-   Ce = C->EliminateRowsCols(vel_ess_tdof);
-   invC->SetOperator(*C);               
+   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), C_visccoeff.constant, *(opK.As<HypreParMatrix>())), false );   // C = alpha/dt M + kin_vis K + NL
+   opC.As<HypreParMatrix>()->Add(1.0, *(opNL.As<HypreParMatrix>())); 
+   Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
+   invC->SetOperator(*opC);
+
+   if (yosida)
+   {
+      opA.Reset(new SumOperator(opK.Ptr(), C_visccoeff.constant, opNL.Ptr(), 1.0, false, false)); // A = K + C
+   }
+   else
+   {
+      opA.Reset(opC.Ptr(), false);
+   }
 
    // Assemble solver for H = inv( alpha/dt M )
    delete sigmaM; 
@@ -391,8 +404,11 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    *sigmaM *= C_bdfcoeff.constant;
    auto sigmaMe = sigmaM->EliminateRowsCols(vel_ess_tdof);  
    delete sigmaMe; 
-   H1->SetOperator(*sigmaM);    
-   H2->SetOperator(*sigmaM);
+   H1->SetOperator(*sigmaM); 
+   if (yosida)
+      H2->SetOperator(*opC); 
+   else   
+      H2->SetOperator(*sigmaM); 
 
    sw_conv_assembly.Stop();
 
@@ -412,7 +428,7 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    rhs_v1->Add(1.0/dt, *tmp1);
 
    // Apply bcs
-   C->EliminateBC(*Ce,vel_ess_tdof,*u_pred,*rhs_v1); // rhs_v1 -= Ce*u_pred
+   opC.As<HypreParMatrix>()->EliminateBC(*Ce,vel_ess_tdof,*u_pred,*rhs_v1); // rhs_v1 -= Ce*u_pred
 
    // Solve current iteration.
    invC->Mult(*rhs_v1, *u_pred);
@@ -462,12 +478,12 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_pres_corr.Start();
    
-   // Assemble rhs            D H C H G p_pred      
+   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = K+C for Yosida)     
    opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
    H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
-   C->Mult(*tmp2,*tmp1);              //     C H G p_pred = tmp1
-   H1->Mult(*tmp1,*tmp2);             //   H C H G p_pred = tmp2
-   opD->Mult(*tmp2,*rhs_p2);          // D H C H G p_pred = tmp1
+   opA->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
+   H1->Mult(*tmp1,*tmp2);             //   H A H G p_pred = tmp2
+   opD->Mult(*tmp2,*rhs_p2);          // D H A H G p_pred = tmp1
 
    // Apply bcs
    DHGc->EliminateRHS(*p,*rhs_p2);   
@@ -479,6 +495,8 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    MFEM_VERIFY(invDHG2->GetConverged(), "Pressure correction step did not converge. Aborting!");
 
    // Remove nullspace by removing mean of the pressure solution 
+   if (yosida)
+      p->Add(1.0,*p_pred);  // p = p + p_pred
    p_gf->SetFromTrueDofs(*p);  
 
    sw_pres_corr.Stop();
@@ -891,7 +909,6 @@ NavierUnsteadySolver::~NavierUnsteadySolver()
    delete tmp1;      tmp1 = nullptr;
    delete tmp2;      tmp2 = nullptr;
 
-   delete C;         C = nullptr;
    delete sigmaM;   sigmaM = nullptr; 
    delete Ce;        Ce = nullptr;
    delete DHGc;      DHGc = nullptr;

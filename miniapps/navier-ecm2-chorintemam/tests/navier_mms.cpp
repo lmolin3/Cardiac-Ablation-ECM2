@@ -59,6 +59,7 @@ struct s_NavierContext // Navier Stokes params
    int fun = 1;
    int bdf = 3;
    int bcs = 0; // 0 = FullyDirichlet, 1 = FullyNeumann, 2 = Mixed
+   bool yosida = false;
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -244,7 +245,12 @@ int main(int argc, char *argv[])
                   "ODE solver: 0 - Fully dirichlet,\n\t"
                   "            1 - Fully Neumann,\n\t"
                   "            2 - Mixed (top/bottom Dirichlet, left/right Neumann)");
-
+      args.AddOption(&NS_ctx.yosida,
+                     "-y",
+                     "--yosida",
+                     "-ct",
+                     "--chorin-temam",
+                     "Use Yosida or Chorin-Temam splitting.");
     args.AddOption(&NS_ctx.bdf,
                    "-bdf",
                    "--bdf-order",
@@ -340,7 +346,7 @@ int main(int argc, char *argv[])
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
    bool verbose = false;
    navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
-   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose, NS_ctx.yosida);
 
    naviersolver.SetSolvers(sParams,sParams,sParams,sParams);
    naviersolver.SetMaxBDFOrder(NS_ctx.bdf);
