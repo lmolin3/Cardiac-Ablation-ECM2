@@ -354,7 +354,10 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    UpdateTimeBCS( time );
    UpdateTimeRHS( time );
 
-   /// 0.3 Assemble Convective term (linearized: u_ext \cdot \grad u)
+   ///////////////////////////////////////////////////////////////////////
+   /// 0. Assemble Convective term (linearized: u_ext \cdot \grad u)   ///
+   ///////////////////////////////////////////////////////////////////////
+
    sw_conv_assembly.Start();
 
    // Extrapolate velocity    u_ext = b1 un + b2 u_{n-1} + b3 u_{n-2}    
@@ -382,10 +385,22 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    Ce = C->EliminateRowsCols(vel_ess_tdof);
    invC->SetOperator(*C);               
 
+   // Assemble solver for H = inv( alpha/dt M )
+   delete sigmaM; 
+   sigmaM = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
+   *sigmaM *= C_bdfcoeff.constant;
+   auto sigmaMe = sigmaM->EliminateRowsCols(vel_ess_tdof);  
+   delete sigmaMe; 
+   H1->SetOperator(*sigmaM);    
+   H2->SetOperator(*sigmaM);
+
    sw_conv_assembly.Stop();
 
-   /// 1. Solve velocity prediction step
-
+   //////////////////////////////////////////////
+   /// 1. Solve velocity prediction step      ///
+   //////////////////////////////////////////////
+   /// C u_pred = fv + 1/dt M u_bdf
+   
    sw_vel_pred.Start(); 
 
    // Assemble rhs     fv + 1/dt M u_bdf
@@ -410,18 +425,12 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
  
    sw_vel_pred.Stop();
 
+   //////////////////////////////////////////////
+   /// 2. Solve pressure prediction step      ///
+   //////////////////////////////////////////////
+   /// DHG p_pred = D u_pred - fp
 
-   /// 2. Solve pressure prediction step
-
-   sw_pres_pred.Start();
-
-   // Assemble solver for H = inv( alpha/dt M )
-   delete sigmaM; 
-   sigmaM = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
-   *sigmaM *= C_bdfcoeff.constant;
-   auto sigmaMe = sigmaM->EliminateRowsCols(vel_ess_tdof);  
-   delete sigmaMe; 
-   H1->SetOperator(*sigmaM);     
+   sw_pres_pred.Start(); 
 
    // Assemble rhs            D u_pred - fp   = D u_pred + De u_pred
    opD->Mult(*u_pred,*rhs_p1);
@@ -446,15 +455,18 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_pres_pred.Stop();
 
-   /// 3. Solve pressure correction step 
+   //////////////////////////////////////////////
+   /// 3. Solve pressure correction step      ///
+   //////////////////////////////////////////////
+   /// DHG p = D H C H G p_pred
 
    sw_pres_corr.Start();
    
-   // Assemble rhs            D H A H G p_pred      
+   // Assemble rhs            D H C H G p_pred      
    opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
-   H1->Mult(*Gp,*tmp2);             //       H G p_pred = tmp2
-   C->Mult(*tmp2,*tmp1);            //     C H G p_pred = tmp1
-   H1->Mult(*tmp1,*tmp2);           //   H C H G p_pred = tmp2
+   H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
+   C->Mult(*tmp2,*tmp1);              //     C H G p_pred = tmp1
+   H1->Mult(*tmp1,*tmp2);             //   H C H G p_pred = tmp2
    opD->Mult(*tmp2,*rhs_p2);          // D H C H G p_pred = tmp1
 
    // Apply bcs
@@ -471,17 +483,17 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_pres_corr.Stop();
 
-   /// 4. Solve velocity correction step
+   //////////////////////////////////////////////
+   /// 4. Solve velocity correction step      ///
+   //////////////////////////////////////////////
+   /// u = u_pred - H2 G p_pred
 
    sw_vel_corr.Start();
 
    // Assemble rhs           ( alpha/dt M) u_pred - G p_pred 
-   H2->SetOperator(*sigmaM);    
-   sigmaM->Mult(*u_pred,*rhs_v2); 
-   rhs_v2->Add(-1.0,*Gp); 
-
-   // Solve current iteration.
-   H2->Mult(*rhs_v2,*u);  
+   H2->Mult(*Gp,*u);
+   u->Neg();
+   u->Add(1.0,*u_pred);
    iter_v2solve = H2->GetNumIterations();
    res_v2solve = H2->GetFinalNorm();
    MFEM_VERIFY(H2->GetConverged(), "Velocity correction step did not converge. Aborting!");
