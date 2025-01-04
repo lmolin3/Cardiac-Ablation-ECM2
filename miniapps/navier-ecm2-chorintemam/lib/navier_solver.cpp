@@ -1,4 +1,4 @@
-#include "navier_unsteady_solver.hpp"
+#include "navier_solver.hpp"
 #include <fstream>
 #include <iomanip>
 
@@ -384,17 +384,18 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    
    C_visccoeff.constant = kin_vis->constant;
    C_bdfcoeff.constant = alpha / dt;
-   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), C_visccoeff.constant, *(opK.As<HypreParMatrix>())), false );   // C = alpha/dt M + kin_vis K + NL
-   opC.As<HypreParMatrix>()->Add(1.0, *(opNL.As<HypreParMatrix>())); 
+   opA.Reset( Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>())), false );   // A = kin_vis K + NL 
+   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
    Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
    invC->SetOperator(*opC);
 
    if (yosida)
-   {
-      opA.Reset(new SumOperator(opK.Ptr(), C_visccoeff.constant, opNL.Ptr(), 1.0, false, false)); // A = K + C
+   {  // Operator is A = kin_vis K + NL  (with bcs)
+      auto opAe = opA.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
+      delete opAe;
    }
    else
-   {
+   {  // Operator is C = alpha/dt M + A  (with bcs)
       opA.Reset(opC.Ptr(), false);
    }
 
@@ -474,11 +475,11 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    //////////////////////////////////////////////
    /// 3. Solve pressure correction step      ///
    //////////////////////////////////////////////
-   /// DHG p = D H C H G p_pred
+   /// DHG p = D H A H G p_pred
 
    sw_pres_corr.Start();
    
-   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = K+C for Yosida)     
+   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = kin_vis K + NL  for Yosida)     
    opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
    H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
    opA->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
@@ -504,11 +505,12 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    //////////////////////////////////////////////
    /// 4. Solve velocity correction step      ///
    //////////////////////////////////////////////
-   /// u = u_pred - H2 G p_pred
-
+   /// u = u_pred - H2 G p    (G p_pred for Chorin Temam)
+ 
    sw_vel_corr.Start();
 
-   // Assemble rhs           ( alpha/dt M) u_pred - G p_pred 
+   if (yosida)
+      opG->Mult(*p,*Gp);            
    H2->Mult(*Gp,*u);
    u->Neg();
    u->Add(1.0,*u_pred);

@@ -20,13 +20,13 @@ if (MFEM_USE_MPI)
   )
 
     list(APPEND NAVIER_SRCS
-    lib/navier_unsteady_solver.cpp
+    lib/navier_solver.cpp
     bc/navier_bchandler.cpp
     integrators/vectorconvection_bilinteg.cpp
   )
 
   list(APPEND NAVIER_HDRS
-    lib/navier_unsteady_solver.hpp
+    lib/navier_solver.hpp
     bc/navier_bchandler.hpp
     integrators/vectorconvection_bilinteg.hpp
   )

@@ -64,20 +64,23 @@ class DiscretePressureLaplacian;
  *
  * The algebraic system using Chorin-Temam with pressure correction (CTPC) is:
  * 
- * [  A      0   ][  I   H G Q ]
- * [  D    D H G ][        Q    ]
+ * [  A      0   ][  I   H2 G R ]
+ * [  D    D H1 G ][        Q   ]
  *
  * Where:
- * - Q = (D H A H Dt)^-1 (D H Dt)
- * - H = dt/alpha M^-1
- *
- * 
+ * - H1 = dt/alpha M^-1 for Chorin-Temam and Yosida
+ * - H2 = dt/alpha M^-1 for Chorin-Temam and C^-1 for Yosida
+ * - Q = (D H A H Dt)^-1 (D H Dt) ( A = C for Chorin-Temam and A = kin_vis K + NL for Yosida)
+ * - R = Q for Chorin-Temam and I for Yosida
+ *  
  * This system leads to the following segregated steps:
  *
  * 1) Velocity prediction: A u_pred = fv + 1/dt M u_bdf
  * 2) Pressure prediction: DHG p_pred = alpha/dt (D u_pred - fp)
- * 3) Pressure correction: DHG p = dt/alpha (DHAHG p_pred)
- * 4) Velocity correction: M u = M u_pred - G p_pred
+ * 3) Pressure correction: DHG z = dt/alpha (DHAHG p_pred)
+ *          for Yosida: p = p_pred + z
+ *          for Chorin-Temam: p = z
+ * 4) Velocity correction: u = u_pred - H2 G p
  *
  * 
  * The numerical solvers for each step of the segregated scheme are as follows:
@@ -93,6 +96,9 @@ class DiscretePressureLaplacian;
  *
  * [1] Saleri, F., & Veneziani, A. (2005). Pressure correction algebraic splitting methods for the incompressible Navier--Stokes equations.
  *     SIAM journal on numerical analysis, 43(1), 174-194.
+ * 
+ * [2] Veneziani, A. (2009). A note on the consistency and stability properties of Yosida fractional step schemes for the unsteady stokes equations.
+ *     SIAM journal on numerical analysis, 47(4), 2838-2843.
  *
  * [2] Quarteroni, Alfio, Fausto Saleri, and Alessandro Veneziani. "Factorization methods for the numerical approximation of Navier–Stokes equations."
  *     Computer methods in applied mechanics and engineering 188.1-3 (2000): 505-526.
