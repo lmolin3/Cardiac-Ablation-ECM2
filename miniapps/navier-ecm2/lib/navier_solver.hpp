@@ -388,7 +388,8 @@ public:
    IterativeSolver *H2 = nullptr;         // solver for approximated momentum matrix in U-step
 
    Solver *invC_pc = nullptr;           // preconditioner for velocity block
-   HypreBoomerAMG *H1_pc = nullptr;     // preconditioner for velocity mass matrix
+   HypreBoomerAMG *H1_pc = nullptr;     // preconditioner for H1 operator
+   HypreBoomerAMG *H2_pc = nullptr;     // preconditioner for H2 operator
 
    int pc_type = 0;                 // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
    PCBuilder *pc_builder = nullptr; // Preconditioner builder for Schur complement
@@ -498,6 +499,19 @@ public:
 };
 
 
+class ChorinTemamSolver : public NavierUnsteadySolver
+{
+public:
+    ChorinTemamSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_=2, int porder_=1,  bool verbose_=true)
+        : NavierUnsteadySolver(pmesh_, bcs, kin_vis_, uorder_, porder_, verbose_)
+    {}
+
+    void Setup(real_t dt, int pc_type_ = 1) override;
+
+    void Step(real_t &time, real_t dt, int current_step) override;
+
+};
+
 class YosidaSolver : public NavierUnsteadySolver
 {
 public:
@@ -511,18 +525,31 @@ public:
 
 };
 
-class ChorinTemamSolver : public NavierUnsteadySolver
+
+class HighOrderYosidaSolver : public NavierUnsteadySolver
 {
 public:
-    ChorinTemamSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_=2, int porder_=1,  bool verbose_=true)
+
+    HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_=2, int porder_=1,  bool verbose_=true)
         : NavierUnsteadySolver(pmesh_, bcs, kin_vis_, uorder_, porder_, verbose_)
-    {}
+    {
+      correction_order = 1;
+    }
+
+    HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_ = 2, int porder_ = 1, bool verbose_ = true, int correction_order_ = 1)
+        : NavierUnsteadySolver(pmesh_, bcs, kin_vis_, uorder_, porder_, verbose_), correction_order(correction_order_)
+   {}
 
     void Setup(real_t dt, int pc_type_ = 1) override;
 
     void Step(real_t &time, real_t dt, int current_step) override;
 
+   private:
+
+      int correction_order;
+
 };
+
 
 
 ////////////////////////////////////////////////////////////////////////////////////////

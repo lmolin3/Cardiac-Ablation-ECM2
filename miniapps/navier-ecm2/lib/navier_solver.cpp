@@ -281,11 +281,16 @@ void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
    // Get the preconditioner for Schur Complement
    invDHG_pc = &pc_builder->GetSolver();
 
-   // Velocity Correction ( BoomerAMG )
+   // Preconditioners for H1 and H2
    H1_pc = new HypreBoomerAMG();        
    H1_pc->SetPrintLevel(0);
    H1_pc->SetSystemsOptions(sdim);
    H1_pc->iterative_mode = false;
+
+   H2_pc = new HypreBoomerAMG();
+   H2_pc->SetPrintLevel(0);
+   H2_pc->SetSystemsOptions(sdim);
+   H2_pc->iterative_mode = false;
 
    // Velocity Prediction (BoomerAMG; operator will be assigned inside loop)
    invC_pc = new HypreBoomerAMG();
@@ -717,11 +722,243 @@ NavierUnsteadySolver::~NavierUnsteadySolver()
    delete invDHG2;        invDHG2 = nullptr;
    delete invC_pc;        invC_pc = nullptr;
    delete H1_pc;        H1_pc = nullptr;
+   delete H2_pc;        H2_pc = nullptr;
 
    delete pc_builder; pc_builder = nullptr; // Do not delete invDHG_pc, it is owned by pc_builder
 
 }
 
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void ChorinTemamSolver::Setup(real_t dt, int prec_type_)
+{
+   NavierUnsteadySolver::Setup(dt, prec_type_);
+
+   // Assign solver for operator H2
+   // Chorin-Temam operator H2 = dt/alpha M^{-1}
+   H2 = new CGSolver(ufes->GetComm());
+
+   H2->iterative_mode = true;        
+   H2->SetAbsTol(s4Params.atol);
+   H2->SetRelTol(s4Params.rtol);
+   H2->SetMaxIter(s4Params.maxIter);
+   H2->SetPreconditioner(*H2_pc);
+   H2->SetPrintLevel(s4Params.pl);
+}
+
+void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
+{
+   /// 0.1 Update BDF time integration coefficients
+   SetTimeIntegrationCoefficients( current_step );
+
+   /// 0.2 Update time coefficients for rhs and bcs
+   time += dt;
+   UpdateTimeBCS( time );
+   UpdateTimeRHS( time );
+
+   ///////////////////////////////////////////////////////////////////////
+   /// 0. Assemble Convective term (linearized: u_ext \cdot \grad u)   ///
+   ///////////////////////////////////////////////////////////////////////
+
+   sw_conv_assembly.Start();
+
+   // Extrapolate velocity    u_ext = b1 un + b2 u_{n-1} + b3 u_{n-2}    
+   // NOTE: we can create method for extrapolating that incorporates the SetTimeIntegrationCoefficients,
+   // receives vectors, computes coefficients, return extrap (can be used to extrapolate pressure for Incremental version)
+   add(b1, *un, b2, *un1, *u_ext);
+   u_ext->Add(b3,*un2);
+   u_ext_gf->SetFromTrueDofs(*u_ext);  
+
+   Array<int> empty;
+   int skip_zeros = 0;
+   delete NL_form; NL_form = nullptr;
+   opNL.Clear();
+   opC.Clear();
+   delete Ce; Ce = nullptr;
+   NL_form = new ParBilinearForm(ufes);
+   NL_form->AddDomainIntegrator(new VectorConvectionIntegrator(*u_ext_vc, 1.0));  // += C 
+   NL_form->Assemble(skip_zeros); 
+   NL_form->FormSystemMatrix(empty, opNL);
+   
+   C_visccoeff.constant = kin_vis->constant;
+   C_bdfcoeff.constant = alpha / dt;
+   opA.Reset( Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>())), false );   // A = kin_vis K + NL 
+   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
+   Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
+   invC->SetOperator(*opC);
+
+   // Assemble solver for H = inv( alpha/dt M )
+   delete sigmaM; 
+   sigmaM = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
+   *sigmaM *= C_bdfcoeff.constant;
+   auto sigmaMe = sigmaM->EliminateRowsCols(vel_ess_tdof);  
+   delete sigmaMe; 
+   H1->SetOperator(*sigmaM); 
+   H2->SetOperator(*sigmaM); 
+
+   // Update timestep for discrete pressure laplacian preconditioner
+   switch (pc_type)
+   {
+   case 0:
+      static_cast<PMassPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 1: // Pressure Laplacian
+      break;
+   case 2: // PCD
+      break;
+   case 3: // Cahouet-Chabard
+      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 4: // Approximate inverse
+      static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   default:
+      MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
+      break;
+   }
+
+   sw_conv_assembly.Stop();
+
+   //////////////////////////////////////////////
+   /// 1. Solve velocity prediction step      ///
+   //////////////////////////////////////////////
+   /// C u_pred = fv + 1/dt M u_bdf
+   
+   sw_vel_pred.Start(); 
+
+   // Assemble rhs     fv + 1/dt M u_bdf
+   add(a1, *un, a2, *un1, *u_bdf);     
+   u_bdf->Add(a3,*un2);
+
+   rhs_v1->Set(1.0,*fv);               
+   opM->Mult(*u_bdf,*tmp1);
+   rhs_v1->Add(1.0/dt, *tmp1);
+
+   // Apply bcs
+   opC.As<HypreParMatrix>()->EliminateBC(*Ce,vel_ess_tdof,*u_pred,*rhs_v1); // rhs_v1 -= Ce*u_pred
+
+   // Solve current iteration.
+   invC->Mult(*rhs_v1, *u_pred);
+   iter_v1solve = invC->GetNumIterations();
+   res_v1solve = invC->GetFinalNorm();
+   MFEM_VERIFY(invC->GetConverged(), "Velocity prediction step did not converge. Aborting!");
+
+   // Update gf 
+   u_pred_gf->SetFromTrueDofs(*u_pred);
+ 
+   sw_vel_pred.Stop();
+
+   //////////////////////////////////////////////
+   /// 2. Solve pressure prediction step      ///
+   //////////////////////////////////////////////
+   /// DHG p_pred = D u_pred - fp
+
+   sw_pres_pred.Start(); 
+
+   // Assemble rhs            D u_pred - fp   = D u_pred + De u_pred
+   opD->Mult(*u_pred,*rhs_p1);
+   rhs_p1->Add(-1.0,*fp);
+
+   // Apply bcs
+   DHGc->EliminateRHS(*p_pred,*rhs_p1);
+
+   // Solve current iteration.
+   invDHG1->Mult(*rhs_p1,*p_pred);
+   iter_p1solve = invDHG1->GetNumIterations();
+   res_p1solve = invDHG1->GetFinalNorm();
+   MFEM_VERIFY(invDHG1->GetConverged(), "Pressure prediction step did not converge. Aborting!");
+
+   // Remove nullspace by removing mean of the pressure solution 
+   p_pred_gf->SetFromTrueDofs(*p_pred);  
+   if( (bcs->GetPresDbcs()).empty())
+   {
+      MeanZero(*p_pred_gf);
+      p_pred_gf->GetTrueDofs(*p_pred);
+   }
+
+   sw_pres_pred.Stop();
+
+   //////////////////////////////////////////////
+   /// 3. Solve pressure correction step      ///
+   //////////////////////////////////////////////
+   /// DHG p = D H A H G p_pred
+
+   sw_pres_corr.Start();
+   
+   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = kin_vis K + NL  for Yosida)     
+   opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
+   H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
+   opC->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
+   H1->Mult(*tmp1,*tmp2);             //   H A H G p_pred = tmp2
+   opD->Mult(*tmp2,*rhs_p2);          // D H A H G p_pred = tmp1
+
+   // Apply bcs
+   DHGc->EliminateRHS(*p,*rhs_p2);   
+
+   // Solve current iteration.
+   invDHG2->Mult(*rhs_p2,*p);
+   iter_p2solve = invDHG2->GetNumIterations();
+   res_p2solve = invDHG2->GetFinalNorm(); 
+   MFEM_VERIFY(invDHG2->GetConverged(), "Pressure correction step did not converge. Aborting!");
+
+   // Remove nullspace by removing mean of the pressure solution 
+   p_gf->SetFromTrueDofs(*p);  
+
+   sw_pres_corr.Stop();
+
+   //////////////////////////////////////////////
+   /// 4. Solve velocity correction step      ///
+   //////////////////////////////////////////////
+   /// u = u_pred - H2 G p    (G p_pred for Chorin Temam)
+ 
+   sw_vel_corr.Start();
+          
+   H2->Mult(*Gp,*u);
+   u->Neg();
+   u->Add(1.0,*u_pred);
+   iter_v2solve = H2->GetNumIterations();
+   res_v2solve = H2->GetFinalNorm();
+   MFEM_VERIFY(H2->GetConverged(), "Velocity correction step did not converge. Aborting!");
+
+   sw_vel_corr.Stop();
+
+   //// 5. Relaxation (velocity)  u = gamma u + (1 - gamma) un
+   //add(gamma,*u,(1.0-gamma),*un,*u);
+   
+   u_gf->SetFromTrueDofs(*u);
+
+   // Print summary
+   if (verbose && pmesh->GetMyRank() == 0)
+   {
+      mfem::out << std::setw(13) << "Step" << std::setw(10) << "" << std::setw(3) << "It" << std::setw(8)
+                << "Resid" << std::setw(12) << "Reltol"
+                << "\n";
+      mfem::out << std::setw(10) << "Velocity Prediction " << std::setw(5) << std::fixed
+                   << iter_v1solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_v1solve
+                   << "   " << s1Params.rtol << "\n";
+      mfem::out << std::setw(10) << "Pressure Prediction " << std::setw(5) << std::fixed
+                   << iter_p1solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_p1solve
+                   << "   " << s2Params.rtol << "\n";
+      mfem::out << std::setw(10) << "Pressure Correction " << std::setw(5) << std::fixed
+                   << iter_p2solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_p2solve
+                   << "   " << s3Params.rtol << "\n";
+      mfem::out << std::setw(10) << "Velocity Correction " << std::setw(5) << std::fixed
+                   << iter_v2solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_v2solve
+                   << "   " << s4Params.rtol << "\n";
+      mfem::out << std::setprecision(8);
+      mfem::out << std::fixed;
+   }
+
+   // Update solution at previous timesteps and time
+   UpdateSolution(); 
+
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -739,7 +976,7 @@ void YosidaSolver::Setup(real_t dt, int prec_type_)
    H2->SetAbsTol(s4Params.atol);
    H2->SetRelTol(s4Params.rtol);
    H2->SetMaxIter(s4Params.maxIter);
-   H2->SetPreconditioner(*H1_pc);
+   H2->SetPreconditioner(*H2_pc);
    H2->SetPrintLevel(s4Params.pl);
 }
 
@@ -783,7 +1020,240 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
    opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
    Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
    invC->SetOperator(*opC);
-   opA.Reset(opC.Ptr(), false);
+   
+   // Assemble solver for H = inv( alpha/dt M )
+   delete sigmaM; 
+   sigmaM = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
+   *sigmaM *= C_bdfcoeff.constant;
+   auto sigmaMe = sigmaM->EliminateRowsCols(vel_ess_tdof);  
+   delete sigmaMe; 
+   H1->SetOperator(*sigmaM); 
+   H2->SetOperator(*opC); 
+
+   // Update timestep for discrete pressure laplacian preconditioner
+   switch (pc_type)
+   {
+   case 0:
+      static_cast<PMassPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 1: // Pressure Laplacian
+      break;
+   case 2: // PCD
+      break;
+   case 3: // Cahouet-Chabard
+      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 4: // Approximate inverse
+      static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   default:
+      MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
+      break;
+   }
+
+   sw_conv_assembly.Stop();
+
+   //////////////////////////////////////////////
+   /// 1. Solve velocity prediction step      ///
+   //////////////////////////////////////////////
+   /// C u_pred = fv + 1/dt M u_bdf
+   
+   sw_vel_pred.Start(); 
+
+   // Assemble rhs     fv + 1/dt M u_bdf
+   add(a1, *un, a2, *un1, *u_bdf);     
+   u_bdf->Add(a3,*un2);
+
+   rhs_v1->Set(1.0,*fv);               
+   opM->Mult(*u_bdf,*tmp1);
+   rhs_v1->Add(1.0/dt, *tmp1);
+
+   // Apply bcs
+   opC.As<HypreParMatrix>()->EliminateBC(*Ce,vel_ess_tdof,*u_pred,*rhs_v1); // rhs_v1 -= Ce*u_pred
+
+   // Solve current iteration.
+   invC->Mult(*rhs_v1, *u_pred);
+   iter_v1solve = invC->GetNumIterations();
+   res_v1solve = invC->GetFinalNorm();
+   MFEM_VERIFY(invC->GetConverged(), "Velocity prediction step did not converge. Aborting!");
+
+   // Update gf 
+   u_pred_gf->SetFromTrueDofs(*u_pred);
+ 
+   sw_vel_pred.Stop();
+
+   //////////////////////////////////////////////
+   /// 2. Solve pressure prediction step      ///
+   //////////////////////////////////////////////
+   /// DHG p_pred = D u_pred - fp
+
+   sw_pres_pred.Start(); 
+
+   // Assemble rhs            D u_pred - fp   = D u_pred + De u_pred
+   opD->Mult(*u_pred,*rhs_p1);
+   rhs_p1->Add(-1.0,*fp);
+
+   // Apply bcs
+   DHGc->EliminateRHS(*p_pred,*rhs_p1);
+
+   // Solve current iteration.
+   invDHG1->Mult(*rhs_p1,*p_pred);
+   iter_p1solve = invDHG1->GetNumIterations();
+   res_p1solve = invDHG1->GetFinalNorm();
+   MFEM_VERIFY(invDHG1->GetConverged(), "Pressure prediction step did not converge. Aborting!");
+
+   // Remove nullspace by removing mean of the pressure solution 
+   p_pred_gf->SetFromTrueDofs(*p_pred);  
+   if( (bcs->GetPresDbcs()).empty())
+   {
+      MeanZero(*p_pred_gf);
+      p_pred_gf->GetTrueDofs(*p_pred);
+   }
+
+   sw_pres_pred.Stop();
+
+   //////////////////////////////////////////////
+   /// 3. Solve pressure correction step      ///
+   //////////////////////////////////////////////
+   /// DHG p = D H A H G p_pred
+
+   sw_pres_corr.Start();
+   
+   // Assemble rhs            D H A H G p_pred  A = C
+   opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
+   H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
+   opC->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
+   H1->Mult(*tmp1,*tmp2);             //   H A H G p_pred = tmp2
+   opD->Mult(*tmp2,*rhs_p2);          // D H A H G p_pred = tmp1
+
+   // Apply bcs
+   DHGc->EliminateRHS(*p,*rhs_p2);   
+
+   // Solve current iteration.
+   invDHG2->Mult(*rhs_p2,*p);
+   iter_p2solve = invDHG2->GetNumIterations();
+   res_p2solve = invDHG2->GetFinalNorm(); 
+   MFEM_VERIFY(invDHG2->GetConverged(), "Pressure correction step did not converge. Aborting!");
+
+   // Remove nullspace by removing mean of the pressure solution 
+   p_gf->SetFromTrueDofs(*p);  
+
+   sw_pres_corr.Stop();
+
+   //////////////////////////////////////////////
+   /// 4. Solve velocity correction step      ///
+   //////////////////////////////////////////////
+   /// u = u_pred - H2 G p    (G p_pred for Chorin Temam)
+ 
+   sw_vel_corr.Start();
+          
+   H2->Mult(*Gp,*u);
+   u->Neg();
+   u->Add(1.0,*u_pred);
+   iter_v2solve = H2->GetNumIterations();
+   res_v2solve = H2->GetFinalNorm();
+   MFEM_VERIFY(H2->GetConverged(), "Velocity correction step did not converge. Aborting!");
+
+   sw_vel_corr.Stop();
+
+   //// 5. Relaxation (velocity)  u = gamma u + (1 - gamma) un
+   //add(gamma,*u,(1.0-gamma),*un,*u);
+   
+   u_gf->SetFromTrueDofs(*u);
+
+   // Print summary
+   if (verbose && pmesh->GetMyRank() == 0)
+   {
+      mfem::out << std::setw(13) << "Step" << std::setw(10) << "" << std::setw(3) << "It" << std::setw(8)
+                << "Resid" << std::setw(12) << "Reltol"
+                << "\n";
+      mfem::out << std::setw(10) << "Velocity Prediction " << std::setw(5) << std::fixed
+                   << iter_v1solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_v1solve
+                   << "   " << s1Params.rtol << "\n";
+      mfem::out << std::setw(10) << "Pressure Prediction " << std::setw(5) << std::fixed
+                   << iter_p1solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_p1solve
+                   << "   " << s2Params.rtol << "\n";
+      mfem::out << std::setw(10) << "Pressure Correction " << std::setw(5) << std::fixed
+                   << iter_p2solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_p2solve
+                   << "   " << s3Params.rtol << "\n";
+      mfem::out << std::setw(10) << "Velocity Correction " << std::setw(5) << std::fixed
+                   << iter_v2solve << "   " << std::setw(3)
+                   << std::setprecision(2) << std::scientific << res_v2solve
+                   << "   " << s4Params.rtol << "\n";
+      mfem::out << std::setprecision(8);
+      mfem::out << std::fixed;
+   }
+
+   // Update solution at previous timesteps and time
+   UpdateSolution(); 
+
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+void HighOrderYosidaSolver::Setup(real_t dt, int prec_type_)
+{
+   NavierUnsteadySolver::Setup(dt, prec_type_);
+
+   // Assign solver for operator H2
+   // Chorin-Temam operator H2 = dt/alpha M^{-1}, Yosida C^{-1}
+   H2 = new GMRESSolver(ufes->GetComm());
+
+   H2->iterative_mode = true;        
+   H2->SetAbsTol(s4Params.atol);
+   H2->SetRelTol(s4Params.rtol);
+   H2->SetMaxIter(s4Params.maxIter);
+   H2->SetPreconditioner(*H2_pc);
+   H2->SetPrintLevel(s4Params.pl);
+}
+
+void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
+{
+   /// 0.1 Update BDF time integration coefficients
+   SetTimeIntegrationCoefficients( current_step );
+
+   /// 0.2 Update time coefficients for rhs and bcs
+   time += dt;
+   UpdateTimeBCS( time );
+   UpdateTimeRHS( time );
+
+   ///////////////////////////////////////////////////////////////////////
+   /// 0. Assemble Convective term (linearized: u_ext \cdot \grad u)   ///
+   ///////////////////////////////////////////////////////////////////////
+
+   sw_conv_assembly.Start();
+
+   // Extrapolate velocity    u_ext = b1 un + b2 u_{n-1} + b3 u_{n-2}    
+   // NOTE: we can create method for extrapolating that incorporates the SetTimeIntegrationCoefficients,
+   // receives vectors, computes coefficients, return extrap (can be used to extrapolate pressure for Incremental version)
+   add(b1, *un, b2, *un1, *u_ext);
+   u_ext->Add(b3,*un2);
+   u_ext_gf->SetFromTrueDofs(*u_ext);  
+
+   Array<int> empty;
+   int skip_zeros = 0;
+   delete NL_form; NL_form = nullptr;
+   opNL.Clear();
+   opC.Clear();
+   delete Ce; Ce = nullptr;
+   NL_form = new ParBilinearForm(ufes);
+   NL_form->AddDomainIntegrator(new VectorConvectionIntegrator(*u_ext_vc, 1.0));  // += C 
+   NL_form->Assemble(skip_zeros); 
+   NL_form->FormSystemMatrix(empty, opNL);
+   
+   C_visccoeff.constant = kin_vis->constant;
+   C_bdfcoeff.constant = alpha / dt;
+   opA.Reset( Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>())), false );   // A = kin_vis K + NL 
+   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
+   Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
+   invC->SetOperator(*opC);
+
+   auto opAe = opA.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
+   delete opAe;
    
    // Assemble solver for H = inv( alpha/dt M )
    delete sigmaM; 
@@ -900,6 +1370,7 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
    MFEM_VERIFY(invDHG2->GetConverged(), "Pressure correction step did not converge. Aborting!");
 
    // Remove nullspace by removing mean of the pressure solution 
+   p->Add(1.0,*p_pred);  // p = p + p_pred
    p_gf->SetFromTrueDofs(*p);  
 
    sw_pres_corr.Stop();
@@ -911,6 +1382,7 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
  
    sw_vel_corr.Start();
           
+   opG->Mult(*p,*Gp);
    H2->Mult(*Gp,*u);
    u->Neg();
    u->Add(1.0,*u_pred);
@@ -956,239 +1428,6 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
 
 }
 
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void ChorinTemamSolver::Setup(real_t dt, int prec_type_)
-{
-   NavierUnsteadySolver::Setup(dt, prec_type_);
-
-   // Assign solver for operator H2
-   // Chorin-Temam operator H2 = dt/alpha M^{-1}
-   H2 = new CGSolver(ufes->GetComm());
-
-   H2->iterative_mode = true;        
-   H2->SetAbsTol(s4Params.atol);
-   H2->SetRelTol(s4Params.rtol);
-   H2->SetMaxIter(s4Params.maxIter);
-   H2->SetPreconditioner(*H1_pc);
-   H2->SetPrintLevel(s4Params.pl);
-}
-
-void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
-{
-   /// 0.1 Update BDF time integration coefficients
-   SetTimeIntegrationCoefficients( current_step );
-
-   /// 0.2 Update time coefficients for rhs and bcs
-   time += dt;
-   UpdateTimeBCS( time );
-   UpdateTimeRHS( time );
-
-   ///////////////////////////////////////////////////////////////////////
-   /// 0. Assemble Convective term (linearized: u_ext \cdot \grad u)   ///
-   ///////////////////////////////////////////////////////////////////////
-
-   sw_conv_assembly.Start();
-
-   // Extrapolate velocity    u_ext = b1 un + b2 u_{n-1} + b3 u_{n-2}    
-   // NOTE: we can create method for extrapolating that incorporates the SetTimeIntegrationCoefficients,
-   // receives vectors, computes coefficients, return extrap (can be used to extrapolate pressure for Incremental version)
-   add(b1, *un, b2, *un1, *u_ext);
-   u_ext->Add(b3,*un2);
-   u_ext_gf->SetFromTrueDofs(*u_ext);  
-
-   Array<int> empty;
-   int skip_zeros = 0;
-   delete NL_form; NL_form = nullptr;
-   opNL.Clear();
-   opC.Clear();
-   delete Ce; Ce = nullptr;
-   NL_form = new ParBilinearForm(ufes);
-   NL_form->AddDomainIntegrator(new VectorConvectionIntegrator(*u_ext_vc, 1.0));  // += C 
-   NL_form->Assemble(skip_zeros); 
-   NL_form->FormSystemMatrix(empty, opNL);
-   
-   C_visccoeff.constant = kin_vis->constant;
-   C_bdfcoeff.constant = alpha / dt;
-   opA.Reset( Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>())), false );   // A = kin_vis K + NL 
-   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
-   Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
-   invC->SetOperator(*opC);
-
-   // Operator is C = alpha/dt M + A  (with bcs)
-   opA.Reset(opC.Ptr(), false);
-
-   // Assemble solver for H = inv( alpha/dt M )
-   delete sigmaM; 
-   sigmaM = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
-   *sigmaM *= C_bdfcoeff.constant;
-   auto sigmaMe = sigmaM->EliminateRowsCols(vel_ess_tdof);  
-   delete sigmaMe; 
-   H1->SetOperator(*sigmaM); 
-   H2->SetOperator(*sigmaM); 
-
-   // Update timestep for discrete pressure laplacian preconditioner
-   switch (pc_type)
-   {
-   case 0:
-      static_cast<PMassPC *>(invDHG_pc)->SetCoefficients(dt);
-      break;
-   case 1: // Pressure Laplacian
-      break;
-   case 2: // PCD
-      break;
-   case 3: // Cahouet-Chabard
-      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt);
-      break;
-   case 4: // Approximate inverse
-      static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
-      break;
-   default:
-      MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
-      break;
-   }
-
-   sw_conv_assembly.Stop();
-
-   //////////////////////////////////////////////
-   /// 1. Solve velocity prediction step      ///
-   //////////////////////////////////////////////
-   /// C u_pred = fv + 1/dt M u_bdf
-   
-   sw_vel_pred.Start(); 
-
-   // Assemble rhs     fv + 1/dt M u_bdf
-   add(a1, *un, a2, *un1, *u_bdf);     
-   u_bdf->Add(a3,*un2);
-
-   rhs_v1->Set(1.0,*fv);               
-   opM->Mult(*u_bdf,*tmp1);
-   rhs_v1->Add(1.0/dt, *tmp1);
-
-   // Apply bcs
-   opC.As<HypreParMatrix>()->EliminateBC(*Ce,vel_ess_tdof,*u_pred,*rhs_v1); // rhs_v1 -= Ce*u_pred
-
-   // Solve current iteration.
-   invC->Mult(*rhs_v1, *u_pred);
-   iter_v1solve = invC->GetNumIterations();
-   res_v1solve = invC->GetFinalNorm();
-   MFEM_VERIFY(invC->GetConverged(), "Velocity prediction step did not converge. Aborting!");
-
-   // Update gf 
-   u_pred_gf->SetFromTrueDofs(*u_pred);
- 
-   sw_vel_pred.Stop();
-
-   //////////////////////////////////////////////
-   /// 2. Solve pressure prediction step      ///
-   //////////////////////////////////////////////
-   /// DHG p_pred = D u_pred - fp
-
-   sw_pres_pred.Start(); 
-
-   // Assemble rhs            D u_pred - fp   = D u_pred + De u_pred
-   opD->Mult(*u_pred,*rhs_p1);
-   rhs_p1->Add(-1.0,*fp);
-
-   // Apply bcs
-   DHGc->EliminateRHS(*p_pred,*rhs_p1);
-
-   // Solve current iteration.
-   invDHG1->Mult(*rhs_p1,*p_pred);
-   iter_p1solve = invDHG1->GetNumIterations();
-   res_p1solve = invDHG1->GetFinalNorm();
-   MFEM_VERIFY(invDHG1->GetConverged(), "Pressure prediction step did not converge. Aborting!");
-
-   // Remove nullspace by removing mean of the pressure solution 
-   p_pred_gf->SetFromTrueDofs(*p_pred);  
-   if( (bcs->GetPresDbcs()).empty())
-   {
-      MeanZero(*p_pred_gf);
-      p_pred_gf->GetTrueDofs(*p_pred);
-   }
-
-   sw_pres_pred.Stop();
-
-   //////////////////////////////////////////////
-   /// 3. Solve pressure correction step      ///
-   //////////////////////////////////////////////
-   /// DHG p = D H A H G p_pred
-
-   sw_pres_corr.Start();
-   
-   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = kin_vis K + NL  for Yosida)     
-   opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
-   H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
-   opA->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
-   H1->Mult(*tmp1,*tmp2);             //   H A H G p_pred = tmp2
-   opD->Mult(*tmp2,*rhs_p2);          // D H A H G p_pred = tmp1
-
-   // Apply bcs
-   DHGc->EliminateRHS(*p,*rhs_p2);   
-
-   // Solve current iteration.
-   invDHG2->Mult(*rhs_p2,*p);
-   iter_p2solve = invDHG2->GetNumIterations();
-   res_p2solve = invDHG2->GetFinalNorm(); 
-   MFEM_VERIFY(invDHG2->GetConverged(), "Pressure correction step did not converge. Aborting!");
-
-   // Remove nullspace by removing mean of the pressure solution 
-   p_gf->SetFromTrueDofs(*p);  
-
-   sw_pres_corr.Stop();
-
-   //////////////////////////////////////////////
-   /// 4. Solve velocity correction step      ///
-   //////////////////////////////////////////////
-   /// u = u_pred - H2 G p    (G p_pred for Chorin Temam)
- 
-   sw_vel_corr.Start();
-          
-   H2->Mult(*Gp,*u);
-   u->Neg();
-   u->Add(1.0,*u_pred);
-   iter_v2solve = H2->GetNumIterations();
-   res_v2solve = H2->GetFinalNorm();
-   MFEM_VERIFY(H2->GetConverged(), "Velocity correction step did not converge. Aborting!");
-
-   sw_vel_corr.Stop();
-
-   //// 5. Relaxation (velocity)  u = gamma u + (1 - gamma) un
-   //add(gamma,*u,(1.0-gamma),*un,*u);
-   
-   u_gf->SetFromTrueDofs(*u);
-
-   // Print summary
-   if (verbose && pmesh->GetMyRank() == 0)
-   {
-      mfem::out << std::setw(13) << "Step" << std::setw(10) << "" << std::setw(3) << "It" << std::setw(8)
-                << "Resid" << std::setw(12) << "Reltol"
-                << "\n";
-      mfem::out << std::setw(10) << "Velocity Prediction " << std::setw(5) << std::fixed
-                   << iter_v1solve << "   " << std::setw(3)
-                   << std::setprecision(2) << std::scientific << res_v1solve
-                   << "   " << s1Params.rtol << "\n";
-      mfem::out << std::setw(10) << "Pressure Prediction " << std::setw(5) << std::fixed
-                   << iter_p1solve << "   " << std::setw(3)
-                   << std::setprecision(2) << std::scientific << res_p1solve
-                   << "   " << s2Params.rtol << "\n";
-      mfem::out << std::setw(10) << "Pressure Correction " << std::setw(5) << std::fixed
-                   << iter_p2solve << "   " << std::setw(3)
-                   << std::setprecision(2) << std::scientific << res_p2solve
-                   << "   " << s3Params.rtol << "\n";
-      mfem::out << std::setw(10) << "Velocity Correction " << std::setw(5) << std::fixed
-                   << iter_v2solve << "   " << std::setw(3)
-                   << std::setprecision(2) << std::scientific << res_v2solve
-                   << "   " << s4Params.rtol << "\n";
-      mfem::out << std::setprecision(8);
-      mfem::out << std::fixed;
-   }
-
-   // Update solution at previous timesteps and time
-   UpdateSolution(); 
-
-}
 
 } // namespace navier
 } // namespace mfem

@@ -27,11 +27,13 @@
 //
 // Sample run:
 // 1. Yosida algebraic splitting
-// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --yosida
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --splitting 1
 // 2. Chorin-Temam splitting
-// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --chorin-temam
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --splitting 0
 // 3. Different preconditioner (0-4, see details below)
-// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --yosida --preconditioner 3
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --splitting 1 --preconditioner 3
+// 4. High-Order Yosida splitting
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --splitting 2
 
 
 #include "lib/navier_solver.hpp"
@@ -63,7 +65,8 @@ struct s_NavierContext // Navier Stokes params
    int fun = 1;
    int bdf = 3;
    int bcs = 0; // 0 = FullyDirichlet, 1 = FullyNeumann, 2 = Mixed
-   bool yosida = false;
+   int splitting_type = 0;  // 0 = Chorin-Temam, 1 = Yosida, 2 = High-Order Yosida 
+   int correction_order = 1; // Correction order for High-Order Yosida
    int pc_type = 1;
 } NS_ctx;
 
@@ -250,22 +253,14 @@ int main(int argc, char *argv[])
                   "ODE solver: 0 - Fully dirichlet,\n\t"
                   "            1 - Fully Neumann,\n\t"
                   "            2 - Mixed (top/bottom Dirichlet, left/right Neumann)");
-      args.AddOption(&NS_ctx.yosida,
-                     "-y",
-                     "--yosida",
-                     "-ct",
-                     "--chorin-temam",
-                     "Use Yosida or Chorin-Temam splitting.");
     args.AddOption(&NS_ctx.bdf,
                    "-bdf",
                    "--bdf-order",
                    "Maximum bdf order (1<=bdf<=3)");
-    args.AddOption(&NS_ctx.yosida,
-                   "-y",
-                   "--yosida",
-                   "-ct",
-                   "--chorin-temam",
-                   "Use Yosida or Chorin-Temam splitting.");
+    args.AddOption(&NS_ctx.splitting_type,
+                   "-s",
+                   "--splitting",
+                   "Splitting type (0: Chorin-Temam, 1: Yosida, 2: High-Order Yosida)");
    args.AddOption(&NS_ctx.pc_type,
                    "-pc",
                    "--preconditioner",
@@ -362,10 +357,20 @@ int main(int argc, char *argv[])
    navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
    navier::NavierUnsteadySolver *naviersolver = nullptr;
    
-   if (NS_ctx.yosida)
-      naviersolver = new navier::YosidaSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
-   else
+   switch (NS_ctx.splitting_type)
+   {
+   case 0:
       naviersolver = new navier::ChorinTemamSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+      break;
+   case 1:
+      naviersolver = new navier::YosidaSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+      break;
+   case 2:
+      naviersolver = new navier::HighOrderYosidaSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose, NS_ctx.correction_order);
+      break;
+   default:
+      break;
+   }
 
    naviersolver->SetSolvers(sParams,sParams,sParams,sParams);
    naviersolver->SetMaxBDFOrder(NS_ctx.bdf);
