@@ -34,7 +34,7 @@
 // 2. Chorin-Temam splitting
 // mpirun -np 4 ./navier-flowaroundcyl -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -re 100 --gamma 1.0 --chorin-temam
 // 3. Different preconditioner (0-4, see details below)
-// mpirun -np 4 ./navier-flowaroundcyl -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -re 100 --gamma 1.0 --yosida --preconditioner 2
+// mpirun -np 4 ./navier-flowaroundcyl -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -re 100 --gamma 1.0 --yosida --preconditioner 3
 
    
 #include "lib/navier_solver.hpp"
@@ -223,11 +223,15 @@ int main(int argc, char *argv[])
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
    bool verbose = false;
    navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
-   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose, NS_ctx.yosida);
-
-   naviersolver.SetSolvers(sParams,sParams,sParams,sParams);
-   naviersolver.SetMaxBDFOrder(NS_ctx.bdf);
-   naviersolver.SetGamma(NS_ctx.gamma);
+   navier::NavierUnsteadySolver *naviersolver = nullptr;
+   
+   if (NS_ctx.yosida)
+      naviersolver = new navier::YosidaSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+   else
+      naviersolver = new navier::ChorinTemamSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+   naviersolver->SetSolvers(sParams,sParams,sParams,sParams);
+   naviersolver->SetMaxBDFOrder(NS_ctx.bdf);
+   naviersolver->SetGamma(NS_ctx.gamma);
 
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -265,11 +269,11 @@ int main(int argc, char *argv[])
 
 
    // initial condition
-   //naviersolver.SetInitialConditionVel( *u_in );
-   //naviersolver.SetInitialConditionPrevVel( *u_in );
+   //naviersolver->SetInitialConditionVel( *u_in );
+   //naviersolver->SetInitialConditionPrevVel( *u_in );
 
-   ParGridFunction *u_gf = naviersolver.GetVelocity();
-   ParGridFunction *p_gf = naviersolver.GetPressure();
+   ParGridFunction *u_gf = naviersolver->GetVelocity();
+   ParGridFunction *p_gf = naviersolver->GetPressure();
 
    // Creating output directory if not existent
    ParaViewDataCollection *paraview_dc = nullptr;
@@ -282,9 +286,9 @@ int main(int argc, char *argv[])
       paraview_dc->SetPrefixPath(NS_ctx.outfolder);
       paraview_dc->SetDataFormat(VTKFormat::BINARY);
       paraview_dc->SetCompressionLevel(9);
-      naviersolver.RegisterParaviewFields(*paraview_dc);
+      naviersolver->RegisterParaviewFields(*paraview_dc);
 
-      naviersolver.WriteFields(0, 0.0);
+      naviersolver->WriteFields(0, 0.0);
 
    }   
 
@@ -294,7 +298,7 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    navier::QuantitiesOfInterest qoi(pmesh.get());
-   naviersolver.Setup(NS_ctx.dt, NS_ctx.pc_type);
+   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem
@@ -315,12 +319,12 @@ int main(int argc, char *argv[])
          last_step = true;
       }
 
-      naviersolver.Step(t, dt, step);
+      naviersolver->Step(t, dt, step);
       CFL = qoi.ComputeCFL(*u_gf, dt);
 
       if( NS_ctx.paraview )
       {
-         naviersolver.WriteFields(step, t);
+         naviersolver->WriteFields(step, t);
       }
 
       if (Mpi::Root())
@@ -331,9 +335,10 @@ int main(int argc, char *argv[])
       }
    }
 
-   naviersolver.PrintTimingData();
+   naviersolver->PrintTimingData();
 
-   delete paraview_dc; 
+   delete paraview_dc;
+   delete naviersolver; 
 
    return 0;
 }

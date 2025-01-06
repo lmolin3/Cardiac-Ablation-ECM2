@@ -23,14 +23,15 @@ if (MFEM_USE_MPI)
     lib/navier_solver.cpp
     lib/navier_preconditioners.cpp
     bc/navier_bchandler.cpp
-    integrators/vectorconvection_bilinteg.cpp
+    integrators/custom_integrators.cpp
   )
 
   list(APPEND NAVIER_HDRS
     lib/navier_solver.hpp
     lib/navier_preconditioners.hpp
+    lib/navier_qoi.hpp
     bc/navier_bchandler.hpp
-    integrators/vectorconvection_bilinteg.hpp
+    integrators/custom_integrators.hpp
   )
 
   mfem_add_library(navier_ct_ecm2 ${NAVIER_SRCS} ${NAVIER_HDRS})
@@ -42,13 +43,13 @@ if (MFEM_USE_MPI)
     mfem-common-ecm2
     ${TPL_LIBRARIES})
 
-  add_mfem_miniapp(navier-mms
-    MAIN tests/navier_mms.cpp
+  add_mfem_miniapp(navier-poiseulle
+    MAIN tests/navier_poiseulle.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common navier_ct_ecm2)
 
-  add_mfem_miniapp(navier-poiseulle
-    MAIN tests/navier_poiseulle.cpp
+  add_mfem_miniapp(navier-mms
+    MAIN tests/navier_mms.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common navier_ct_ecm2)
 

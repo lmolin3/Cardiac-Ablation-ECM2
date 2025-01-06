@@ -31,7 +31,7 @@
 // 2. Chorin-Temam splitting
 // mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --chorin-temam
 // 3. Different preconditioner (0-4, see details below)
-// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --yosida --preconditioner 2
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --yosida --preconditioner 3
 
 
 #include "lib/navier_solver.hpp"
@@ -360,11 +360,16 @@ int main(int argc, char *argv[])
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
    bool verbose = false;
    navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
-   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose, NS_ctx.yosida);
+   navier::NavierUnsteadySolver *naviersolver = nullptr;
+   
+   if (NS_ctx.yosida)
+      naviersolver = new navier::YosidaSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+   else
+      naviersolver = new navier::ChorinTemamSolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
 
-   naviersolver.SetSolvers(sParams,sParams,sParams,sParams);
-   naviersolver.SetMaxBDFOrder(NS_ctx.bdf);
-   naviersolver.SetGamma(NS_ctx.gamma);
+   naviersolver->SetSolvers(sParams,sParams,sParams,sParams);
+   naviersolver->SetMaxBDFOrder(NS_ctx.bdf);
+   naviersolver->SetGamma(NS_ctx.gamma);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Set up boundary conditions
@@ -405,21 +410,21 @@ int main(int argc, char *argv[])
    u_excoeff->SetTime( 0.0 );
    p_excoeff->SetTime( 0.0 );
 
-   naviersolver.SetInitialConditionVel( *u_excoeff );
-   naviersolver.SetInitialConditionPrevVel( *u_excoeff );
-   naviersolver.SetInitialConditionPres( *p_excoeff );
+   naviersolver->SetInitialConditionVel( *u_excoeff );
+   naviersolver->SetInitialConditionPrevVel( *u_excoeff );
+   naviersolver->SetInitialConditionPres( *p_excoeff );
 
-   ParGridFunction* u_gf = naviersolver.GetVelocity();
-   ParGridFunction* p_gf = naviersolver.GetPressure();
-   ParGridFunction* u_pred_gf = naviersolver.GetPredictedVelocity();
-   ParGridFunction* p_pred_gf = naviersolver.GetPredictedPressure();
+   ParGridFunction* u_gf = naviersolver->GetVelocity();
+   ParGridFunction* p_gf = naviersolver->GetPressure();
+   ParGridFunction* u_pred_gf = naviersolver->GetPredictedVelocity();
+   ParGridFunction* p_pred_gf = naviersolver->GetPredictedPressure();
 
-   ParGridFunction u_ex_gf(naviersolver.GetFESpaceVelocity());
-   ParGridFunction p_ex_gf(naviersolver.GetFESpacePressure());
-   ParGridFunction rhs_gf(naviersolver.GetFESpaceVelocity());
+   ParGridFunction u_ex_gf(naviersolver->GetFESpaceVelocity());
+   ParGridFunction p_ex_gf(naviersolver->GetFESpacePressure());
+   ParGridFunction rhs_gf(naviersolver->GetFESpaceVelocity());
 
-   ParGridFunction err_u_gf(naviersolver.GetFESpaceVelocity());
-   ParGridFunction err_p_gf(naviersolver.GetFESpacePressure());
+   ParGridFunction err_u_gf(naviersolver->GetFESpaceVelocity());
+   ParGridFunction err_p_gf(naviersolver->GetFESpacePressure());
 
    // Add Dirichlet boundary conditions to velocity space restricted to
    // selected attributes on the mesh.
@@ -440,7 +445,7 @@ int main(int argc, char *argv[])
       Array<int> ess_attr(pmesh->bdr_attributes.Max());
       ess_attr = 1;
       bcs->AddVelDirichletBC(u_excoeff, ess_attr);
-      //naviersolver.AddPresDirichletBC(p_excoeff, ess_attr);
+      //naviersolver->AddPresDirichletBC(p_excoeff, ess_attr);
       break;
    }
    case 1: // Fully neumann 
@@ -480,7 +485,7 @@ int main(int argc, char *argv[])
 
    Array<int> domain_attr(pmesh->attributes.Max());
    domain_attr = 1;
-   naviersolver.AddAccelTerm(accel_excoeff, domain_attr);
+   naviersolver->AddAccelTerm(accel_excoeff, domain_attr);
 
 
    // Creating output directory if not existent
@@ -494,12 +499,12 @@ int main(int argc, char *argv[])
       paraview_dc->SetPrefixPath(NS_ctx.outfolder);
       paraview_dc->SetDataFormat(VTKFormat::BINARY);
       paraview_dc->SetCompressionLevel(9);
-      naviersolver.RegisterParaviewFields(*paraview_dc);
-      naviersolver.AddParaviewField("exact_pressure",&p_ex_gf);
-      naviersolver.AddParaviewField("error_pressure",&err_p_gf);
-      naviersolver.AddParaviewField("error_velocity",&err_u_gf);
-      naviersolver.AddParaviewField("exact_velocity",&u_ex_gf);
-      naviersolver.AddParaviewField("exact_rhs",&rhs_gf);
+      naviersolver->RegisterParaviewFields(*paraview_dc);
+      naviersolver->AddParaviewField("exact_pressure",&p_ex_gf);
+      naviersolver->AddParaviewField("error_pressure",&err_p_gf);
+      naviersolver->AddParaviewField("error_velocity",&err_u_gf);
+      naviersolver->AddParaviewField("exact_velocity",&u_ex_gf);
+      naviersolver->AddParaviewField("exact_rhs",&rhs_gf);
 
       u_excoeff->SetTime( 0.0 );
       p_excoeff->SetTime( 0.0 );
@@ -514,14 +519,14 @@ int main(int argc, char *argv[])
       err_p_gf = p_ex_gf;
       err_p_gf -= *p_gf;
 
-      naviersolver.WriteFields(0, 0.0);
+      naviersolver->WriteFields(0, 0.0);
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 7. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   naviersolver.Setup(NS_ctx.dt, NS_ctx.pc_type);
+   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem
@@ -547,7 +552,7 @@ int main(int argc, char *argv[])
       p_ex_gf.ProjectCoefficient(*p_excoeff);
 
       // solve current step
-      naviersolver.Step(t, dt, step);
+      naviersolver->Step(t, dt, step);
 
       // Compare against exact solution of velocity and pressure.
       err_u = u_gf->ComputeL2Error(*u_excoeff);
@@ -565,12 +570,12 @@ int main(int argc, char *argv[])
          accel_excoeff->SetTime(t);
          rhs_gf.ProjectCoefficient(*accel_excoeff);
 
-         naviersolver.WriteFields(step, t);
+         naviersolver->WriteFields(step, t);
       }
 
    }
 
-   naviersolver.PrintTimingData();
+   naviersolver->PrintTimingData();
 
    // Test if the result for the test run is as expected.
    if (NS_ctx.checkres)
@@ -587,7 +592,8 @@ int main(int argc, char *argv[])
       }
    }
 
-   delete paraview_dc; 
+   delete paraview_dc;
+   delete naviersolver; 
    delete u_excoeff;
    delete p_excoeff;
 
