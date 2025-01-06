@@ -15,6 +15,7 @@
 #define MFEM_NAVIER_UNSTEADY_VERSION 0.1
 
 #include "mfem.hpp"
+#include "navier_preconditioners.hpp"
 #include "integrators/vectorconvection_bilinteg.hpp"
 #include "bc/navier_bchandler.hpp"
 #include "utils.hpp"
@@ -170,7 +171,7 @@ public:
     * - Setting the Linear solvers.
     * - Setting PA
     */
-    void Setup( real_t dt);
+    void Setup( real_t dt, int pc_type_ = 0);
 
 
     /// Initial condition for velocity
@@ -387,8 +388,11 @@ public:
    IterativeSolver *H2 = nullptr;         // solver for approximated momentum matrix in U-step
 
    Solver *invC_pc = nullptr;           // preconditioner for velocity block
-   HypreBoomerAMG *invDHG_pc = nullptr; // preconditioner for pressure schur complement
    HypreBoomerAMG *H1_pc = nullptr;     // preconditioner for velocity mass matrix
+
+   int pc_type = 0;                 // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
+   PCBuilder *pc_builder = nullptr; // Preconditioner builder for Schur complement
+   Solver *invDHG_pc;               // Preconditioner for Schur complement
 
    /// Variables for iterations/norm solvers
    int iter_v1solve = 0;

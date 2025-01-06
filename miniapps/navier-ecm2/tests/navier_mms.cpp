@@ -25,9 +25,13 @@
 // Boundary markers for the square mesh are:
 // Bottom=1, Right=2, Top=3, Left=4
 //
-// Run with:
-// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --verbose --no-paraview
-//
+// Sample run:
+// 1. Yosida algebraic splitting
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --yosida
+// 2. Chorin-Temam splitting
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --chorin-temam
+// 3. Different preconditioner (0-4, see details below)
+// mpirun -np 4 ./navier-mms -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --yosida --preconditioner 2
 
 
 #include "lib/navier_solver.hpp"
@@ -60,6 +64,7 @@ struct s_NavierContext // Navier Stokes params
    int bdf = 3;
    int bcs = 0; // 0 = FullyDirichlet, 1 = FullyNeumann, 2 = Mixed
    bool yosida = false;
+   int pc_type = 1;
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -255,7 +260,16 @@ int main(int argc, char *argv[])
                    "-bdf",
                    "--bdf-order",
                    "Maximum bdf order (1<=bdf<=3)");
-   
+    args.AddOption(&NS_ctx.yosida,
+                   "-y",
+                   "--yosida",
+                   "-ct",
+                   "--chorin-temam",
+                   "Use Yosida or Chorin-Temam splitting.");
+   args.AddOption(&NS_ctx.pc_type,
+                   "-pc",
+                   "--preconditioner",
+                   "Preconditioner type (0: Pressure Mass, 1: Scaled Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: Approximate Inverse)");
     args.AddOption(&Mesh_ctx.dim,
                    "-d",
                    "--dimension",
@@ -507,7 +521,7 @@ int main(int argc, char *argv[])
    /// 7. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   naviersolver.Setup(NS_ctx.dt);
+   naviersolver.Setup(NS_ctx.dt, NS_ctx.pc_type);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem

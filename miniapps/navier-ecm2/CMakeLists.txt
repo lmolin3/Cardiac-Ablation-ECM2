@@ -11,7 +11,7 @@
 
 if (MFEM_USE_MPI)
 
-  set(NAVIER_DIR ${CMAKE_SOURCE_DIR}/miniapps/navier-ecm2-chorintemam)
+  set(NAVIER_DIR ${CMAKE_SOURCE_DIR}/miniapps/navier-ecm2)
 
   include_directories(
     ${CMAKE_SOURCE_DIR}/miniapps/common
@@ -21,12 +21,14 @@ if (MFEM_USE_MPI)
 
     list(APPEND NAVIER_SRCS
     lib/navier_solver.cpp
+    lib/navier_preconditioners.cpp
     bc/navier_bchandler.cpp
     integrators/vectorconvection_bilinteg.cpp
   )
 
   list(APPEND NAVIER_HDRS
     lib/navier_solver.hpp
+    lib/navier_preconditioners.hpp
     bc/navier_bchandler.hpp
     integrators/vectorconvection_bilinteg.hpp
   )

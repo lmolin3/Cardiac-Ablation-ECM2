@@ -130,9 +130,9 @@ void NavierUnsteadySolver::SetInitialConditionPres(Coefficient &p_in)
    p_pred_gf->SetFromTrueDofs(*p_pred);
 }
 
-void NavierUnsteadySolver::Setup(real_t dt)
+void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
 {
-
+   pc_type = pc_type_; // preconditioner type
 
    if (verbose && pmesh->GetMyRank() == 0)
    {
@@ -253,17 +253,34 @@ void NavierUnsteadySolver::Setup(real_t dt)
    //     * pressure laplacian (for schur complement) 
    //
 
-   // Pressure Schur Complement ( BoomerAMG with pressure laplacian matrix S)
-   S_form = new ParBilinearForm(pfes);
-   S_visccoeff.constant = 1.0 / kin_vis->constant;
-   S_bdfcoeff.constant = dt ;
-   S_form->AddDomainIntegrator(new DiffusionIntegrator());
-   S_form->Assemble(); 
-   S_form->FormSystemMatrix(pres_ess_tdof, opS); 
-   invDHG_pc = new HypreBoomerAMG( *(opS.As<HypreParMatrix>()) );
-   invDHG_pc->SetPrintLevel(0);
-   invDHG_pc->SetSystemsOptions(sdim);
-   invDHG_pc->iterative_mode = false;
+   // Preconditioner for discrete pressure laplacian
+   ConstantCoefficient mass_coeff(1/dt);
+   ConstantCoefficient visc_coeff(1.0);
+
+   switch (pc_type)
+   {
+   case 0: // Pressure Mass
+      pc_builder = new PMassBuilder(*pfes, pres_ess_tdof, dt);
+      break;
+   case 1: // Pressure Laplacian
+      pc_builder = new PLapBuilder(*pfes, pres_ess_tdof);
+      break;
+   case 2: // PCD
+      pc_builder = new PCDBuilder(*pfes, pres_ess_tdof, &mass_coeff, &visc_coeff);
+      break;
+   case 3: // Cahouet-Chabard
+      pc_builder = new CahouetChabardBuilder(*pfes, pres_ess_tdof, dt);
+      break;
+   case 4: // Approximate inverse
+      pc_builder = new SchurApproxInvBuilder(*pfes, pres_ess_tdof, dt);
+      break;
+   default:
+      MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
+      break;
+   }
+
+   // Get the preconditioner for Schur Complement
+   invDHG_pc = &pc_builder->GetSolver();
 
    // Velocity Correction ( BoomerAMG )
    H1_pc = new HypreBoomerAMG();        
@@ -411,6 +428,27 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
    else   
       H2->SetOperator(*sigmaM); 
 
+   // Update timestep for discrete pressure laplacian preconditioner
+   switch (pc_type)
+   {
+   case 0:
+      static_cast<PMassPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 1: // Pressure Laplacian
+      break;
+   case 2: // PCD
+      break;
+   case 3: // Cahouet-Chabard
+      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 4: // Approximate inverse
+      static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   default:
+      MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
+      break;
+   }
+
    sw_conv_assembly.Stop();
 
    //////////////////////////////////////////////
@@ -520,8 +558,9 @@ void NavierUnsteadySolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_vel_corr.Stop();
 
-   // 5. Relaxation (velocity)  u = gamma u + (1 - gamma) un
-   add(gamma,*u,(1.0-gamma),*un,*u);
+   //// 5. Relaxation (velocity)  u = gamma u + (1 - gamma) un
+   //add(gamma,*u,(1.0-gamma),*un,*u);
+   
    u_gf->SetFromTrueDofs(*u);
 
    // Print summary
@@ -922,8 +961,9 @@ NavierUnsteadySolver::~NavierUnsteadySolver()
    delete invDHG1;        invDHG1 = nullptr;
    delete invDHG2;        invDHG2 = nullptr;
    delete invC_pc;        invC_pc = nullptr;
-   delete invDHG_pc;  invDHG_pc = nullptr;
    delete H1_pc;        H1_pc = nullptr;
+
+   delete pc_builder; pc_builder = nullptr; // Do not delete invDHG_pc, it is owned by pc_builder
 
 }
 

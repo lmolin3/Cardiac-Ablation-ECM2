@@ -28,13 +28,16 @@
 // boundary.
 //
 //
-// Run with:
-// mpirun -np 4 ./navier_ecm2_liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --verbose --paraview --output-folder ./Output/LidDriven/Test/
-//
+// Sample run:
+// 1. Yosida algebraic splitting
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --yosida
+// 2. Chorin-Temam splitting
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --chorin-temam
+// 3. Different preconditioner (0-4, see details below)
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --yosida --preconditioner 2
 
    
-#include "navier_unsteady_solver.hpp"
-//#include "utils.hpp"
+#include "lib/navier_solver.hpp"
 #include <fstream>
 #include <sys/stat.h>  // Include for mkdir
 
@@ -62,6 +65,8 @@ struct s_NavierContext // Navier Stokes params
    const char *outfolder = "./Output/Poiseulle/Test/";
    bool ExportData = false;
    int bdf = 3;
+   bool yosida = false;
+   int pc_type = 1; // 0: Pressure Mass, 1: Scaled Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: Approximate Inverse
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -82,17 +87,17 @@ double pZero(const Vector &x, double t);
 int main(int argc, char *argv[])
 {
 
-   //
-   /// 1. Initialize MPI and Hypre.
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 1. Initialize MPI and Hypre
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
    Mpi::Init(argc, argv);
-   int num_procs = Mpi::WorldSize();
-   int myid = Mpi::WorldRank();
    Hypre::Init();
 
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 2. Parse command-line options.
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
    SolverParams sParams(1e-6, 1e-8, 1000, 0); // rtol, atol, maxiter, print-level
 
 
@@ -125,12 +130,6 @@ int main(int argc, char *argv[])
                   "-o",
                   "--output-folder",
                   "Output folder.");
-   args.AddOption(&NS_ctx.ExportData,
-                  "-ed",
-                  "--export-data",
-                  "-no-ed",
-                  "--no-export-data",
-                  "Enable or disable output of matrices/vectors (debug only, false by default).");
    args.AddOption(&NS_ctx.gamma,
                   "-g",
                   "--gamma",
@@ -139,6 +138,16 @@ int main(int argc, char *argv[])
                   "-bdf",
                   "--bdf-order",
                   "Maximum bdf order (1<=bdf<=3)");
+    args.AddOption(&NS_ctx.yosida,
+                   "-y",
+                   "--yosida",
+                   "-ct",
+                   "--chorin-temam",
+                   "Use Yosida or Chorin-Temam splitting.");
+   args.AddOption(&NS_ctx.pc_type,
+                   "-pc",
+                   "--preconditioner",
+                   "Preconditioner type (0: Pressure Mass, 1: Scaled Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: Approximate Inverse)");
 
    args.AddOption(&Mesh_ctx.dim,
                   "-d",
@@ -175,9 +184,10 @@ int main(int argc, char *argv[])
    }
 
 
-   //
-   /// 3. Read the (serial) mesh from the given mesh file on all processors.
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 3. Read Mesh and create parallel
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
    Element::Type type;
    switch (Mesh_ctx.elem)
    {
@@ -208,12 +218,7 @@ int main(int argc, char *argv[])
    }
 
 
-   //
-   /// 4. Define a parallel mesh by a partitioning of the serial mesh.
-   // Refine this mesh further in parallel to increase the resolution. Once the
-   // parallel mesh is defined, the serial mesh can be deleted.
-   //
-   ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, mesh);
+   auto pmesh = std::make_shared<ParMesh>(MPI_COMM_WORLD, mesh);
    mesh.Clear();
    {
       for (int l = 0; l < Mesh_ctx.par_ref_levels; l++)
@@ -222,30 +227,24 @@ int main(int argc, char *argv[])
       }
    }
 
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 5. Create the NS Solver and BCHandler
+   ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   //
-   /// 5. Create the flow solver.
-   //
-   NS_ctx.kinvis = 1.0/NS_ctx.re;
+   // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
+   bool verbose = false;
+   navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
+   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose, NS_ctx.yosida);
 
-   if (NS_ctx.verbose && pmesh->GetMyRank() == 0)
-   {
-      mfem::out << "Reynolds: " << NS_ctx.re << std::endl;
-      mfem::out << "Kinematic viscosity: " << NS_ctx.kinvis << std::endl;
-   }
-
-   NavierUnsteadySolver naviersolver(pmesh, NS_ctx.uorder, NS_ctx.porder, NS_ctx.kinvis, NS_ctx.verbose);
-
-   naviersolver.SetSolver(sParams);
+   naviersolver.SetSolvers(sParams,sParams,sParams,sParams);
    naviersolver.SetMaxBDFOrder(NS_ctx.bdf);
+   naviersolver.SetGamma(NS_ctx.gamma);
 
-#ifdef MFEM_DEBUG
-   naviersolver.SetExportData( NS_ctx.ExportData ); // Export matrices/vectors 
-#endif
 
-   //
-   /// 6. Set initial condition and boundary conditions
-   //
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 6. Set up boundary conditions
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
 
    // Add Dirichlet boundary conditions to velocity space restricted to
    // selected attributes on the mesh.
@@ -255,53 +254,48 @@ int main(int argc, char *argv[])
     ess_attr[inflow_attr - 1] = 0;
 
     // Inflow
-    naviersolver.AddVelDirichletBC(inflow,inflow_attr);
+    bcs->AddVelDirichletBC(inflow,inflow_attr);
 
     // No Slip
-    naviersolver.AddVelDirichletBC(noSlip,ess_attr);
+    bcs->AddVelDirichletBC(noSlip,ess_attr);
 
 
-   //
-   /// 7. Setup
-   //
-
-   double t = 0.0;
-   double dt = NS_ctx.dt;
-   bool last_step = false;
-
-   naviersolver.SetOutputFolder(NS_ctx.outfolder);
-   naviersolver.Setup(dt);
-   naviersolver.SetGamma(NS_ctx.gamma);
-   ParGridFunction u_gf(naviersolver.GetUFes());
-   ParGridFunction p_gf(naviersolver.GetPFes());
+   ParGridFunction *u_gf = naviersolver.GetVelocity();
+   ParGridFunction *p_gf = naviersolver.GetPressure();
 
    // Creating output directory if not existent
    ParaViewDataCollection *paraview_dc = nullptr;
-
    
    if( NS_ctx.paraview )
    {
       if ( (mkdir(NS_ctx.outfolder, 0777) == -1) && (pmesh->GetMyRank() == 0) ) {mfem::err << "Error :  " << strerror(errno) << std::endl;}
 
-      paraview_dc = new ParaViewDataCollection("Results-Paraview", pmesh);
+      paraview_dc = new ParaViewDataCollection("Results-Paraview", pmesh.get());
       paraview_dc->SetPrefixPath(NS_ctx.outfolder);
       paraview_dc->SetDataFormat(VTKFormat::BINARY);
-      paraview_dc->SetHighOrderOutput(true);
-      paraview_dc->RegisterField("pressure",&p_gf);
-      paraview_dc->RegisterField("velocity",&u_gf);
-      u_gf = naviersolver.GetVelocity();
-      p_gf = naviersolver.GetPressure();
+      paraview_dc->SetCompressionLevel(9);
+      naviersolver.RegisterParaviewFields(*paraview_dc);
 
-      paraview_dc->SetCycle(0);
-      paraview_dc->SetTime(t);
-      paraview_dc->Save();
+      naviersolver.WriteFields(0, 0.0);
+
    }   
 
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+   /// 7. Setup solver and Assemble forms
+   ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   //
+   naviersolver.Setup(NS_ctx.dt, NS_ctx.pc_type);
+
+   ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem
-   //
-   for (int step = 0; !last_step; ++step)
+   ///////////////////////////////////////////////////////////////////////////////////////////////
+
+
+   double t = 0.0;
+   double dt = NS_ctx.dt;
+   bool last_step = false;
+
+   for (int step = 1; !last_step; ++step)
    {
       if (t + dt >= NS_ctx.t_final - dt / 2)
       {
@@ -310,22 +304,21 @@ int main(int argc, char *argv[])
 
       naviersolver.Step(t, dt, step);
 
-      // Compare against exact solution of velocity and pressure.
-      u_gf = naviersolver.GetVelocity();
-      p_gf = naviersolver.GetPressure();
-
       if( NS_ctx.paraview )
       {
-         paraview_dc->SetCycle(step+1);
-         paraview_dc->SetTime(t);
-         paraview_dc->Save();
+         naviersolver.WriteFields(step, t);
       }
 
+      if (Mpi::Root())
+      {
+         printf("\n%11s %11s\n", "Time", "dt");
+         printf("%.5E %.5E\n", t, dt);
+         fflush(stdout);
+      }
    }
 
    naviersolver.PrintTimingData();
 
-   delete pmesh;
    delete paraview_dc; 
 
    return 0;

@@ -28,9 +28,13 @@
 // Mesh attributes for 3D are:
 // inflow = 1, outflow = 2, sphere = 3, wall = 4
 //
-// Run with:
-// mpirun -np 4 ./navier-flowaroundcyl -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -re 100 --gamma 1.0 --paraview -of ./Output/FlowAroundCyl/
-//
+// Sample run:
+// 1. Yosida algebraic splitting
+// mpirun -np 4 ./navier-flowaroundcyl -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -re 100 --gamma 1.0 --yosida
+// 2. Chorin-Temam splitting
+// mpirun -np 4 ./navier-flowaroundcyl -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -re 100 --gamma 1.0 --chorin-temam
+// 3. Different preconditioner (0-4, see details below)
+// mpirun -np 4 ./navier-flowaroundcyl -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -re 100 --gamma 1.0 --yosida --preconditioner 2
 
    
 #include "lib/navier_solver.hpp"
@@ -69,6 +73,8 @@ struct s_NavierContext // Navier Stokes params
    bool paraview = false;
    const char *outfolder = "./Output/FlowAroundCyl/2D/Test/";
    int bdf = 3;
+   bool yosida = false;
+   int pc_type = 1; // 0: Pressure Mass, 1: Scaled Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: Approximate Inverse
 } NS_ctx;
 
 
@@ -134,6 +140,17 @@ int main(int argc, char *argv[])
                    "-bdf",
                    "--bdf-order",
                    "Maximum bdf order (1<=bdf<=3)");
+    args.AddOption(&NS_ctx.yosida,
+                   "-y",
+                   "--yosida",
+                   "-ct",
+                   "--chorin-temam",
+                   "Use Yosida or Chorin-Temam splitting.");
+   args.AddOption(&NS_ctx.pc_type,
+                   "-pc",
+                   "--preconditioner",
+                   "Preconditioner type (0: Pressure Mass, 1: Scaled Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: Approximate Inverse)");
+
     args.AddOption(&Mesh_ctx.dim,
                    "-d",
                    "--dimension",
@@ -206,7 +223,7 @@ int main(int argc, char *argv[])
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
    bool verbose = false;
    navier::BCHandler *bcs = new navier::BCHandler(pmesh, verbose); // Boundary conditions handler
-   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose);
+   navier::NavierUnsteadySolver naviersolver(pmesh, bcs, NS_ctx.kinvis, NS_ctx.uorder, NS_ctx.porder, NS_ctx.verbose, NS_ctx.yosida);
 
    naviersolver.SetSolvers(sParams,sParams,sParams,sParams);
    naviersolver.SetMaxBDFOrder(NS_ctx.bdf);
@@ -277,7 +294,7 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    navier::QuantitiesOfInterest qoi(pmesh.get());
-   naviersolver.Setup(NS_ctx.dt);
+   naviersolver.Setup(NS_ctx.dt, NS_ctx.pc_type);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem
