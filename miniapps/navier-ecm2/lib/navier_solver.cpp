@@ -253,25 +253,26 @@ void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
    //
 
    // Preconditioner for discrete pressure laplacian
+
+   // This is just placeholder to make PCD work
    ConstantCoefficient mass_coeff(1/dt);
-   ConstantCoefficient visc_coeff(1.0);
 
    switch (pc_type)
    {
    case 0: // Pressure Mass
-      pc_builder = new PMassBuilder(*pfes, pres_ess_tdof, dt);
+      pc_builder = new PMassBuilder(pfes, pres_ess_tdof, dt);
       break;
    case 1: // Pressure Laplacian
-      pc_builder = new PLapBuilder(*pfes, pres_ess_tdof);
+      pc_builder = new PLapBuilder(pfes, pres_ess_tdof);
       break;
    case 2: // PCD
-      pc_builder = new PCDBuilder(*pfes, pres_ess_tdof, &mass_coeff, &visc_coeff);
+      pc_builder = new PCDBuilder(pfes, pres_ess_tdof, &mass_coeff, &C_visccoeff); // pc_builder = new PCDBuilder(pfes, pres_ess_tdof, &C_bdfcoeff, &C_visccoeff, u_ext_vc);
       break;
    case 3: // Cahouet-Chabard
-      pc_builder = new CahouetChabardBuilder(*pfes, pres_ess_tdof, dt);
+      pc_builder = new CahouetChabardBuilder(pfes, pres_ess_tdof, dt, C_visccoeff.constant);
       break;
    case 4: // Approximate inverse
-      pc_builder = new SchurApproxInvBuilder(*pfes, pres_ess_tdof, dt);
+      pc_builder = new SchurApproxInvBuilder(pfes, pres_ess_tdof, dt);
       break;
    default:
       MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
@@ -279,7 +280,7 @@ void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
    }
 
    // Get the preconditioner for Schur Complement
-   invDHG_pc = &pc_builder->GetSolver();
+   invDHG_pc = pc_builder->GetSolver();
 
    // Preconditioners for H1 and H2
    H1_pc = new HypreBoomerAMG();        
@@ -726,6 +727,13 @@ NavierUnsteadySolver::~NavierUnsteadySolver()
 
    delete pc_builder; pc_builder = nullptr; // Do not delete invDHG_pc, it is owned by pc_builder
 
+   opK.Clear();
+   opM.Clear();
+   opD.Clear();
+   opG.Clear();
+   opDe.Clear();
+   opNL.Clear();
+   opC.Clear();
 }
 
 
@@ -776,6 +784,7 @@ void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
    delete NL_form; NL_form = nullptr;
    opNL.Clear();
    opC.Clear();
+   opA.Clear();
    delete Ce; Ce = nullptr;
    NL_form = new ParBilinearForm(ufes);
    NL_form->AddDomainIntegrator(new VectorConvectionIntegrator(*u_ext_vc, 1.0));  // += C 
@@ -784,8 +793,9 @@ void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
    
    C_visccoeff.constant = kin_vis->constant;
    C_bdfcoeff.constant = alpha / dt;
-   opA.Reset( Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>())), false );   // A = kin_vis K + NL 
-   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
+   auto Cmat = Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), C_visccoeff.constant, *(opK.As<HypreParMatrix>()));
+   Cmat->Add(1.0, *(opNL.As<HypreParMatrix>()));
+   opC.Reset( Cmat, true );     // C = alpha/dt M + K + NL
    Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
    invC->SetOperator(*opC);
 
@@ -807,9 +817,11 @@ void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
    case 1: // Pressure Laplacian
       break;
    case 2: // PCD
+      pc_builder->RebuildPreconditioner();
+      invDHG_pc = pc_builder->GetSolver();
       break;
    case 3: // Cahouet-Chabard
-      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt);
+      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt, C_visccoeff.constant);
       break;
    case 4: // Approximate inverse
       static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
@@ -1015,12 +1027,13 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
    NL_form->FormSystemMatrix(empty, opNL);
    
    C_visccoeff.constant = kin_vis->constant;
-   C_bdfcoeff.constant = alpha / dt;
-   opA.Reset( Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>())), false );   // A = kin_vis K + NL 
-   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
+   C_bdfcoeff.constant = alpha / dt; 
+   auto Cmat = Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), C_visccoeff.constant, *(opK.As<HypreParMatrix>()));
+   Cmat->Add(1.0, *(opNL.As<HypreParMatrix>()));
+   opC.Reset( Cmat, true );     // C = alpha/dt M + A
    Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
    invC->SetOperator(*opC);
-   
+
    // Assemble solver for H = inv( alpha/dt M )
    delete sigmaM; 
    sigmaM = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
@@ -1039,9 +1052,11 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
    case 1: // Pressure Laplacian
       break;
    case 2: // PCD
+      pc_builder->RebuildPreconditioner();
+      invDHG_pc = pc_builder->GetSolver();
       break;
    case 3: // Cahouet-Chabard
-      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt);
+      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt, C_visccoeff.constant);
       break;
    case 4: // Approximate inverse
       static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
@@ -1119,7 +1134,7 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_pres_corr.Start();
    
-   // Assemble rhs            D H A H G p_pred  A = C
+   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = kin_vis K + NL  for Yosida)     
    opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
    H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
    opC->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
@@ -1147,6 +1162,7 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
  
    sw_vel_corr.Start();
           
+   //opG->Mult(*p,*Gp);            //         G p  and not G p_pred    TODO: Check why this causes error
    H2->Mult(*Gp,*u);
    u->Neg();
    u->Add(1.0,*u_pred);
@@ -1193,6 +1209,46 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+HighOrderYosidaSolver::HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_, int uorder_, int porder_, bool verbose_)
+    : NavierUnsteadySolver(pmesh_, bcs, kin_vis_, uorder_, porder_, verbose_)
+{
+   // Set correction order
+   correction_order = 1;
+
+   // Initialize z for storing the intermediate solutions 
+   z1 = new Vector(pdim); *z1 = 0.0;
+}
+
+HighOrderYosidaSolver::HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_, int uorder_, int porder_, bool verbose_, int correction_order_)
+    : NavierUnsteadySolver(pmesh_, bcs, kin_vis_, uorder_, porder_, verbose_)
+{
+   // Set correction order
+   correction_order = correction_order_;
+
+   // Initialize z for storing the intermediate solutions 
+   z1 = new Vector(pdim); *z1 = 0.0;
+
+   if (correction_order > 1)
+   {
+      z2 = new Vector(pdim); *z2 = 0.0;
+   }
+   
+}
+
+void HighOrderYosidaSolver::UpdateTimeBCS(real_t time)
+{
+   // Update boundary conditions
+   NavierUnsteadySolver::UpdateTimeBCS(time);
+
+   // Modify intermediate solutions
+   z1->SetSubVector(pres_ess_tdof, 0.0);
+
+   if (correction_order > 1)
+   {
+      z2->SetSubVector(pres_ess_tdof, 0.0);
+   }
+}
 
 
 void HighOrderYosidaSolver::Setup(real_t dt, int prec_type_)
@@ -1247,8 +1303,10 @@ void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
    
    C_visccoeff.constant = kin_vis->constant;
    C_bdfcoeff.constant = alpha / dt;
-   opA.Reset( Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>())), false );   // A = kin_vis K + NL 
-   opC.Reset( Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *(opA.As<HypreParMatrix>())), false );     // C = alpha/dt M + A
+   auto Amat = Add(C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>()));
+   auto Cmat = Add(C_bdfcoeff.constant, *(opM.As<HypreParMatrix>()), 1.0, *Amat);
+   opA.Reset( Amat, true );   // A = kin_vis K + NL 
+   opC.Reset( Cmat, true );     // C = alpha/dt M + A
    Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
    invC->SetOperator(*opC);
 
@@ -1273,9 +1331,11 @@ void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
    case 1: // Pressure Laplacian
       break;
    case 2: // PCD
+      pc_builder->RebuildPreconditioner();
+      invDHG_pc = pc_builder->GetSolver();
       break;
    case 3: // Cahouet-Chabard
-      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt);
+      static_cast<CahouetChabardPC *>(invDHG_pc)->SetCoefficients(dt, C_visccoeff.constant);
       break;
    case 4: // Approximate inverse
       static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
@@ -1353,24 +1413,67 @@ void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_pres_corr.Start();
    
+   /// First pressure correction
    // Assemble rhs            D H A H G p_pred  A = C
-   opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
+   opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   
    H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
    opA->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
    H1->Mult(*tmp1,*tmp2);             //   H A H G p_pred = tmp2
    opD->Mult(*tmp2,*rhs_p2);          // D H A H G p_pred = tmp1
 
    // Apply bcs
-   DHGc->EliminateRHS(*p,*rhs_p2);   
+   DHGc->EliminateRHS(*z1,*rhs_p2);   
 
    // Solve current iteration.
-   invDHG2->Mult(*rhs_p2,*p);
+   invDHG2->Mult(*rhs_p2,*z1);
    iter_p2solve = invDHG2->GetNumIterations();
    res_p2solve = invDHG2->GetFinalNorm(); 
-   MFEM_VERIFY(invDHG2->GetConverged(), "Pressure correction step did not converge. Aborting!");
+   MFEM_VERIFY(invDHG2->GetConverged(), "First Pressure correction step did not converge. Aborting!");
+
+
+   /// Second pressure correction
+   if (correction_order > 1)
+   {
+      // Assemble rhs            D2 p_pred + D1 z1,  with D2 = -D (-H A)^2 H G, D1 = D H A H G
+      // D1 z1
+      opG->Mult(*z1,*Gp);            //         G z1 = Gp
+      H1->Mult(*Gp,*tmp2);           //       H G z1 = tmp2
+      opA->Mult(*tmp2,*tmp1);        //     A H G z1 = tmp1
+      H1->Mult(*tmp1,*tmp2);         //   H A H G z1 = tmp2
+      opD->Mult(*tmp2,*rhs_p2);      // D H A H G z1 = tmp1
+
+      // D2 p_pred = D2 = -D (-H A)^2 H G p_pred
+      opG->Mult(*p_pred,*Gp);            //             G p_pred = Gp
+      H1->Mult(*Gp,*tmp2);               //           H G p_pred = tmp2
+      opA->Mult(*tmp2,*tmp1);            //         A H G p_pred = tmp1
+      H1->Mult(*tmp1,*tmp2);             //       H A H G p_pred = tmp2
+      opA->Mult(*tmp2,*tmp1);            //     A H A H G p_pred = tmp1
+      H1->Mult(*tmp1,*tmp2);             //   H A H A H G p_pred = tmp2
+      opD->Mult(*tmp2,*tmp1);            //  D H A H A H G p_pred = tmp1
+
+      // D2 p_pred + D1 z1
+      rhs_p2->Add(-1.0,*tmp1);           //  D1 z1 -D H A H A H G p_pred
+
+      // Apply bcs
+      DHGc->EliminateRHS(*z2,*rhs_p2);
+
+      // Solve current iteration.
+      invDHG2->Mult(*rhs_p2,*z2);
+      iter_p2solve = invDHG2->GetNumIterations();
+      res_p2solve = invDHG2->GetFinalNorm();
+      MFEM_VERIFY(invDHG2->GetConverged(), "Second Pressure correction step did not converge. Aborting!");
+
+   }
 
    // Remove nullspace by removing mean of the pressure solution 
-   p->Add(1.0,*p_pred);  // p = p + p_pred
+   *p = *p_pred;
+   p->Add(1.0,*z1);  // p = p_pred + z1
+
+   if (correction_order > 1)
+   {
+      p->Add(1.0,*z2);  // p = p_pred + z1 + z2
+   }
+
    p_gf->SetFromTrueDofs(*p);  
 
    sw_pres_corr.Stop();
@@ -1382,7 +1485,7 @@ void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
  
    sw_vel_corr.Start();
           
-   opG->Mult(*p,*Gp);
+   // opG->Mult(*p,*Gp);  TODO: Check why this causes error
    H2->Mult(*Gp,*u);
    u->Neg();
    u->Add(1.0,*u_pred);
@@ -1428,6 +1531,15 @@ void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
 
 }
 
+
+HighOrderYosidaSolver::~HighOrderYosidaSolver()
+{
+   delete z1;
+   if (correction_order > 1)
+   {
+      delete z2;
+   }
+}
 
 } // namespace navier
 } // namespace mfem

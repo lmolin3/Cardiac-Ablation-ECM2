@@ -43,12 +43,22 @@ namespace mfem
        * @brief Get the solver built by the builder.
        * @return The built solver.
        */
-      virtual NavierStokesPC &GetSolver() = 0;
+      virtual NavierStokesPC *GetSolver() = 0;
+
+      /**
+       * @brief Recreate the preconditioner and return it.
+       * 
+       * @return The rebuilt solver.
+       */
+      virtual NavierStokesPC *RebuildPreconditioner() = 0;
    };
-   
+
    /**
     * @class PCD
-    * @brief PCD Preconditioner: P^{-1} = Mp^{-1} Fp Lp^{-1} with Fp = a Mp + b Lp
+    * @brief PCD Preconditioner: P^{-1} = Mp^{-1} Fp Lp^{-1} with Fp = sigma Mp + kin_vis Lp + Np
+    * 
+    * See:
+    *  Bootland, Niall, et al. "Preconditioners for Two-Phase Incompressible Navier-Stokes Flow." SIAM Journal on Scientific Computing 41.4 (2019): B843-B869.
     */
    class PCD : public NavierStokesPC
    {
@@ -60,10 +70,12 @@ namespace mfem
 
       void SetCoefficients() override {};
 
+      void SetFp(OperatorHandle &Fp_) { Fp = Fp_; }
+
    private:
       Solver &Mp_inv;
       Solver &Lp_inv;
-      OperatorHandle Fp;
+      OperatorHandle &Fp;
       mutable Vector z, w;
    };
 
@@ -74,52 +86,71 @@ namespace mfem
    class PCDBuilder : public PCBuilder
    {
    public:
-      PCDBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs,
-                 Coefficient *mass_coeff, Coefficient *diff_coeff);
+      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs_,
+                 Coefficient *mass_coeff, Coefficient *diff_coeff, VectorCoefficient *conv_coeff = nullptr);
 
-      PCDBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs);
+      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs);
 
       ~PCDBuilder();
 
-      NavierStokesPC &GetSolver();
+      NavierStokesPC *GetSolver();
+
+      NavierStokesPC *RebuildPreconditioner() override;
 
    private:
+
+      ParFiniteElementSpace *pres_fes;   // Don't own fes and coeffs
+
+      Coefficient *mass_coeff = nullptr; 
+      Coefficient *diff_coeff = nullptr;
+      VectorCoefficient *conv_coeff = nullptr;
+
       ParBilinearForm mp_form;
       OperatorHandle Mp;
 
       ParBilinearForm lp_form;
       OperatorHandle Lp;
 
-      ParBilinearForm fp_form;
+      ParBilinearForm *fp_form = nullptr;
+      
       OperatorHandle Fp;
 
       Solver *Lp_inv;
       Solver *Mp_inv;
 
       PCD *pcd = nullptr;
+
+      Array<int> pres_ess_tdofs;
    };
 
    /**
     * @class CahouetChabardPC
-    * @brief Cahouet Chabard preconditioner: P^{-1} = 1/dt Lp^{-1} + Mp^{-1}
+    * @brief Cahouet Chabard preconditioner: P^{-1} = 1/dt Lp^{-1} + kin_vis Mp^{-1}
     */
    class CahouetChabardPC : public NavierStokesPC
    {
 
    public:
-      CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> pres_ess_tdofs, real_t dt);
+      CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis_);
 
       void Mult(const Vector &x, Vector &y) const override;
 
       void SetCoefficients() override {};
 
-      void SetCoefficients(real_t new_dt){ dt = new_dt; }
+      void SetCoefficients(real_t new_dt, real_t new_kin_vis)
+      { 
+         dt = new_dt;
+         kin_vis = new_kin_vis;
+      }
 
    private:
       Solver &Mp_inv;
       Solver &Lp_inv;
       mutable Vector z;
+
       real_t dt;
+      real_t kin_vis;
+
       Array<int> pres_ess_tdofs;
    };
 
@@ -130,11 +161,16 @@ namespace mfem
    class CahouetChabardBuilder : public PCBuilder
    {
    public:
-      CahouetChabardBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs, real_t dt);
+      CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis_);
 
       ~CahouetChabardBuilder();
 
-      NavierStokesPC &GetSolver();
+      NavierStokesPC *GetSolver();
+
+      NavierStokesPC *RebuildPreconditioner() override
+      {
+         return cahouet_chabard;
+      }
 
    private:
       ParBilinearForm mp_form;
@@ -180,11 +216,16 @@ namespace mfem
    class SchurApproxInvBuilder : public PCBuilder
    {
    public:
-      SchurApproxInvBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs, real_t dt);
+      SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt);
 
       ~SchurApproxInvBuilder();
 
-      NavierStokesPC &GetSolver();
+      NavierStokesPC *GetSolver();
+
+      NavierStokesPC *RebuildPreconditioner() override
+      {
+         return schur_approx_inv;
+      }
 
    private:
       ParBilinearForm mp_form;
@@ -229,11 +270,13 @@ namespace mfem
    class PMassBuilder : public PCBuilder
    {
    public:
-      PMassBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs, real_t dt);
+      PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt);
 
       ~PMassBuilder();
 
-      NavierStokesPC &GetSolver();
+      NavierStokesPC *GetSolver();
+
+      NavierStokesPC *RebuildPreconditioner() override { return pmass; }
 
    private:
       ParBilinearForm mp_form;
@@ -268,11 +311,13 @@ namespace mfem
    class PLapBuilder : public PCBuilder
    {
    public:
-      PLapBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs);
+      PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs);
 
       ~PLapBuilder();
 
-      NavierStokesPC &GetSolver();
+      NavierStokesPC *GetSolver();
+
+      NavierStokesPC *RebuildPreconditioner() override { return plap; }
 
    private:
       ParBilinearForm lp_form;

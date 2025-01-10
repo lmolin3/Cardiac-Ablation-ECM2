@@ -31,7 +31,8 @@
 // mpirun -np 4 ./navier-backstep -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -tp 1e-2 -kv 0.01 -u 1.0 --splitting 0
 // 3. Different preconditioner (0-4, see details below)
 // mpirun -np 4 ./navier-backstep -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -tp 1e-2 -kv 0.01 -u 1.0 --splitting 1 --preconditioner 3
-
+// 4. High-Order Yosida splitting
+// mpirun -np 4 ./navier-backstep -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -tp 1e-2 -kv 0.01 -u 1.0 --splitting 2
    
 #include "lib/navier_solver.hpp"
 #include <fstream>
@@ -125,7 +126,7 @@ int main(int argc, char *argv[])
                   "--no-paraview",
                   "Enable or disable Paraview output.");
    args.AddOption(&NS_ctx.outfolder,
-                   "-o",
+                   "-of",
                    "--output-folder",
                    "Output folder.");
    args.AddOption(&NS_ctx.gamma,

@@ -24,29 +24,33 @@ void PCD::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of PCDBuilder constructor
-PCDBuilder::PCDBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs,
-                       Coefficient *mass_coeff, Coefficient *diff_coeff) : PCBuilder(),
-                                                                           mp_form(&pres_fes),
-                                                                           lp_form(&pres_fes),
-                                                                           fp_form(&pres_fes)
+PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> pres_ess_tdofs_,
+                       Coefficient *mass_coeff, Coefficient *diff_coeff, VectorCoefficient *conv_coeff_) : PCBuilder(),
+                                                                           pres_ess_tdofs(pres_ess_tdofs_),
+                                                                           pres_fes(pres_fes_),
+                                                                           mp_form( pres_fes),
+                                                                           lp_form( pres_fes),
+                                                                           mass_coeff(mass_coeff),
+                                                                           diff_coeff(diff_coeff),
+                                                                           conv_coeff(conv_coeff_)
 {
-   int sdim = pres_fes.GetMesh()->SpaceDimension();
+   int sdim = pres_fes->GetMesh()->SpaceDimension();
 
    mp_form.AddDomainIntegrator(new MassIntegrator);
    mp_form.Assemble();
-   mp_form.Finalize();
    mp_form.FormSystemMatrix(pres_ess_tdofs, Mp);
 
    lp_form.AddDomainIntegrator(new DiffusionIntegrator);
    lp_form.Assemble();
-   lp_form.Finalize();
    lp_form.FormSystemMatrix(pres_ess_tdofs, Lp); 
 
-   fp_form.AddDomainIntegrator(new MassIntegrator(*mass_coeff));
-   fp_form.AddDomainIntegrator(new DiffusionIntegrator(*diff_coeff));
-   fp_form.Assemble();
-   fp_form.Finalize();
-   fp_form.FormSystemMatrix(pres_ess_tdofs, Fp);
+   fp_form = new ParBilinearForm(pres_fes);
+   fp_form->AddDomainIntegrator(new MassIntegrator(*mass_coeff));
+   fp_form->AddDomainIntegrator(new DiffusionIntegrator(*diff_coeff));
+   if ( conv_coeff != nullptr )
+      fp_form->AddDomainIntegrator(new ConvectionIntegrator(*conv_coeff));
+   fp_form->Assemble();
+   fp_form->FormSystemMatrix(pres_ess_tdofs, Fp);
 
    Mp_inv = new HypreBoomerAMG(*Mp.As<HypreParMatrix>());
    dynamic_cast<HypreBoomerAMG *>(Mp_inv)->SetPrintLevel(0);
@@ -58,42 +62,63 @@ PCDBuilder::PCDBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdof
    pcd = new PCD(*Mp_inv, *Lp_inv, Fp);
 }
 
-// Implementation of PCDBuilder constructor with default coefficients
-PCDBuilder::PCDBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs) : PCBuilder(),
-                                                                                     mp_form(&pres_fes),
-                                                                                     lp_form(&pres_fes),
-                                                                                     fp_form(&pres_fes)
+// Implementation of PCDBuilder constructor with default coefficients (no convection)
+PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> pres_ess_tdofs) : PCBuilder(),
+                                                                                     pres_fes(pres_fes_),
+                                                                                     mp_form(pres_fes),
+                                                                                     lp_form(pres_fes)
 {
-   int sdim = pres_fes.GetMesh()->SpaceDimension();
+   int sdim = pres_fes->GetMesh()->SpaceDimension();
 
    mp_form.AddDomainIntegrator(new MassIntegrator);
    mp_form.Assemble();
-   mp_form.Finalize();
    mp_form.FormSystemMatrix(pres_ess_tdofs, Mp);
 
    lp_form.AddDomainIntegrator(new DiffusionIntegrator);
    lp_form.Assemble();
-   lp_form.Finalize();
    lp_form.FormSystemMatrix(pres_ess_tdofs, Lp); 
 
-   fp_form.AddDomainIntegrator(new MassIntegrator);
-   fp_form.AddDomainIntegrator(new DiffusionIntegrator);
-   fp_form.Assemble();
-   fp_form.Finalize();
-   fp_form.FormSystemMatrix(pres_ess_tdofs, Fp);
+   fp_form = new ParBilinearForm(pres_fes);
+   fp_form->AddDomainIntegrator(new MassIntegrator);
+   fp_form->AddDomainIntegrator(new DiffusionIntegrator);
+   fp_form->Assemble();
+   fp_form->FormSystemMatrix(pres_ess_tdofs, Fp);
 
    Mp_inv = new HypreBoomerAMG(*Mp.As<HypreParMatrix>());
    dynamic_cast<HypreBoomerAMG *>(Mp_inv)->SetPrintLevel(0);
-   //dynamic_cast<HypreBoomerAMG *>(Mp_inv)->SetSystemsOptions(sdim);
    Lp_inv = new HypreBoomerAMG(*Lp.As<HypreParMatrix>());
    dynamic_cast<HypreBoomerAMG *>(Lp_inv)->SetPrintLevel(0);
-   //dynamic_cast<HypreBoomerAMG *>(Lp_inv)->SetSystemsOptions(sdim);
 
    pcd = new PCD(*Mp_inv, *Lp_inv, Fp);
 }
 
 // Implementation of PCDBuilder::GetSolver
-NavierStokesPC &PCDBuilder::GetSolver() { return *pcd; }
+NavierStokesPC *PCDBuilder::GetSolver() { return pcd; }
+
+// Implementation of PCDBuilder::RebuildPreconditioner
+NavierStokesPC *PCDBuilder::RebuildPreconditioner()
+{
+   if ( conv_coeff == nullptr ) // No need to update 
+      return pcd;
+
+   //TODO: Trying to understand why if the following runs, a segfault is thrown. Need to do memory checks
+   delete fp_form;
+   fp_form = nullptr;
+   Fp.Clear();
+
+   return pcd;
+
+   fp_form = new ParBilinearForm(pres_fes);
+   fp_form->AddDomainIntegrator(new MassIntegrator(*mass_coeff));
+   fp_form->AddDomainIntegrator(new DiffusionIntegrator(*diff_coeff));
+   fp_form->AddDomainIntegrator(new ConvectionIntegrator(*conv_coeff));
+   fp_form->Assemble();
+   fp_form->FormSystemMatrix(pres_ess_tdofs, Fp);
+
+   pcd->SetFp(Fp);
+
+   return pcd;
+}
 
 // Implementation of PCDBuilder destructor
 PCDBuilder::~PCDBuilder()
@@ -101,16 +126,18 @@ PCDBuilder::~PCDBuilder()
    delete pcd;
    delete Lp_inv;
    delete Mp_inv;
+   delete fp_form;
 }
 
 /// CAHOUET CHABARD PRECONDITIONER
 // Implementation of CahouetChabardPC constructor
 CahouetChabardPC::CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv,
-                                   Array<int> pres_ess_tdofs, real_t dt) : NavierStokesPC(Mp_inv.Height()),
+                                   Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis_) : NavierStokesPC(Mp_inv.Height()),
                                                                            Mp_inv(Mp_inv),
                                                                            Lp_inv(Lp_inv),
                                                                            z(Mp_inv.Height()),
                                                                            dt(dt),
+                                                                           kin_vis(kin_vis_),
                                                                            pres_ess_tdofs(pres_ess_tdofs) {}
 
 // Implementation of CahouetChabardPC::Mult
@@ -121,6 +148,7 @@ void CahouetChabardPC::Mult(const Vector &x, Vector &y) const
    Lp_inv.Mult(x, y); 
    y /= dt;
    Mp_inv.Mult(x, z);
+   z *= kin_vis;
    y += z;
 
    for (int i = 0; i < pres_ess_tdofs.Size(); i++)
@@ -130,11 +158,11 @@ void CahouetChabardPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of CahouetChabardBuilder constructor
-CahouetChabardBuilder::CahouetChabardBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs, real_t dt) : mp_form(&pres_fes),
-                                                                                                                      lp_form(&pres_fes)
+CahouetChabardBuilder::CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis) : mp_form( pres_fes),
+                                                                                                                      lp_form( pres_fes)
 {
    Array<int> empty;
-   int sdim = pres_fes.GetMesh()->SpaceDimension();
+   int sdim = pres_fes->GetMesh()->SpaceDimension();
 
    mp_form.AddDomainIntegrator(new MassIntegrator);
    mp_form.Assemble();
@@ -153,11 +181,11 @@ CahouetChabardBuilder::CahouetChabardBuilder(ParFiniteElementSpace &pres_fes, Ar
    dynamic_cast<HypreBoomerAMG *>(Lp_inv)->SetPrintLevel(0);
    dynamic_cast<HypreBoomerAMG *>(Lp_inv)->SetSystemsOptions(sdim); // NOTE: without this option, incorrect results when pres_ess_tdof is empty and inverting laplace operator
 
-   cahouet_chabard = new CahouetChabardPC(*Mp_inv, *Lp_inv, pres_ess_tdofs, dt);
+   cahouet_chabard = new CahouetChabardPC(*Mp_inv, *Lp_inv, pres_ess_tdofs, dt, kin_vis);
 }
 
 // Implementation of CahouetChabardBuilder::GetSolver
-NavierStokesPC &CahouetChabardBuilder::GetSolver() { return *cahouet_chabard; }
+NavierStokesPC *CahouetChabardBuilder::GetSolver() { return cahouet_chabard; }
 
 // Implementation of CahouetChabardBuilder destructor
 CahouetChabardBuilder::~CahouetChabardBuilder()
@@ -194,11 +222,11 @@ void SchurApproxInvPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of SchurApproxInvBuilder constructor
-SchurApproxInvBuilder::SchurApproxInvBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs, real_t dt) : mp_form(&pres_fes),
-                                                                                                                      lp_form(&pres_fes)
+SchurApproxInvBuilder::SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt) : mp_form( pres_fes),
+                                                                                                                      lp_form( pres_fes)
 {
    Array<int> empty;
-   int sdim = pres_fes.GetMesh()->SpaceDimension();
+   int sdim = pres_fes->GetMesh()->SpaceDimension();
 
    mp_form.AddDomainIntegrator(new MassIntegrator);
    mp_form.Assemble();
@@ -221,7 +249,7 @@ SchurApproxInvBuilder::SchurApproxInvBuilder(ParFiniteElementSpace &pres_fes, Ar
 }
 
 // Implementation of SchurApproxInvBuilder::GetSolver
-NavierStokesPC &SchurApproxInvBuilder::GetSolver() { return *schur_approx_inv; }
+NavierStokesPC *SchurApproxInvBuilder::GetSolver() { return schur_approx_inv; }
 
 // Implementation of SchurApproxInvBuilder destructor
 SchurApproxInvBuilder::~SchurApproxInvBuilder()
@@ -243,9 +271,9 @@ void PMassPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of PMassBuilder constructor
-PMassBuilder::PMassBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs, real_t dt) : mp_form(&pres_fes)
+PMassBuilder::PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt) : mp_form( pres_fes)
 {
-   int sdim = pres_fes.GetMesh()->SpaceDimension();
+   int sdim = pres_fes->GetMesh()->SpaceDimension();
 
    mp_form.AddDomainIntegrator(new MassIntegrator);
    mp_form.Assemble();
@@ -264,7 +292,7 @@ PMassBuilder::PMassBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_
 }
 
 // Implementation of PMassBuilder::GetSolver
-NavierStokesPC &PMassBuilder::GetSolver() { return *pmass; }
+NavierStokesPC *PMassBuilder::GetSolver() { return pmass; }
 
 // Implementation of PMassBuilder destructor
 PMassBuilder::~PMassBuilder()
@@ -284,9 +312,9 @@ void PLapPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of PLapBuilder constructor
-PLapBuilder::PLapBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_tdofs) : lp_form(&pres_fes)
+PLapBuilder::PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs) : lp_form(pres_fes)
 {
-   int sdim = pres_fes.GetMesh()->SpaceDimension();
+   int sdim = pres_fes->GetMesh()->SpaceDimension();
 
    lp_form.AddDomainIntegrator(new DiffusionIntegrator);
    lp_form.Assemble();
@@ -305,7 +333,7 @@ PLapBuilder::PLapBuilder(ParFiniteElementSpace &pres_fes, Array<int> pres_ess_td
 }
 
 // Implementation of PLapBuilder::GetSolver
-NavierStokesPC &PLapBuilder::GetSolver() { return *plap; }
+NavierStokesPC *PLapBuilder::GetSolver() { return plap; }
 
 // Implementation of PLapBuilder destructor
 PLapBuilder::~PLapBuilder()

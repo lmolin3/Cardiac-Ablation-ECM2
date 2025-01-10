@@ -337,7 +337,6 @@ public:
    OperatorHandle opD;      // divergence
    OperatorHandle opG;      // gradient
    OperatorHandle opNL;     // convective term   w . grad u (Picard convection)
-   OperatorHandle opS; // pressure laplacian
    OperatorHandle opDe;
    OperatorHandle opA; // A = K + C
 
@@ -474,7 +473,7 @@ public:
      *       and ensuring they are correctly applied to the solution vector when the time changes.
      *       Be sure to call this function whenever the time is updated in your simulation.
      */
-    void UpdateTimeBCS(real_t new_time);
+    virtual void UpdateTimeBCS(real_t new_time);
 
     /// Remove mean from a Vector.
     /**
@@ -529,16 +528,11 @@ public:
 class HighOrderYosidaSolver : public NavierUnsteadySolver
 {
 public:
+    HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_ = 2, int porder_ = 1, bool verbose_ = true);
 
-    HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_=2, int porder_=1,  bool verbose_=true)
-        : NavierUnsteadySolver(pmesh_, bcs, kin_vis_, uorder_, porder_, verbose_)
-    {
-      correction_order = 1;
-    }
+    HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_ = 2, int porder_ = 1, bool verbose_ = true, int correction_order_ = 1);
 
-    HighOrderYosidaSolver(std::shared_ptr<ParMesh> pmesh_, BCHandler *bcs, real_t kin_vis_ = -1, int uorder_ = 2, int porder_ = 1, bool verbose_ = true, int correction_order_ = 1)
-        : NavierUnsteadySolver(pmesh_, bcs, kin_vis_, uorder_, porder_, verbose_), correction_order(correction_order_)
-   {}
+    ~HighOrderYosidaSolver();
 
     void Setup(real_t dt, int pc_type_ = 1) override;
 
@@ -546,8 +540,12 @@ public:
 
    private:
 
+    void UpdateTimeBCS(real_t new_time) override;
+
       int correction_order;
 
+      Vector *z1 = nullptr; // pressure correction vectors
+      Vector *z2 = nullptr; 
 };
 
 
