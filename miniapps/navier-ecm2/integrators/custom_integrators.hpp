@@ -39,7 +39,7 @@ protected:
 
 private:
    DenseMatrix dshape, adjJ, W_ir, pelmat, pelmat_T;
-   Vector shape, vec1, vec2, vec3;
+   Vector shape, vec2, vec3;
 
 public:
    VectorConvectionIntegrator(VectorCoefficient &w, double alpha = 1.0, bool SkewSym_ = false)

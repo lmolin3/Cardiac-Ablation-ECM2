@@ -37,6 +37,9 @@ namespace mfem
    class PCBuilder
    {
    public:
+
+      PCBuilder() {};
+
       virtual ~PCBuilder() {}
 
       /**
@@ -64,18 +67,18 @@ namespace mfem
    {
 
    public:
-      PCD(Solver &Mp_inv, Solver &Lp_inv, OperatorHandle &Fp);
+      PCD(Solver *Mp_inv, Solver *Lp_inv, Operator *Fp);
 
       void Mult(const Vector &x, Vector &y) const override;
 
       void SetCoefficients() override {};
 
-      void SetFp(OperatorHandle &Fp_) { Fp = Fp_; }
+      void SetFp(Operator *Fp_) { Fp = Fp_; }
 
    private:
-      Solver &Mp_inv;
-      Solver &Lp_inv;
-      OperatorHandle &Fp;
+      Solver *Mp_inv; // No ownership
+      Solver *Lp_inv;
+      Operator *Fp;
       mutable Vector z, w;
    };
 
@@ -86,10 +89,10 @@ namespace mfem
    class PCDBuilder : public PCBuilder
    {
    public:
-      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs_,
+      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs_,
                  Coefficient *mass_coeff, Coefficient *diff_coeff, VectorCoefficient *conv_coeff = nullptr);
 
-      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs);
+      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs);
 
       ~PCDBuilder();
 
@@ -131,7 +134,7 @@ namespace mfem
    {
 
    public:
-      CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis_);
+      CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis_);
 
       void Mult(const Vector &x, Vector &y) const override;
 
@@ -161,7 +164,7 @@ namespace mfem
    class CahouetChabardBuilder : public PCBuilder
    {
    public:
-      CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis_);
+      CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis_);
 
       ~CahouetChabardBuilder();
 
@@ -193,7 +196,7 @@ namespace mfem
    {
 
    public:
-      SchurApproxInvPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> pres_ess_tdofs, real_t dt);
+      SchurApproxInvPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> &pres_ess_tdofs, real_t dt);
 
       void Mult(const Vector &x, Vector &y) const override;
 
@@ -216,7 +219,7 @@ namespace mfem
    class SchurApproxInvBuilder : public PCBuilder
    {
    public:
-      SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt);
+      SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt);
 
       ~SchurApproxInvBuilder();
 
@@ -270,7 +273,7 @@ namespace mfem
    class PMassBuilder : public PCBuilder
    {
    public:
-      PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt);
+      PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt);
 
       ~PMassBuilder();
 
@@ -311,7 +314,7 @@ namespace mfem
    class PLapBuilder : public PCBuilder
    {
    public:
-      PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs);
+      PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs);
 
       ~PLapBuilder();
 

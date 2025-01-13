@@ -335,7 +335,6 @@ int main(int argc, char *argv[])
 
    naviersolver->PrintTimingData();
 
-   delete u_in;
    delete paraview_dc;
    delete naviersolver;
 

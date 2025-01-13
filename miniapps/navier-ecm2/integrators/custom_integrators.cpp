@@ -31,11 +31,11 @@ void VectorConvectionIntegrator::AssembleElementMatrix(const FiniteElement &el,
     const int dof = el.GetDof();
     dim = el.GetDim();
 
+    Vector vec1;
     elmat.SetSize(dim * dof);
     dshape.SetSize(dof, dim);
     adjJ.SetSize(dim);
     shape.SetSize(dof);
-    vec1.SetSize(dim);
     vec2.SetSize(dim);
     vec3.SetSize(dof);
     pelmat.SetSize(dof);

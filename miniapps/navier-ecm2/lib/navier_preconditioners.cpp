@@ -7,10 +7,14 @@ namespace navier
 
 /// PCD PRECONDITIONER
 // Implementation of PCD constructor
-PCD::PCD(Solver &Mp_inv, Solver &Lp_inv, OperatorHandle &Fp) : NavierStokesPC(Mp_inv.Width()),
+PCD::PCD(Solver *Mp_inv, Solver *Lp_inv, Operator *Fp) : NavierStokesPC(Fp->Height()),
                                                                Mp_inv(Mp_inv),
                                                                Lp_inv(Lp_inv),
-                                                               Fp(Fp) {}
+                                                               Fp(Fp)
+{
+   z.SetSize(Fp->Height());
+   w.SetSize(Fp->Height());
+}
 
 // Implementation of PCD::Mult
 void PCD::Mult(const Vector &x, Vector &y) const
@@ -18,13 +22,13 @@ void PCD::Mult(const Vector &x, Vector &y) const
    z.SetSize(y.Size());
    w.SetSize(y.Size());
 
-   Lp_inv.Mult(x, z);
+   Lp_inv->Mult(x, z);
    Fp->Mult(z, w);
-   Mp_inv.Mult(w, y);
+   Mp_inv->Mult(w, y);
 }
 
 // Implementation of PCDBuilder constructor
-PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> pres_ess_tdofs_,
+PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> &pres_ess_tdofs_,
                        Coefficient *mass_coeff, Coefficient *diff_coeff, VectorCoefficient *conv_coeff_) : PCBuilder(),
                                                                            pres_ess_tdofs(pres_ess_tdofs_),
                                                                            pres_fes(pres_fes_),
@@ -59,11 +63,11 @@ PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> pres_ess_tdo
    dynamic_cast<HypreBoomerAMG *>(Lp_inv)->SetPrintLevel(0);
    dynamic_cast<HypreBoomerAMG *>(Lp_inv)->SetSystemsOptions(sdim);
 
-   pcd = new PCD(*Mp_inv, *Lp_inv, Fp);
+   pcd = new PCD(Mp_inv, Lp_inv, Fp.Ptr());
 }
 
 // Implementation of PCDBuilder constructor with default coefficients (no convection)
-PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> pres_ess_tdofs) : PCBuilder(),
+PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> &pres_ess_tdofs) : PCBuilder(),
                                                                                      pres_fes(pres_fes_),
                                                                                      mp_form(pres_fes),
                                                                                      lp_form(pres_fes)
@@ -89,7 +93,7 @@ PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> pres_ess_tdo
    Lp_inv = new HypreBoomerAMG(*Lp.As<HypreParMatrix>());
    dynamic_cast<HypreBoomerAMG *>(Lp_inv)->SetPrintLevel(0);
 
-   pcd = new PCD(*Mp_inv, *Lp_inv, Fp);
+   pcd = new PCD(Mp_inv, Lp_inv, Fp.Ptr());
 }
 
 // Implementation of PCDBuilder::GetSolver
@@ -100,13 +104,9 @@ NavierStokesPC *PCDBuilder::RebuildPreconditioner()
 {
    if ( conv_coeff == nullptr ) // No need to update 
       return pcd;
-
-   //TODO: Trying to understand why if the following runs, a segfault is thrown. Need to do memory checks
+   
    delete fp_form;
    fp_form = nullptr;
-   Fp.Clear();
-
-   return pcd;
 
    fp_form = new ParBilinearForm(pres_fes);
    fp_form->AddDomainIntegrator(new MassIntegrator(*mass_coeff));
@@ -115,7 +115,7 @@ NavierStokesPC *PCDBuilder::RebuildPreconditioner()
    fp_form->Assemble();
    fp_form->FormSystemMatrix(pres_ess_tdofs, Fp);
 
-   pcd->SetFp(Fp);
+   pcd->SetFp(Fp.Ptr()); 
 
    return pcd;
 }
@@ -132,7 +132,7 @@ PCDBuilder::~PCDBuilder()
 /// CAHOUET CHABARD PRECONDITIONER
 // Implementation of CahouetChabardPC constructor
 CahouetChabardPC::CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv,
-                                   Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis_) : NavierStokesPC(Mp_inv.Height()),
+                                   Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis_) : NavierStokesPC(Mp_inv.Height()),
                                                                            Mp_inv(Mp_inv),
                                                                            Lp_inv(Lp_inv),
                                                                            z(Mp_inv.Height()),
@@ -158,7 +158,7 @@ void CahouetChabardPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of CahouetChabardBuilder constructor
-CahouetChabardBuilder::CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt, real_t kin_vis) : mp_form( pres_fes),
+CahouetChabardBuilder::CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis) : mp_form( pres_fes),
                                                                                                                       lp_form( pres_fes)
 {
    Array<int> empty;
@@ -198,7 +198,7 @@ CahouetChabardBuilder::~CahouetChabardBuilder()
 /// APPROXIMATE INVERSE PRECONDITIONER
 // Implementation of SchurApproxInvPC constructor
 SchurApproxInvPC::SchurApproxInvPC(Solver &Mp_inv, Solver &Lp_inv,
-                                   Array<int> pres_ess_tdofs, real_t dt) : NavierStokesPC(Mp_inv.Height()),
+                                   Array<int> &pres_ess_tdofs, real_t dt) : NavierStokesPC(Mp_inv.Height()),
                                                                            Mp_inv(Mp_inv),
                                                                            Lp_inv(Lp_inv),
                                                                            z(Mp_inv.Height()),
@@ -222,7 +222,7 @@ void SchurApproxInvPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of SchurApproxInvBuilder constructor
-SchurApproxInvBuilder::SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt) : mp_form( pres_fes),
+SchurApproxInvBuilder::SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt) : mp_form( pres_fes),
                                                                                                                       lp_form( pres_fes)
 {
    Array<int> empty;
@@ -271,7 +271,7 @@ void PMassPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of PMassBuilder constructor
-PMassBuilder::PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs, real_t dt) : mp_form( pres_fes)
+PMassBuilder::PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt) : mp_form( pres_fes)
 {
    int sdim = pres_fes->GetMesh()->SpaceDimension();
 
@@ -312,7 +312,7 @@ void PLapPC::Mult(const Vector &x, Vector &y) const
 }
 
 // Implementation of PLapBuilder constructor
-PLapBuilder::PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> pres_ess_tdofs) : lp_form(pres_fes)
+PLapBuilder::PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs) : lp_form(pres_fes)
 {
    int sdim = pres_fes->GetMesh()->SpaceDimension();
 

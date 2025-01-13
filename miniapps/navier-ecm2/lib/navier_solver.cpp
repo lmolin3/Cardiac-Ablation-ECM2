@@ -266,7 +266,7 @@ void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
       pc_builder = new PLapBuilder(pfes, pres_ess_tdof);
       break;
    case 2: // PCD
-      pc_builder = new PCDBuilder(pfes, pres_ess_tdof, &mass_coeff, &C_visccoeff); // pc_builder = new PCDBuilder(pfes, pres_ess_tdof, &C_bdfcoeff, &C_visccoeff, u_ext_vc);
+      pc_builder = new PCDBuilder(pfes, pres_ess_tdof, &C_bdfcoeff, &C_visccoeff, u_ext_vc);
       break;
    case 3: // Cahouet-Chabard
       pc_builder = new CahouetChabardBuilder(pfes, pres_ess_tdof, dt, C_visccoeff.constant);
@@ -679,7 +679,10 @@ NavierUnsteadySolver::~NavierUnsteadySolver()
    delete ufes; ufes = nullptr;
    delete pfes; pfes = nullptr;
 
+   delete bcs; bcs = nullptr;
+
    delete K_form;   K_form = nullptr;
+   delete G_form;   G_form = nullptr;
    delete M_form;   M_form = nullptr;
    delete D_form;   D_form = nullptr;
    delete NL_form;  NL_form = nullptr;
@@ -708,6 +711,7 @@ NavierUnsteadySolver::~NavierUnsteadySolver()
    delete rhs_v2;    rhs_v2 = nullptr;
    delete rhs_p1;    rhs_p1 = nullptr;
    delete rhs_p2;    rhs_p2 = nullptr;
+   delete Gp;        Gp = nullptr;
    delete tmp1;      tmp1 = nullptr;
    delete tmp2;      tmp2 = nullptr;
 
@@ -726,6 +730,9 @@ NavierUnsteadySolver::~NavierUnsteadySolver()
    delete H2_pc;        H2_pc = nullptr;
 
    delete pc_builder; pc_builder = nullptr; // Do not delete invDHG_pc, it is owned by pc_builder
+
+   delete kin_vis; kin_vis = nullptr;
+   delete u_ext_vc; u_ext_vc = nullptr;   
 
    opK.Clear();
    opM.Clear();
