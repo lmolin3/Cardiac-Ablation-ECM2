@@ -342,6 +342,60 @@ PLapBuilder::~PLapBuilder()
    delete Lp_inv;
 }
 
+
+// Implementation of ApproximateDiscreteLaplacianBuilder constructor
+ApproximateDiscreteLaplacianBuilder::ApproximateDiscreteLaplacianBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs_, const HypreParMatrix *D, const  HypreParMatrix *G, const  HypreParMatrix *M, real_t sigma) : 
+D(D), G(G), M(M)
+{
+   int sdim = pres_fes->GetMesh()->SpaceDimension();
+
+   // Assemle operator S = D diag(M)^-1 G
+   Vector *diag = new Vector(M->Height());
+   M->GetDiag(*diag);
+
+   auto MinvG = new HypreParMatrix(*G); // S = G
+   MinvG->InvScaleRows(*diag);          // S = diag(M)^-1 G
+   S = ParMult(D, MinvG);               // S = D diag(M)^-1 G
+   delete MinvG;
+   delete diag;
+
+   invS = new HypreBoomerAMG(*S);
+   dynamic_cast<HypreBoomerAMG *>(invS)->SetPrintLevel(0);
+   dynamic_cast<HypreBoomerAMG *>(invS)->SetSystemsOptions(sdim);
+
+   // Approximate Discrete Laplacian preconditioner
+   adpl = new ApproximateDiscreteLaplacianPC(*invS, pres_ess_tdofs_, sigma);
+}
+
+// Implementation of ApproximateDiscreteLaplacianBuilder GetSolver
+SchurComplementPC *ApproximateDiscreteLaplacianBuilder::GetSolver() { return adpl; }
+
+// Implementation of ApproximateDiscreteLaplacianBuilder destructor
+ApproximateDiscreteLaplacianBuilder::~ApproximateDiscreteLaplacianBuilder()
+{
+   delete adpl;
+   delete invS;
+   delete S;
+}
+
+
+// Implementation of ApproximateDiscreteLaplacian constructor
+ApproximateDiscreteLaplacianPC::ApproximateDiscreteLaplacianPC(Solver &invS, Array<int> &pres_ess_tdofs_, real_t sigma) : SchurComplementPC(invS.Width()), invS(invS), sigma(sigma), pres_ess_tdofs(pres_ess_tdofs_) {}
+
+// Implementation of ApproximateDiscreteLaplacian Mult
+void ApproximateDiscreteLaplacianPC::Mult(const Vector &x, Vector &y) const
+{
+   invS.Mult(x, y);
+   y *= sigma;
+
+   for (int i = 0; i < pres_ess_tdofs.Size(); i++)
+   {
+      y[pres_ess_tdofs[i]] = x[pres_ess_tdofs[i]];
+   }
+}
+
+
+
 } // namespace navier
 
 } // namespace mfem

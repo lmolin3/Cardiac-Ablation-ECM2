@@ -274,6 +274,9 @@ void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
    case 4: // Approximate inverse
       pc_builder = new SchurApproxInvBuilder(pfes, pres_ess_tdof, dt);
       break;
+   case 5: // Approximate discrete pressure laplacian
+      pc_builder = new ApproximateDiscreteLaplacianBuilder(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>(), C_bdfcoeff.constant);
+      break;
    default:
       MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
       break;
@@ -833,6 +836,9 @@ void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
    case 4: // Approximate inverse
       static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
       break;
+   case 5: // Approximate discrete pressure laplacian
+      static_cast<ApproximateDiscreteLaplacianPC *>(invDHG_pc)->SetCoefficients(C_bdfcoeff.constant);
+      break;
    default:
       MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
       break;
@@ -1067,6 +1073,9 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
       break;
    case 4: // Approximate inverse
       static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 5: // Approximate discrete pressure laplacian
+      static_cast<ApproximateDiscreteLaplacianPC *>(invDHG_pc)->SetCoefficients(C_bdfcoeff.constant);
       break;
    default:
       MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);
@@ -1346,6 +1355,9 @@ void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
       break;
    case 4: // Approximate inverse
       static_cast<SchurApproxInvPC *>(invDHG_pc)->SetCoefficients(dt);
+      break;
+   case 5: // Approximate discrete pressure laplacian
+      static_cast<ApproximateDiscreteLaplacianPC *>(invDHG_pc)->SetCoefficients(C_bdfcoeff.constant);
       break;
    default:
       MFEM_ABORT("NavierStokesOperator::Assemble() >> Unknown preconditioner type: " << pc_type);

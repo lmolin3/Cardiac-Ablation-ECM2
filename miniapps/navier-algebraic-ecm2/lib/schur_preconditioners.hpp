@@ -330,6 +330,58 @@ namespace mfem
       PLapPC *plap = nullptr;
    };
 
+
+
+   /**
+    * @class ApproximateDiscreteLaplacian
+    * @brief Wrapper for approximate Discrete Laplacian preconditioner: P^{-1} = D diag{sigma M}^{-1} G
+    */
+   class ApproximateDiscreteLaplacianPC : public SchurComplementPC
+   {
+   public:
+      ApproximateDiscreteLaplacianPC(Solver &invS, Array<int> &pres_ess_tdofs_, real_t sigma); // @note : for PA we'll need to pass the BilinearForm
+
+      void Mult(const Vector &x, Vector &y) const override;
+
+      void SetCoefficients() override {};
+
+      void SetCoefficients(real_t sigma_) { sigma = sigma_; }
+
+   private:
+      Solver &invS;
+      real_t sigma;      
+      Array<int> pres_ess_tdofs;
+   };
+
+
+
+   /**
+   * @class ApproximateDiscreteLaplacian Builder
+   * @brief Builder for the Approximate Discrete Laplacian preconditioner.
+   */
+   class ApproximateDiscreteLaplacianBuilder : public PCBuilder
+   {
+   public:
+      // D, G need to be modified with correct bcs at velocity ess_tdofs.
+      // M is the mass matrix and can be used as is without modification.
+      ApproximateDiscreteLaplacianBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs_, const HypreParMatrix *D, const HypreParMatrix *G, const HypreParMatrix *M, real_t sigma); // @note : for PA we'll need to pass the BilinearForm
+
+      ~ApproximateDiscreteLaplacianBuilder();
+
+      SchurComplementPC *GetSolver();
+
+      SchurComplementPC *RebuildPreconditioner() override { return adpl; }
+
+   private:
+      const HypreParMatrix *D = nullptr;
+      const HypreParMatrix *G = nullptr;
+      const HypreParMatrix *M = nullptr;
+      Vector *diag = nullptr;
+      HypreParMatrix *S = nullptr;
+      Solver *invS = nullptr;
+      ApproximateDiscreteLaplacianPC *adpl = nullptr;
+   };
+
    } // namespace navier
 } // namespace mfem
 
