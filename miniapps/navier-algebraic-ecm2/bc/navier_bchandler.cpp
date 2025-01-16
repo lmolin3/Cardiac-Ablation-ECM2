@@ -31,13 +31,13 @@ BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
     ess_attr_tmp = 0;
 }
 
-void BCHandler::AddVelDirichletBC(VectorCoefficient *coeff, Array<int> &attr)
+void BCHandler::AddVelDirichletBC(VectorCoefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
-    vel_dbcs.emplace_back(attr, coeff);
+    vel_dbcs.emplace_back(attr, coeff, own);
 
     // Check for duplicate
     for (int i = 0; i < attr.Size(); ++i)
@@ -65,12 +65,12 @@ void BCHandler::AddVelDirichletBC(VectorCoefficient *coeff, Array<int> &attr)
     }
 }
 
-void BCHandler::AddVelDirichletBC(VecFuncT func, Array<int> &attr)
+void BCHandler::AddVelDirichletBC(VecFuncT func, Array<int> &attr, bool own)
 {
-    AddVelDirichletBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr);
+    AddVelDirichletBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, own);
 }
 
-void BCHandler::AddVelDirichletBC(Coefficient *coeff, Array<int> &attr, int &dir)
+void BCHandler::AddVelDirichletBC(Coefficient *coeff, Array<int> &attr, int &dir, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
@@ -130,19 +130,19 @@ void BCHandler::AddVelDirichletBC(Coefficient *coeff, Array<int> &attr, int &dir
     }
 }
 
-void BCHandler::AddVelDirichletBC(VectorCoefficient *coeff, int &attr)
+void BCHandler::AddVelDirichletBC(VectorCoefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     ess_attr_tmp = 0;
     ess_attr_tmp[attr - 1] = 1;
 
     // Call AddVelDirichletBC accepting array of essential attributes
-    AddVelDirichletBC(coeff, ess_attr_tmp);
+    AddVelDirichletBC(coeff, ess_attr_tmp, own);
 }
 
-void BCHandler::AddVelDirichletBC(VecFuncT func, int &attr)
+void BCHandler::AddVelDirichletBC(VecFuncT func, int &attr, bool own)
 {
-    AddVelDirichletBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr);
+    AddVelDirichletBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, own);
 }
 
 void BCHandler::AddVelDirichletBC(Coefficient *coeff, int &attr, int &dir)
@@ -155,13 +155,13 @@ void BCHandler::AddVelDirichletBC(Coefficient *coeff, int &attr, int &dir)
     AddVelDirichletBC(coeff, ess_attr_tmp, dir);
 }
 
-void BCHandler::AddPresDirichletBC(Coefficient *coeff, Array<int> &attr)
+void BCHandler::AddPresDirichletBC(Coefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
-    pres_dbcs.emplace_back(attr, coeff);
+    pres_dbcs.emplace_back(attr, coeff, own);
 
     // Check for duplicate
     for (int i = 0; i < attr.Size(); ++i)
@@ -189,33 +189,33 @@ void BCHandler::AddPresDirichletBC(Coefficient *coeff, Array<int> &attr)
     }
 }
 
-void BCHandler::AddPresDirichletBC(ScalarFuncT func, Array<int> &attr)
+void BCHandler::AddPresDirichletBC(ScalarFuncT func, Array<int> &attr, bool own)
 {
-    AddPresDirichletBC(new FunctionCoefficient(func), attr);
+    AddPresDirichletBC(new FunctionCoefficient(func), attr, own);
 }
 
-void BCHandler::AddPresDirichletBC(Coefficient *coeff, int &attr)
+void BCHandler::AddPresDirichletBC(Coefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     ess_attr_tmp = 0;
     ess_attr_tmp[attr - 1] = 1;
 
     // Call AddVelDirichletBC accepting array of essential attributes
-    AddPresDirichletBC(coeff, ess_attr_tmp);
+    AddPresDirichletBC(coeff, ess_attr_tmp, own);
 }
 
-void BCHandler::AddPresDirichletBC(ScalarFuncT func, int &attr)
+void BCHandler::AddPresDirichletBC(ScalarFuncT func, int &attr, bool own)
 {
-    AddPresDirichletBC(new FunctionCoefficient(func), attr);
+    AddPresDirichletBC(new FunctionCoefficient(func), attr, own);
 }
 
-void BCHandler::AddTractionBC(VectorCoefficient *coeff, Array<int> &attr)
+void BCHandler::AddTractionBC(VectorCoefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
-    traction_bcs.emplace_back(attr, coeff);
+    traction_bcs.emplace_back(attr, coeff, own);
 
     for (int i = 0; i < attr.Size(); ++i)
     {
@@ -241,29 +241,29 @@ void BCHandler::AddTractionBC(VectorCoefficient *coeff, Array<int> &attr)
     }
 }
 
-void BCHandler::AddTractionBC(VecFuncT func, Array<int> &attr)
+void BCHandler::AddTractionBC(VecFuncT func, Array<int> &attr, bool own)
 {
-    AddTractionBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr);
+    AddTractionBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, own);
 }
 
-void BCHandler::AddTractionBC(VectorCoefficient *coeff, int &attr)
+void BCHandler::AddTractionBC(VectorCoefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     trac_attr_tmp = 0;
     trac_attr_tmp[attr - 1] = 1;
 
     // Call AddVelDirichletBC accepting array of essential attributes
-    AddTractionBC(coeff, trac_attr_tmp);
+    AddTractionBC(coeff, trac_attr_tmp, own);
 }
 
 
-void BCHandler::AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, Array<int> &attr)
+void BCHandler::AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
                 
-   custom_traction_bcs.emplace_back(attr, alpha, u, beta, p);
+   custom_traction_bcs.emplace_back(attr, alpha, u, beta, p, own);
 
    for (int i = 0; i < attr.Size(); ++i)
    {
@@ -288,14 +288,14 @@ void BCHandler::AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coef
    }
 }
 
-void BCHandler::AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, int &attr)
+void BCHandler::AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, int &attr, bool own)
 {
    // Create array for attributes and mark given mark given mesh boundary
    trac_attr_tmp = 0;
    trac_attr_tmp[ attr - 1] = 1;
 
    // Call AddVelDirichletBC accepting array of essential attributes
-   AddCustomTractionBC(alpha, u, beta, p, trac_attr_tmp);
+   AddCustomTractionBC(alpha, u, beta, p, trac_attr_tmp, own);
 }
 
 

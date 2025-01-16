@@ -30,7 +30,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddVelDirichletBC(VectorCoefficient *coeff, Array<int> &attr);
+            void AddVelDirichletBC(VectorCoefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet velocity BC using Vector function and list of essential mesh attributes.
@@ -42,7 +42,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddVelDirichletBC(VecFuncT *func, Array<int> &attr);
+            void AddVelDirichletBC(VecFuncT *func, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet velocity BC componentwise using Coefficient and list of active mesh boundaries.
@@ -55,7 +55,7 @@ namespace mfem
              * \param dir Component of bc constrained (0=x, 1=y, 2=z)
              *
              */
-            void AddVelDirichletBC(Coefficient *coeff, Array<int> &attr, int &dir);
+            void AddVelDirichletBC(Coefficient *coeff, Array<int> &attr, int &dir, bool own = true);
 
             /**
              * \brief Add Dirichlet velocity BC using VectorCoefficient and specific mesh attribute.
@@ -67,7 +67,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddVelDirichletBC(VectorCoefficient *coeff, int &attr);
+            void AddVelDirichletBC(VectorCoefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet velocity BC passing VecFuncT and specific mesh attribute.
@@ -79,7 +79,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddVelDirichletBC(VecFuncT *func, int &attr);
+            void AddVelDirichletBC(VecFuncT *func, int &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet velocity BC componentwise passing coefficient and specific mesh attribute.
@@ -106,7 +106,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddPresDirichletBC(Coefficient *coeff, Array<int> &attr);
+            void AddPresDirichletBC(Coefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet pressure BC using Scalar function and list of essential mesh attributes.
@@ -118,7 +118,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddPresDirichletBC(ScalarFuncT *func, Array<int> &attr);
+            void AddPresDirichletBC(ScalarFuncT *func, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet pressure BC using Coefficient and specific mesh attribute.
@@ -130,7 +130,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddPresDirichletBC(Coefficient *coeff, int &attr);
+            void AddPresDirichletBC(Coefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet pressure BC passing ScalarFuncT and specific mesh attribute.
@@ -142,7 +142,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddPresDirichletBC(ScalarFuncT *func, int &attr);
+            void AddPresDirichletBC(ScalarFuncT *func, int &attr, bool own = true);
 
             /**
              * \brief Add Traction (Neumann) BC using VectorCoefficient and list of essential boundaries.
@@ -154,7 +154,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddTractionBC(VectorCoefficient *coeff, Array<int> &attr);
+            void AddTractionBC(VectorCoefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Traction (Neumann) BC using VecFuncT and list of essential boundaries.
@@ -166,7 +166,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddTractionBC(VecFuncT *coeff, Array<int> &attr);
+            void AddTractionBC(VecFuncT *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Traction (Neumann) BC using VectorCoefficient and specific mesh attribute.
@@ -178,7 +178,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddTractionBC(VectorCoefficient *coeff, int &attr);
+            void AddTractionBC(VectorCoefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Traction (Neumann) BC using VecFuncT and specific mesh attribute.
@@ -190,7 +190,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddTractionBC(VecFuncT *func, int &attr);
+            void AddTractionBC(VecFuncT *func, int &attr, bool own = true);
 
 
             /**
@@ -211,7 +211,7 @@ namespace mfem
             * \param attr  Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
             *
             */
-            void AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, Array<int> &attr);
+            void AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, Array<int> &attr, bool own = true);
 
             /**
             * \brief Add Traction (Neumann) BC computed from vector field u and scalar field p, and specific mesh attribute.
@@ -231,7 +231,7 @@ namespace mfem
             * \param attr  Mesh attribute
             *
             */
-            void AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, int &attr);
+            void AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coefficient *beta, ParGridFunction *p, int &attr, bool own = true);
 
             /**
              * \brief Update the time in the velocity BCs coefficients.

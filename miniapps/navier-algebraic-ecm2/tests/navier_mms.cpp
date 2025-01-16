@@ -442,6 +442,9 @@ int main(int argc, char *argv[])
    u_ex_gf.ProjectCoefficient(*u_excoeff);
    p_ex_gf.ProjectCoefficient(*p_excoeff);
 
+   ConstantCoefficient *alpha = nullptr;
+   ConstantCoefficient *beta = nullptr;
+
    switch (NS_ctx.bcs)
    {
    case 0: // Fully dirichlet
@@ -458,9 +461,9 @@ int main(int argc, char *argv[])
       if (myid == 0) {mfem::out << "Fully Neumann problem."<<std::endl;};
       Array<int> traction_attr(pmesh->bdr_attributes.Max());
       traction_attr = 1;
-      ConstantCoefficient *alpha = new ConstantCoefficient(NS_ctx.kinvis);
-      ConstantCoefficient *beta = new ConstantCoefficient(-1.0);
-      bcs->AddCustomTractionBC(alpha, &u_ex_gf, beta, &p_ex_gf, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
+      alpha = new ConstantCoefficient(NS_ctx.kinvis);
+      beta = new ConstantCoefficient(-1.0);
+      bcs->AddCustomTractionBC(alpha, &u_ex_gf, beta, &p_ex_gf, traction_attr, false);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
       bcs->AddPresDirichletBC(p_excoeff, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
       break;
    }
@@ -477,9 +480,9 @@ int main(int argc, char *argv[])
       traction_attr = 0;
       traction_attr[right_attr - 1]  = 1;
       traction_attr[left_attr - 1] = 1;
-      ConstantCoefficient *alpha = new ConstantCoefficient(NS_ctx.kinvis);
-      ConstantCoefficient *beta = new ConstantCoefficient(-1.0);
-      bcs->AddCustomTractionBC(alpha, &u_ex_gf, beta, &p_ex_gf, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
+      alpha = new ConstantCoefficient(NS_ctx.kinvis);
+      beta = new ConstantCoefficient(-1.0);
+      bcs->AddCustomTractionBC(alpha, &u_ex_gf, beta, &p_ex_gf, traction_attr, false);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
       bcs->AddPresDirichletBC(p_excoeff, traction_attr);   // (psi,v) = (kinvis * n.grad(u_ex) - p_ex.n,v) 
 
       break;
@@ -599,8 +602,14 @@ int main(int argc, char *argv[])
 
    delete paraview_dc;
    delete naviersolver; 
-   delete u_excoeff;
-   delete p_excoeff;
+
+   if (alpha) { delete alpha; }
+   if (beta) { delete beta; }
+
+   if (NS_ctx.bcs == 0 ) 
+      delete p_excoeff;
+   else if (NS_ctx.bcs == 1)
+      delete u_excoeff;
 
    return 0; 
 
