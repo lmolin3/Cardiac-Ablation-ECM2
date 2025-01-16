@@ -3,8 +3,8 @@
  * @brief File containing declarations for various preconditioners for Navier Stokes.
  */
 
-#ifndef PRECONDITIONERS_NS_HPP
-#define PRECONDITIONERS_NS_HPP
+#ifndef PRECONDITIONERS_NAVIER_HPP
+#define PRECONDITIONERS_NAVIER_HPP
 
 #include <mfem.hpp>
 
@@ -16,12 +16,12 @@ namespace mfem
     * @class Builder
     * @brief Abstract class for navier stokes preconditioner.
     */
-   class NavierStokesPC : public Solver
+   class SchurComplementPC : public Solver
    {
    public:
-      NavierStokesPC(int s) : Solver(s) {};
+      SchurComplementPC(int s) : Solver(s) {};
 
-      virtual ~NavierStokesPC() {};
+      virtual ~SchurComplementPC() {};
 
       void Mult(const Vector &x, Vector &y) const override = 0;
 
@@ -46,14 +46,14 @@ namespace mfem
        * @brief Get the solver built by the builder.
        * @return The built solver.
        */
-      virtual NavierStokesPC *GetSolver() = 0;
+      virtual SchurComplementPC *GetSolver() = 0;
 
       /**
        * @brief Recreate the preconditioner and return it.
        * 
        * @return The rebuilt solver.
        */
-      virtual NavierStokesPC *RebuildPreconditioner() = 0;
+      virtual SchurComplementPC *RebuildPreconditioner() = 0;
    };
 
    /**
@@ -63,7 +63,7 @@ namespace mfem
     * See:
     *  Bootland, Niall, et al. "Preconditioners for Two-Phase Incompressible Navier-Stokes Flow." SIAM Journal on Scientific Computing 41.4 (2019): B843-B869.
     */
-   class PCD : public NavierStokesPC
+   class PCD : public SchurComplementPC
    {
 
    public:
@@ -96,9 +96,9 @@ namespace mfem
 
       ~PCDBuilder();
 
-      NavierStokesPC *GetSolver();
+      SchurComplementPC *GetSolver();
 
-      NavierStokesPC *RebuildPreconditioner() override;
+      SchurComplementPC *RebuildPreconditioner() override;
 
    private:
 
@@ -130,7 +130,7 @@ namespace mfem
     * @class CahouetChabardPC
     * @brief Cahouet Chabard preconditioner: P^{-1} = 1/dt Lp^{-1} + kin_vis Mp^{-1}
     */
-   class CahouetChabardPC : public NavierStokesPC
+   class CahouetChabardPC : public SchurComplementPC
    {
 
    public:
@@ -168,9 +168,9 @@ namespace mfem
 
       ~CahouetChabardBuilder();
 
-      NavierStokesPC *GetSolver();
+      SchurComplementPC *GetSolver();
 
-      NavierStokesPC *RebuildPreconditioner() override
+      SchurComplementPC *RebuildPreconditioner() override
       {
          return cahouet_chabard;
       }
@@ -192,7 +192,7 @@ namespace mfem
     * @class SchurApproxInvPC
     * @brief Approximate inverse preconditioner: P^{-1} = dt Mp^{-1} + Lp^{-1}
     */
-   class SchurApproxInvPC : public NavierStokesPC
+   class SchurApproxInvPC : public SchurComplementPC
    {
 
    public:
@@ -223,9 +223,9 @@ namespace mfem
 
       ~SchurApproxInvBuilder();
 
-      NavierStokesPC *GetSolver();
+      SchurComplementPC *GetSolver();
 
-      NavierStokesPC *RebuildPreconditioner() override
+      SchurComplementPC *RebuildPreconditioner() override
       {
          return schur_approx_inv;
       }
@@ -249,7 +249,7 @@ namespace mfem
     * @class PMassPC
     * @brief Pressure mass preconditioner: P^{-1} = 1/dt Mp^{-1}
     */
-   class PMassPC : public NavierStokesPC
+   class PMassPC : public SchurComplementPC
    {
 
    public:
@@ -277,9 +277,9 @@ namespace mfem
 
       ~PMassBuilder();
 
-      NavierStokesPC *GetSolver();
+      SchurComplementPC *GetSolver();
 
-      NavierStokesPC *RebuildPreconditioner() override { return pmass; }
+      SchurComplementPC *RebuildPreconditioner() override { return pmass; }
 
    private:
       ParBilinearForm mp_form;
@@ -293,7 +293,7 @@ namespace mfem
     * @class PLapPC
     * @brief Pressure laplacian preconditioner: P^{-1} = Lp^{-1}
     */
-   class PLapPC : public NavierStokesPC
+   class PLapPC : public SchurComplementPC
    {
 
    public:
@@ -318,9 +318,9 @@ namespace mfem
 
       ~PLapBuilder();
 
-      NavierStokesPC *GetSolver();
+      SchurComplementPC *GetSolver();
 
-      NavierStokesPC *RebuildPreconditioner() override { return plap; }
+      SchurComplementPC *RebuildPreconditioner() override { return plap; }
 
    private:
       ParBilinearForm lp_form;

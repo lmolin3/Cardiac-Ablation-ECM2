@@ -15,7 +15,7 @@
 #define MFEM_NAVIER_UNSTEADY_VERSION 0.1
 
 #include "mfem.hpp"
-#include "navier_preconditioners.hpp"
+#include "schur_preconditioners.hpp"
 #include "navier_qoi.hpp"
 #include "integrators/custom_integrators.hpp"
 #include "bc/navier_bchandler.hpp"

@@ -11,7 +11,7 @@
 
 if (MFEM_USE_MPI)
 
-  set(NAVIER_DIR ${CMAKE_SOURCE_DIR}/miniapps/navier-ecm2)
+  set(NAVIER_DIR ${CMAKE_SOURCE_DIR}/miniapps/navier-algebraic-ecm2)
 
   include_directories(
     ${CMAKE_SOURCE_DIR}/miniapps/common
@@ -21,14 +21,14 @@ if (MFEM_USE_MPI)
 
     list(APPEND NAVIER_SRCS
     lib/navier_solver.cpp
-    lib/navier_preconditioners.cpp
+    lib/schur_preconditioners.cpp
     bc/navier_bchandler.cpp
     integrators/custom_integrators.cpp
   )
 
   list(APPEND NAVIER_HDRS
     lib/navier_solver.hpp
-    lib/navier_preconditioners.hpp
+    lib/schur_preconditioners.hpp
     lib/navier_qoi.hpp
     bc/navier_bchandler.hpp
     integrators/custom_integrators.hpp

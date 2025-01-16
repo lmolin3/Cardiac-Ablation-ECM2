@@ -1,4 +1,4 @@
-#include "navier_preconditioners.hpp"
+#include "schur_preconditioners.hpp"
 
 namespace mfem {
 
@@ -7,7 +7,7 @@ namespace navier
 
 /// PCD PRECONDITIONER
 // Implementation of PCD constructor
-PCD::PCD(Solver *Mp_inv, Solver *Lp_inv, Operator *Fp) : NavierStokesPC(Fp->Height()),
+PCD::PCD(Solver *Mp_inv, Solver *Lp_inv, Operator *Fp) : SchurComplementPC(Fp->Height()),
                                                                Mp_inv(Mp_inv),
                                                                Lp_inv(Lp_inv),
                                                                Fp(Fp)
@@ -97,10 +97,10 @@ PCDBuilder::PCDBuilder(ParFiniteElementSpace *pres_fes_, Array<int> &pres_ess_td
 }
 
 // Implementation of PCDBuilder::GetSolver
-NavierStokesPC *PCDBuilder::GetSolver() { return pcd; }
+SchurComplementPC *PCDBuilder::GetSolver() { return pcd; }
 
 // Implementation of PCDBuilder::RebuildPreconditioner
-NavierStokesPC *PCDBuilder::RebuildPreconditioner()
+SchurComplementPC *PCDBuilder::RebuildPreconditioner()
 {
    if ( conv_coeff == nullptr ) // No need to update 
       return pcd;
@@ -132,7 +132,7 @@ PCDBuilder::~PCDBuilder()
 /// CAHOUET CHABARD PRECONDITIONER
 // Implementation of CahouetChabardPC constructor
 CahouetChabardPC::CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv,
-                                   Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis_) : NavierStokesPC(Mp_inv.Height()),
+                                   Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis_) : SchurComplementPC(Mp_inv.Height()),
                                                                            Mp_inv(Mp_inv),
                                                                            Lp_inv(Lp_inv),
                                                                            z(Mp_inv.Height()),
@@ -185,7 +185,7 @@ CahouetChabardBuilder::CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Ar
 }
 
 // Implementation of CahouetChabardBuilder::GetSolver
-NavierStokesPC *CahouetChabardBuilder::GetSolver() { return cahouet_chabard; }
+SchurComplementPC *CahouetChabardBuilder::GetSolver() { return cahouet_chabard; }
 
 // Implementation of CahouetChabardBuilder destructor
 CahouetChabardBuilder::~CahouetChabardBuilder()
@@ -198,7 +198,7 @@ CahouetChabardBuilder::~CahouetChabardBuilder()
 /// APPROXIMATE INVERSE PRECONDITIONER
 // Implementation of SchurApproxInvPC constructor
 SchurApproxInvPC::SchurApproxInvPC(Solver &Mp_inv, Solver &Lp_inv,
-                                   Array<int> &pres_ess_tdofs, real_t dt) : NavierStokesPC(Mp_inv.Height()),
+                                   Array<int> &pres_ess_tdofs, real_t dt) : SchurComplementPC(Mp_inv.Height()),
                                                                            Mp_inv(Mp_inv),
                                                                            Lp_inv(Lp_inv),
                                                                            z(Mp_inv.Height()),
@@ -249,7 +249,7 @@ SchurApproxInvBuilder::SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Ar
 }
 
 // Implementation of SchurApproxInvBuilder::GetSolver
-NavierStokesPC *SchurApproxInvBuilder::GetSolver() { return schur_approx_inv; }
+SchurComplementPC *SchurApproxInvBuilder::GetSolver() { return schur_approx_inv; }
 
 // Implementation of SchurApproxInvBuilder destructor
 SchurApproxInvBuilder::~SchurApproxInvBuilder()
@@ -261,7 +261,7 @@ SchurApproxInvBuilder::~SchurApproxInvBuilder()
 
 /// PRESSURE MASS PRECONDITIONER
 // Implementation of PMassPC constructor
-PMassPC::PMassPC(Solver &Mp_inv, real_t dt) : NavierStokesPC(Mp_inv.Width()), Mp_inv(Mp_inv), dt(dt) {}
+PMassPC::PMassPC(Solver &Mp_inv, real_t dt) : SchurComplementPC(Mp_inv.Width()), Mp_inv(Mp_inv), dt(dt) {}
 
 // Implementation of PMassPC::Mult
 void PMassPC::Mult(const Vector &x, Vector &y) const
@@ -292,7 +292,7 @@ PMassBuilder::PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess
 }
 
 // Implementation of PMassBuilder::GetSolver
-NavierStokesPC *PMassBuilder::GetSolver() { return pmass; }
+SchurComplementPC *PMassBuilder::GetSolver() { return pmass; }
 
 // Implementation of PMassBuilder destructor
 PMassBuilder::~PMassBuilder()
@@ -303,7 +303,7 @@ PMassBuilder::~PMassBuilder()
 
 /// PRESSURE LAPLACIAN PRECONDITIONER
 // Implementation of PLapPC constructor
-PLapPC::PLapPC(Solver &Lp_inv) : NavierStokesPC(Lp_inv.Width()), Lp_inv(Lp_inv) {}
+PLapPC::PLapPC(Solver &Lp_inv) : SchurComplementPC(Lp_inv.Width()), Lp_inv(Lp_inv) {}
 
 // Implementation of PLapPC::Mult
 void PLapPC::Mult(const Vector &x, Vector &y) const
@@ -333,7 +333,7 @@ PLapBuilder::PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_t
 }
 
 // Implementation of PLapBuilder::GetSolver
-NavierStokesPC *PLapBuilder::GetSolver() { return plap; }
+SchurComplementPC *PLapBuilder::GetSolver() { return plap; }
 
 // Implementation of PLapBuilder destructor
 PLapBuilder::~PLapBuilder()
