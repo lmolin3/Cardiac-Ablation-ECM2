@@ -204,9 +204,8 @@ void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
    sigmaM = new HypreParMatrix(*(opM.As<HypreParMatrix>())); // copy of mass matrix used for operator H in Schur Complement
 
    // Divergence
-   ConstantCoefficient neg_one(-1.0);
    D_form = new ParMixedBilinearForm(ufes, pfes);
-   D_form->AddDomainIntegrator(new VectorDivergenceIntegrator(neg_one));
+   D_form->AddDomainIntegrator(new VectorDivergenceIntegrator());
    D_form->Assemble();
    D_form->FormRectangularSystemMatrix(empty, empty, opD);
    opDe.Reset(opD.As<HypreParMatrix>()->EliminateCols(vel_ess_tdof));
