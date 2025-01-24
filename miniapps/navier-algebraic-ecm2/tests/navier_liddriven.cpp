@@ -30,13 +30,13 @@
 //
 // Sample run:
 // 1. Yosida algebraic splitting
-// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --splitting 1
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --splitting 1
 // 2. Chorin-Temam splitting
-// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --splitting 0
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --splitting 0
 // 3. Different preconditioner (0-4, see details below)
-// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --splitting 1 --preconditioner 3
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --splitting 1 --preconditioner 3
 // 4. High-Order Yosida splitting
-// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --gamma 1.0 --splitting 2
+// mpirun -np 4 ./navier-liddriven -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -re 100.0 --splitting 2
    
 #include "lib/navier_solver.hpp"
 #include <fstream>

@@ -210,12 +210,12 @@ void NavierUnsteadySolver::Setup(real_t dt, int pc_type_)
    D_form->FormRectangularSystemMatrix(empty, empty, opD);
    opDe.Reset(opD.As<HypreParMatrix>()->EliminateCols(vel_ess_tdof));
 
-   // Gradient                         // NOTE: 1) We can replace with Dt and avoid assembly. 2) Also we can just maybe use MultTranspose D, and RAP operator with G instead of TripleProductOperator
+   // Gradient
+   ConstantCoefficient negone(-1.0);
    G_form = new ParMixedBilinearForm(pfes, ufes);
-   G_form->AddDomainIntegrator(new GradientIntegrator());
+   G_form->AddDomainIntegrator(new TransposeIntegrator(new VectorDivergenceIntegrator(negone))); 
    G_form->Assemble();
-   G_form->FormRectangularSystemMatrix(empty, empty, opG);
-   opG.EliminateRows(vel_ess_tdof);
+   G_form->FormRectangularSystemMatrix(empty, vel_ess_tdof, opG);
 
    /// 3. Assemble linear form for rhs
    f_form = new ParLinearForm(ufes);
@@ -911,7 +911,7 @@ void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_pres_corr.Start();
    
-   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = kin_vis K + NL  for Yosida)     
+   // Assemble rhs            D H C H G p_pred     
    opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
    H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
    opC->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
@@ -947,9 +947,6 @@ void ChorinTemamSolver::Step(real_t &time, real_t dt, int current_step)
    MFEM_VERIFY(H2->GetConverged(), "Velocity correction step did not converge. Aborting!");
 
    sw_vel_corr.Stop();
-
-   //// 5. Relaxation (velocity)  u = gamma u + (1 - gamma) un
-   //add(gamma,*u,(1.0-gamma),*un,*u);
    
    u_gf->SetFromTrueDofs(*u);
 
@@ -1149,7 +1146,7 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_pres_corr.Start();
    
-   // Assemble rhs            D H A H G p_pred  (A = C for Chorin-Teman, A = kin_vis K + NL  for Yosida)     
+   // Assemble rhs            D H C H G p_pred      
    opG->Mult(*p_pred,*Gp);            //         G p_pred = Gp   --> stored to be reused in Velocity correction
    H1->Mult(*Gp,*tmp2);               //       H G p_pred = tmp2
    opC->Mult(*tmp2,*tmp1);            //     A H G p_pred = tmp1
@@ -1176,8 +1173,7 @@ void YosidaSolver::Step(real_t &time, real_t dt, int current_step)
    /// u = u_pred - H2 G p    (G p_pred for Chorin Temam)
  
    sw_vel_corr.Start();
-          
-   //opG->Mult(*p,*Gp);            //         G p  and not G p_pred    TODO: Check why this causes error
+   opG->Mult(*p,*Gp);    // TODO: Check why this causes error for the flow over cylinder problem        
    H2->Mult(*Gp,*u);
    u->Neg();
    u->Add(1.0,*u_pred);
@@ -1503,7 +1499,7 @@ void HighOrderYosidaSolver::Step(real_t &time, real_t dt, int current_step)
  
    sw_vel_corr.Start();
           
-   // opG->Mult(*p,*Gp);  TODO: Check why this causes error
+   opG->Mult(*p,*Gp);  // TODO: Check why this causes error for the flow over cylinder problem
    H2->Mult(*Gp,*u);
    u->Neg();
    u->Add(1.0,*u_pred);
