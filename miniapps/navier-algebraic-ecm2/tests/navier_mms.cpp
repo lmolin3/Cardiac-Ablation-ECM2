@@ -67,7 +67,7 @@ struct s_NavierContext // Navier Stokes params
    int bcs = 0; // 0 = FullyDirichlet, 1 = FullyNeumann, 2 = Mixed
    int splitting_type = 0;  // 0 = Chorin-Temam, 1 = Yosida, 2 = High-Order Yosida 
    int correction_order = 1; // Correction order for High-Order Yosida
-   int pc_type = 1;
+   int pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LCS, 5: Approximate Inverse
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -264,7 +264,7 @@ int main(int argc, char *argv[])
    args.AddOption(&NS_ctx.pc_type,
                    "-pc",
                    "--preconditioner",
-                   "Preconditioner type (0: Pressure Mass, 1: Scaled Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: Approximate Inverse)");
+                   "Preconditioner type (0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Discrete Laplacian)");
     args.AddOption(&Mesh_ctx.dim,
                    "-d",
                    "--dimension",

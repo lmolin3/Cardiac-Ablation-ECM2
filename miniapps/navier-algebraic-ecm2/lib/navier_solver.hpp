@@ -390,9 +390,9 @@ public:
    HypreBoomerAMG *H1_pc = nullptr;     // preconditioner for H1 operator
    HypreBoomerAMG *H2_pc = nullptr;     // preconditioner for H2 operator
 
-   int pc_type = 0;                 // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
-   PCBuilder *pc_builder = nullptr; // Preconditioner builder for Schur complement
-   Solver *invDHG_pc;               // Preconditioner for Schur complement
+   int pc_type = 0;                              // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
+   SchurComplementPreconditioner *invDHG_PC;     // Preconditioner for Schur complement
+   OrthoSolver *invDHG_OrthoPC;                  // Wrapper for invDHG_PC in case of singular pressure problems
 
    /// Variables for iterations/norm solvers
    int iter_v1solve = 0;

@@ -34,10 +34,10 @@ if (MFEM_USE_MPI)
     integrators/custom_integrators.hpp
   )
 
-  mfem_add_library(navier_ct_ecm2 ${NAVIER_SRCS} ${NAVIER_HDRS})
+  mfem_add_library(navier_algebraic_ecm2 ${NAVIER_SRCS} ${NAVIER_HDRS})
 
     
-  target_link_libraries(navier_ct_ecm2
+  target_link_libraries(navier_algebraic_ecm2
     mfem
     mfem-common
     mfem-common-ecm2
@@ -46,27 +46,27 @@ if (MFEM_USE_MPI)
   add_mfem_miniapp(navier-poiseulle
     MAIN tests/navier_poiseulle.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common navier_ct_ecm2)
+    LIBRARIES mfem mfem-common navier_algebraic_ecm2)
 
   add_mfem_miniapp(navier-mms
     MAIN tests/navier_mms.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common navier_ct_ecm2)
+    LIBRARIES mfem mfem-common navier_algebraic_ecm2)
 
   add_mfem_miniapp(navier-flowaroundcyl
     MAIN tests/navier_flowaroundcyl.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common navier_ct_ecm2)
+    LIBRARIES mfem mfem-common navier_algebraic_ecm2)
 
   add_mfem_miniapp(navier-liddriven
     MAIN tests/navier_liddriven.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common navier_ct_ecm2)
+    LIBRARIES mfem mfem-common navier_algebraic_ecm2)
 
   add_mfem_miniapp(navier-backstep
     MAIN tests/navier_backstep.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common navier_ct_ecm2)
+    LIBRARIES mfem mfem-common navier_algebraic_ecm2)
 
   add_custom_command(TARGET navier-poiseulle POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

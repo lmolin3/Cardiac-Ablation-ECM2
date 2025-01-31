@@ -3,8 +3,8 @@
  * @brief File containing declarations for various preconditioners for Navier Stokes.
  */
 
-#ifndef PRECONDITIONERS_NAVIER_HPP
-#define PRECONDITIONERS_NAVIER_HPP
+#ifndef SCHUR_PRECONDITIONERS_NAVIER_HPP
+#define SCHUR_PRECONDITIONERS_NAVIER_HPP
 
 #include <mfem.hpp>
 
@@ -12,377 +12,217 @@ namespace mfem
 {
    namespace navier
    {
-   /**
-    * @class Builder
-    * @brief Abstract class for navier stokes preconditioner.
-    */
-   class SchurComplementPC : public Solver
-   {
-   public:
-      SchurComplementPC(int s) : Solver(s) {};
+      /**
+       * @class SchurComplementPreconditioner
+       * @brief Abstract class for Schur Complement Preconditioner.
+       */
+      class SchurComplementPreconditioner : public Solver
+      {
+      public:
+         SchurComplementPreconditioner(int s) : Solver(s) {};
 
-      virtual ~SchurComplementPC() {};
+         virtual ~SchurComplementPreconditioner() {};
 
-      void Mult(const Vector &x, Vector &y) const override = 0;
+         void Mult(const Vector &x, Vector &y) const override = 0;
 
-      virtual void SetCoefficients() = 0;
+         // Set operator for the preconditioner
+         void SetOperator(const Operator &op) override {};
 
-      void SetOperator(const Operator &op) override {};
-   };
-
-   /**
-    * @class PCBuilder
-    * @brief Abstract class for preconditioner builders.
-    */
-   class PCBuilder
-   {
-   public:
-
-      PCBuilder() {};
-
-      virtual ~PCBuilder() {}
+         // Rebuild the preconditioner
+         void Rebuild() {};
+      };
 
       /**
-       * @brief Get the solver built by the builder.
-       * @return The built solver.
+       * @class PMass
+       * @brief Pressure mass preconditioner: P^{-1} = kin_vis Mp^{-1}
        */
-      virtual SchurComplementPC *GetSolver() = 0;
+      class PMass : public SchurComplementPreconditioner
+      {
+      public:
+         PMass(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t kin_vis_);
+
+         ~PMass() override;
+
+         void SetCoefficients(real_t kin_vis_) { kin_vis = kin_vis_; }
+
+         void Mult(const Vector &x, Vector &y) const override;
+
+      private:
+         OperatorHandle Mp;
+         ParBilinearForm* mp_form = nullptr;
+         Solver *Mp_inv = nullptr;
+         real_t kin_vis;
+      };
 
       /**
-       * @brief Recreate the preconditioner and return it.
-       * 
-       * @return The rebuilt solver.
+       * @class PLap
+       * @brief Pressure laplacian preconditioner: P^{-1} = sigma Lp^{-1}
        */
-      virtual SchurComplementPC *RebuildPreconditioner() = 0;
-   };
-
-   /**
-    * @class PCD
-    * @brief PCD Preconditioner: P^{-1} = Mp^{-1} Fp Lp^{-1} with Fp = sigma Mp + kin_vis Lp + Np
-    * 
-    * See:
-    *  Bootland, Niall, et al. "Preconditioners for Two-Phase Incompressible Navier-Stokes Flow." SIAM Journal on Scientific Computing 41.4 (2019): B843-B869.
-    */
-   class PCD : public SchurComplementPC
-   {
-
-   public:
-      PCD(Solver *Mp_inv, Solver *Lp_inv, Operator *Fp);
-
-      void Mult(const Vector &x, Vector &y) const override;
-
-      void SetCoefficients() override {};
-
-      void SetFp(Operator *Fp_) { Fp = Fp_; }
-
-   private:
-      Solver *Mp_inv; // No ownership
-      Solver *Lp_inv;
-      Operator *Fp;
-      mutable Vector z, w;
-   };
-
-   /**
-    * @class PCDBuilder
-    * @brief Builder for the PCD preconditioner.
-    */
-   class PCDBuilder : public PCBuilder
-   {
-   public:
-      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs_,
-                 Coefficient *mass_coeff, Coefficient *diff_coeff, VectorCoefficient *conv_coeff = nullptr);
-
-      PCDBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs);
-
-      ~PCDBuilder();
-
-      SchurComplementPC *GetSolver();
-
-      SchurComplementPC *RebuildPreconditioner() override;
-
-   private:
-
-      ParFiniteElementSpace *pres_fes;   // Don't own fes and coeffs
-
-      Coefficient *mass_coeff = nullptr; 
-      Coefficient *diff_coeff = nullptr;
-      VectorCoefficient *conv_coeff = nullptr;
-
-      ParBilinearForm mp_form;
-      OperatorHandle Mp;
-
-      ParBilinearForm lp_form;
-      OperatorHandle Lp;
-
-      ParBilinearForm *fp_form = nullptr;
-      
-      OperatorHandle Fp;
-
-      Solver *Lp_inv;
-      Solver *Mp_inv;
-
-      PCD *pcd = nullptr;
-
-      Array<int> pres_ess_tdofs;
-   };
-
-   /**
-    * @class CahouetChabardPC
-    * @brief Cahouet Chabard preconditioner: P^{-1} = 1/dt Lp^{-1} + kin_vis Mp^{-1}
-    */
-   class CahouetChabardPC : public SchurComplementPC
-   {
-
-   public:
-      CahouetChabardPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis_);
-
-      void Mult(const Vector &x, Vector &y) const override;
-
-      void SetCoefficients() override {};
-
-      void SetCoefficients(real_t new_dt, real_t new_kin_vis)
-      { 
-         dt = new_dt;
-         kin_vis = new_kin_vis;
-      }
-
-   private:
-      Solver &Mp_inv;
-      Solver &Lp_inv;
-      mutable Vector z;
-
-      real_t dt;
-      real_t kin_vis;
-
-      Array<int> pres_ess_tdofs;
-   };
-
-   /**
-    * @class CahouetChabardBuilder
-    * @brief Builder for the CahouetChabard preconditioner.
-    */
-   class CahouetChabardBuilder : public PCBuilder
-   {
-   public:
-      CahouetChabardBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis_);
-
-      ~CahouetChabardBuilder();
-
-      SchurComplementPC *GetSolver();
-
-      SchurComplementPC *RebuildPreconditioner() override
+      class PLap : public SchurComplementPreconditioner
       {
-         return cahouet_chabard;
-      }
 
-   private:
-      ParBilinearForm mp_form;
-      OperatorHandle Mp;
+      public:
+         PLap(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t sigma_);
 
-      ParBilinearForm lp_form;
-      OperatorHandle Lp;
+         ~PLap() override;
 
-      Solver *Lp_inv;
-      Solver *Mp_inv;
+         void Mult(const Vector &x, Vector &y) const override;
 
-      CahouetChabardPC *cahouet_chabard = nullptr;
-   };
+         void SetCoefficients(real_t sigma_) { sigma = sigma_; }
 
-   /**
-    * @class SchurApproxInvPC
-    * @brief Approximate inverse preconditioner: P^{-1} = dt Mp^{-1} + Lp^{-1}
-    */
-   class SchurApproxInvPC : public SchurComplementPC
-   {
+      private:
+         OperatorHandle Lp;
+         ParBilinearForm *lp_form = nullptr;
+         Solver *Lp_inv = nullptr;
+         real_t sigma;
+      };
 
-   public:
-      SchurApproxInvPC(Solver &Mp_inv, Solver &Lp_inv, Array<int> &pres_ess_tdofs, real_t dt);
+      /**
+       * @class PCD
+       * @brief PCD Preconditioner: P^{-1} = Mp^{-1} Fp Lp^{-1} with Fp = sigma Mp + kin_vis Lp + Np
+       *
+       * See:
+       *  1. Elman H. C., Silvester D. J., Wathen A. J. (2014) Finite Elements and Fast Iterative Solvers: With Applications in Incompressible Fluid Dynamics.
+       */
 
-      void Mult(const Vector &x, Vector &y) const override;
-
-      void SetCoefficients() override {};
-
-      void SetCoefficients(real_t new_dt) { dt = new_dt; }
-
-   private:
-      real_t dt;
-      Solver &Mp_inv;
-      Solver &Lp_inv;
-      mutable Vector z;
-      Array<int> pres_ess_tdofs;
-   };
-
-   /**
-    * @class SchurApproxInvBuilder
-    * @brief Builder for the SchurApproxInv preconditioner.
-    */
-   class SchurApproxInvBuilder : public PCBuilder
-   {
-   public:
-      SchurApproxInvBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt);
-
-      ~SchurApproxInvBuilder();
-
-      SchurComplementPC *GetSolver();
-
-      SchurComplementPC *RebuildPreconditioner() override
+      class PCD : public SchurComplementPreconditioner
       {
-         return schur_approx_inv;
-      }
 
-   private:
-      ParBilinearForm mp_form;
-      OperatorHandle Mp;
-      // SparseMatrix M_local;
-      // UMFPackSolver *Mp_inv;
+      public:
+         PCD(ParFiniteElementSpace *pres_fes_, Array<int> &pres_ess_tdofs_,
+             Coefficient *mass_coeff, Coefficient *diff_coeff, VectorCoefficient *conv_coeff_ = nullptr);
 
-      ParBilinearForm lp_form;
-      OperatorHandle Lp;
+         ~PCD() override;
 
-      Solver *Lp_inv;
-      Solver *Mp_inv;
+         void Mult(const Vector &x, Vector &y) const override;
 
-      SchurApproxInvPC *schur_approx_inv = nullptr;
-   };
+         void SetCoefficients(VectorCoefficient *velocity_) { conv_coeff = velocity_; }
 
-   /**
-    * @class PMassPC
-    * @brief Pressure mass preconditioner: P^{-1} = 1/dt Mp^{-1}
-    */
-   class PMassPC : public SchurComplementPC
-   {
+         void Rebuild();
 
-   public:
-      PMassPC(Solver &Mp_inv, real_t dt);
+      private:
+         ParFiniteElementSpace *pres_fes = nullptr;
+         Array<int> pres_ess_tdofs;
+         Array<int> ess_tdofs_pcd; // Needed for the Fp operator
 
-      void Mult(const Vector &x, Vector &y) const override;
+         Coefficient *mass_coeff = nullptr;
+         Coefficient *diff_coeff = nullptr;
+         VectorCoefficient *conv_coeff = nullptr;
 
-      void SetCoefficients() override {};
+         ParBilinearForm *mp_form = nullptr;
+         OperatorHandle Mp;
 
-      void SetCoefficients(real_t new_dt) { dt = new_dt; }
+         ParBilinearForm *lp_form = nullptr;
+         OperatorHandle Lp;
 
-   private:
-      Solver &Mp_inv;
-      real_t dt;
-   };
+         ParBilinearForm *fp_form = nullptr;
+         OperatorHandle Fp;
 
-   /**
-    * @class PMassBuilder
-    * @brief Builder for the PMassPC preconditioner.
-    */
-   class PMassBuilder : public PCBuilder
-   {
-   public:
-      PMassBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt);
+         Solver *Mp_inv;
+         Solver *Lp_inv;
 
-      ~PMassBuilder();
+         mutable Vector z, w;
+      };
 
-      SchurComplementPC *GetSolver();
+      /**
+       * @class CahouetChabard
+       * @brief Cahouet Chabard preconditioner: P^{-1} = 1/dt Lp^{-1} + kin_vis Mp^{-1}
+       *
+       * See:
+       * 1. Cahouet, J., and J‐P. Chabard. "Some fast 3D finite element solvers for the generalized Stokes problem." International Journal for Numerical Methods in Fluids 8.8 (1988): 869-895.
+       * 2. Veneziani, Alessandro. "Block factorized preconditioners for high‐order accurate in time approximation of the Navier‐Stokes equations." Numerical Methods for Partial Differential Equations: An International Journal 19.4 (2003): 487-510.
+       */
+      class CahouetChabard : public SchurComplementPreconditioner
+      {
 
-      SchurComplementPC *RebuildPreconditioner() override { return pmass; }
+      public:
+         CahouetChabard(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs, real_t dt, real_t kin_vis);
 
-   private:
-      ParBilinearForm mp_form;
-      OperatorHandle Mp;
-      SparseMatrix M_local;
-      Solver *Mp_inv;
-      PMassPC *pmass = nullptr;
-   };
+         ~CahouetChabard() override;
 
-   /**
-    * @class PLapPC
-    * @brief Pressure laplacian preconditioner: P^{-1} = Lp^{-1}
-    */
-   class PLapPC : public SchurComplementPC
-   {
+         void Mult(const Vector &x, Vector &y) const override;
 
-   public:
-      PLapPC(Solver &Lp_inv);
+         void SetCoefficients(real_t dt_, real_t kin_vis_)
+         {
+            dt = dt_;
+            kin_vis = kin_vis_;
+         }
 
-      void Mult(const Vector &x, Vector &y) const override;
+      private:
+         Array<int> pres_ess_tdofs;
 
-      void SetCoefficients() override {};
+         ParBilinearForm *mp_form = nullptr;
+         OperatorHandle Mp;
 
-   private:
-      Solver &Lp_inv;
-   };
+         ParBilinearForm *lp_form = nullptr;
+         OperatorHandle Lp;
+         
+         Solver *Lp_inv;
+         Solver *Mp_inv;
 
-   /**
-    * @class PLapBuilder
-    * @brief Builder for the Pressure Laplacian preconditioner.
-    */
-   class PLapBuilder : public PCBuilder
-   {
-   public:
-      PLapBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs);
+         real_t dt;
+         real_t kin_vis;
 
-      ~PLapBuilder();
+         mutable Vector z;
+      };
 
-      SchurComplementPC *GetSolver();
+      /**
+       * @class LSC
+       * @brief Least Squares Commutator preconditioner: P^{-1} = (D T^{-1} G)^{-1}  ( D T^{-1} C T^{-1} G )   (D T^{-1} G)^{-1},  with T = diag(Mv), C = 1/dt Mv + kin_vis K  + N(u*)
+       *
+       * See:
+       * 1. Elman, Howard C., David J. Silvester, and Andrew J. Wathen. Finite elements and fast iterative solvers: with applications in incompressible fluid dynamics. Vol. 22. Oxford university press, 2014.
+       */
+      class LSC : public SchurComplementPreconditioner
+      {
 
-      SchurComplementPC *RebuildPreconditioner() override { return plap; }
+      public:
+         LSC(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs_, HypreParMatrix *D_, HypreParMatrix *G_, HypreParMatrix *Mv);
 
-   private:
-      ParBilinearForm lp_form;
-      OperatorHandle Lp;
-      SparseMatrix L_local;
-      Solver *Lp_inv;
-      PLapPC *plap = nullptr;
-   };
+         ~LSC() override;
 
+         void Mult(const Vector &x, Vector &y) const override;
 
+         void SetOperator(const Operator &op) override { opC = const_cast<Operator *>(&op); };
 
-   /**
-    * @class ApproximateDiscreteLaplacian
-    * @brief Wrapper for approximate Discrete Laplacian preconditioner: P^{-1} = D diag{sigma M}^{-1} G
-    */
-   class ApproximateDiscreteLaplacianPC : public SchurComplementPC
-   {
-   public:
-      ApproximateDiscreteLaplacianPC(Solver &invS, Array<int> &pres_ess_tdofs_, real_t sigma); // @note : for PA we'll need to pass the BilinearForm
+      private:
+         HypreParMatrix *D = nullptr;
+         HypreParMatrix *G = nullptr;
+         Operator *opC = nullptr;
 
-      void Mult(const Vector &x, Vector &y) const override;
+         OperatorHandle S;
+         Solver *invS = nullptr;
+         Vector* diagT;
 
-      void SetCoefficients() override {};
+         Array<int> pres_ess_tdofs;
 
-      void SetCoefficients(real_t sigma_) { sigma = sigma_; }
+         mutable Vector z1, z2, q;
+      };
 
-   private:
-      Solver &invS;
-      real_t sigma;      
-      Array<int> pres_ess_tdofs;
-   };
+      /**
+       * @class ApproximateDiscreteLaplacian
+       * @brief Wrapper for approximate Discrete Laplacian preconditioner: P^{-1} = sigma (D diag{M}^{-1} G)^{-1}
+       */
+      class ApproximateDiscreteLaplacian : public SchurComplementPreconditioner
+      {
+      public:
+         ApproximateDiscreteLaplacian(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs_, const HypreParMatrix *D, const HypreParMatrix *G, const HypreParMatrix *Mv, real_t sigma_); // @note : for PA we'll need to pass the BilinearForm
 
+         ~ApproximateDiscreteLaplacian() override;
 
+         void Mult(const Vector &x, Vector &y) const override;
 
-   /**
-   * @class ApproximateDiscreteLaplacian Builder
-   * @brief Builder for the Approximate Discrete Laplacian preconditioner.
-   */
-   class ApproximateDiscreteLaplacianBuilder : public PCBuilder
-   {
-   public:
-      // D, G need to be modified with correct bcs at velocity ess_tdofs.
-      // M is the mass matrix and can be used as is without modification.
-      ApproximateDiscreteLaplacianBuilder(ParFiniteElementSpace *pres_fes, Array<int> &pres_ess_tdofs_, const HypreParMatrix *D, const HypreParMatrix *G, const HypreParMatrix *M, real_t sigma); // @note : for PA we'll need to pass the BilinearForm
+         void SetCoefficients(real_t sigma_) { sigma = sigma_; }
 
-      ~ApproximateDiscreteLaplacianBuilder();
+      private:
+         OperatorHandle S;
+         Solver *invS = nullptr;
+         real_t sigma;
 
-      SchurComplementPC *GetSolver();
-
-      SchurComplementPC *RebuildPreconditioner() override { return adpl; }
-
-   private:
-      const HypreParMatrix *D = nullptr;
-      const HypreParMatrix *G = nullptr;
-      const HypreParMatrix *M = nullptr;
-      Vector *diag = nullptr;
-      HypreParMatrix *S = nullptr;
-      Solver *invS = nullptr;
-      ApproximateDiscreteLaplacianPC *adpl = nullptr;
-   };
+         Array<int> pres_ess_tdofs;
+      };
 
    } // namespace navier
 } // namespace mfem
 
-#endif // PRECONDITIONERS_NS_HPP
+#endif // SCHUR_PRECONDITIONERS_NAVIER_HPP
