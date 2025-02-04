@@ -428,4 +428,3 @@ pkg.gitcommit
 # Jupyter Notebook Checkpoints
 .ipynb_checkpoints
 
-miniapps/navier-monolithic-ecm2
