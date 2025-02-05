@@ -176,7 +176,10 @@ void LumpedVectorMassIntegrator::AssembleElementMatrix (
    double vdim = GetVDim();
    vdim = (vdim == -1) ? spaceDim : vdim;
 
+    // Assemble local consistent mass matrix
     VectorMassIntegrator::AssembleElementMatrix (el, Trans, elmat); // Assemble consistent Mass Matrix
+
+    // Compute total mass and lump matrix
     ones.SetSize( vdim * dof ); 
     ones = 1.0;
     M_tot = elmat.InnerProduct(ones,ones); // Mtot = 1^T M 1

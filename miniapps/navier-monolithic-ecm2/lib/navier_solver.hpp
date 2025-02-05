@@ -14,8 +14,13 @@
 
 #define MFEM_NAVIER_UNSTEADY_VERSION 0.1
 
+// MFEM headers
 #include "mfem.hpp"
+
+// From commons-ecm2
 #include "utils.hpp"
+
+// From navier-monolithic-ecm2
 #include "navier_preconditioners.hpp"
 #include "schur_preconditioners.hpp"
 #include "navier_qoi.hpp"
@@ -148,7 +153,7 @@ namespace mfem
              * - Setting the Linear solvers.
              * - Setting PA
              */
-            virtual void Setup(real_t dt, int pc_type_ = 0, int schur_pc_type_ = 1);
+            virtual void Setup(real_t dt, int pc_type_ = 0, int schur_pc_type_ = 5, bool mass_lumping = false);
 
             /// Initial condition for velocity
             void SetInitialConditionVel(VectorCoefficient &u_in);
@@ -309,6 +314,7 @@ namespace mfem
             int pc_type = 0;                      // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
             NavierBlockPreconditioner *nsPrec = nullptr; // Navier-Stokes block preconditioner
 
+            bool mass_lumping;      // Enable Mass Lumping 
             int schur_pc_type = 0;  // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
             Solver *invS = nullptr; // Schur Complement Preconditioner
 

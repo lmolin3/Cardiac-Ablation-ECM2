@@ -64,8 +64,9 @@ struct s_NavierContext // Navier Stokes params
    const char *outfolder = "./Output/Poiseulle/Test/";
    bool ExportData = false;
    int bdf = 3;
-   int pc_type = 0;      // 0: Block Diagonal, 1: Pressure Corrected Yosida
-   int schur_pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LCS, 5: Approximate Inverse
+   int pc_type = 0;       // 0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected
+   int schur_pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse
+   bool mass_lumping = false;
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -136,11 +137,17 @@ int main(int argc, char *argv[])
    args.AddOption(&NS_ctx.pc_type,
                    "-pc",
                    "--preconditioner",
-                   "Preconditioner type (0: Block Diagonal, 1: Pressure Corrected Chorin-Temam, 2: Pressure Corrected Yosida)");                 
+                   "Preconditioner type (0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected)");                 
    args.AddOption(&NS_ctx.schur_pc_type,
                    "-schur-pc",
                    "--schur-preconditioner",
                    "Preconditioner type (0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Discrete Laplacian)");
+   args.AddOption(&NS_ctx.mass_lumping,
+                     "-ml",
+                     "--mass-lumping",
+                     "-no-ml",
+                     "--no-mass-lumping",
+                     "Enable or disable mass lumping. (default = false)");
    args.AddOption(&Mesh_ctx.dim,
                    "-d",
                    "--dimension",
@@ -273,7 +280,7 @@ int main(int argc, char *argv[])
    /// 7. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type);
+   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.mass_lumping);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem

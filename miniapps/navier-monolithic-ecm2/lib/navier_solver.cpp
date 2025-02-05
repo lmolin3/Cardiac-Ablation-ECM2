@@ -111,10 +111,11 @@ void MonolithicNavierSolver::SetInitialConditionPres(Coefficient &p_in)
    p_gf->GetTrueDofs(x->GetBlock(1));
 }
 
-void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_)
+void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, bool mass_lumping_)
 {
    pc_type = pc_type_;              // preconditioner type
    schur_pc_type = schur_pc_type_;  // preconditioner type for Schur Complement
+   mass_lumping = mass_lumping_;    // enable mass lumping (and forward to preconditioners if needed)
 
    if (verbose && pmesh->GetMyRank() == 0)
    {
@@ -163,10 +164,10 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_)
       vel_ess_tdof.Append(vel_ess_tdof_y);
       vel_ess_tdof.Append(vel_ess_tdof_z);
    }
-   //if ((bcs->GetPresDbcs()).size() > 0) // Dirichlet pressure bcs
-   //{
-   //   pfes->GetEssentialTrueDofs(bcs->GetPresEssAttr(), pres_ess_tdof); 
-   //}
+ /*  if ((bcs->GetPresDbcs()).size() > 0) // Dirichlet pressure bcs
+   {
+      pfes->GetEssentialTrueDofs(bcs->GetPresEssAttr(), pres_ess_tdof); 
+   } */
 
    /// 3. Setup and assemble bilinear forms 
    int skip_zeros = 0;
@@ -180,8 +181,12 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_)
    K_form->FormSystemMatrix(empty, opK);
 
    // Velocity mass (not modified with bcs)
-   M_form = new ParBilinearForm(ufes);  
-   M_form->AddDomainIntegrator(new VectorMassIntegrator());
+   M_form = new ParBilinearForm(ufes);
+   if (mass_lumping)
+      M_form->AddDomainIntegrator(new LumpedVectorMassIntegrator());
+   else
+      M_form->AddDomainIntegrator(new VectorMassIntegrator());
+
    M_form->Assemble(skip_zeros); 
    //M_form->Finalize();
    M_form->FormSystemMatrix(empty, opM);
@@ -194,6 +199,14 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_)
    D_form->FormRectangularSystemMatrix(empty, empty, opD);
    opDe.Reset(opD.As<HypreParMatrix>()->EliminateCols(vel_ess_tdof));
    
+  /* ConstantCoefficient zero_coeff(0.0);
+   P_form = new ParBilinearForm(pfes);
+   P_form->AddDomainIntegrator(new MassIntegrator(zero_coeff));
+   P_form->Assemble();
+   P_form->Finalize();
+   P_form->FormSystemMatrix(empty, opP);
+   opPe.Reset(opP.As<HypreParMatrix>()->EliminateRowsCols(pres_ess_tdof));*/
+
    // Gradient                         // NOTE: 1) We can replace with Dt and avoid assembly. 2) Also we can just maybe use MultTranspose D, and RAP operator with G instead of TripleProductOperator
    ConstantCoefficient negone(-1.0);      
    G_form = new ParMixedBilinearForm(pfes, ufes);  

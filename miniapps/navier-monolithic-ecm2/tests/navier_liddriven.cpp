@@ -62,8 +62,8 @@ struct s_NavierContext // Navier Stokes params
    int bdf = 3;
    // int splitting_type = 0;  // 0 = Chorin-Temam, 1 = Yosida, 2 = High-Order Yosida 
    // int correction_order = 1; // Correction order for High-Order Yosida   
-   int pc_type = 0;      // 0: Block Diagonal, 1: Pressure Corrected Yosida
-   int schur_pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LCS, 5: Approximate Inverse   
+   int pc_type = 0;       // 0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected
+   int schur_pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse   
 } NS_ctx;
 
 struct s_MeshContext // mesh
