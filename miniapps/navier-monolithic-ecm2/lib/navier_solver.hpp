@@ -307,7 +307,7 @@ namespace mfem
             BlockOperator *nsOp = nullptr;   // Navier-Stokes block operator
 
             int pc_type = 0;                      // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
-            MonolithicNavierPreconditioner *nsPrec = nullptr; // Navier-Stokes block preconditioner
+            NavierBlockPreconditioner *nsPrec = nullptr; // Navier-Stokes block preconditioner
 
             int schur_pc_type = 0;  // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
             Solver *invS = nullptr; // Schur Complement Preconditioner

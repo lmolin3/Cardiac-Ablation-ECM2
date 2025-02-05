@@ -22,6 +22,7 @@ if (MFEM_USE_MPI)
     list(APPEND NAVIER_MONO_SRCS
     lib/navier_solver.cpp
     lib/navier_preconditioners.cpp
+    lib/pressure_correction.cpp
     lib/schur_preconditioners.cpp
     bc/navier_bchandler.cpp
     integrators/custom_integrators.cpp
@@ -30,6 +31,7 @@ if (MFEM_USE_MPI)
   list(APPEND NAVIER_MONO_HDRS
     lib/navier_solver.hpp
     lib/navier_preconditioners.hpp
+    lib/pressure_correction.hpp
     lib/schur_preconditioners.hpp
     lib/navier_qoi.hpp
     bc/navier_bchandler.hpp

@@ -259,7 +259,7 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_)
       invS = new ApproximateDiscreteLaplacian(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>(), C_bdfcoeff.constant);
       break;
    default:
-      MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown preconditioner type: " << schur_pc_type);
+      MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown Schur preconditioner type: " << schur_pc_type);
       break;
    }
 
@@ -280,6 +280,12 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_)
       break;
    case 4: // Yosida
       nsPrec = new YosidaPreconditioner(block_offsets);
+      break;
+   case 5: // Chorin-Temam Pressure Corrected
+      nsPrec = new ChorinTemamPressureCorrectedPreconditioner(block_offsets);
+      break;
+   case 6: // Yosida Pressure Corrected
+      nsPrec = new YosidaPressureCorrectedPreconditioner(block_offsets);
       break;
    default:
       MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown preconditioner type: " << pc_type);
@@ -310,12 +316,13 @@ void MonolithicNavierSolver::Step(real_t &time, real_t dt, int current_step)
    UpdateTimeBCS( time );
    UpdateTimeRHS( time );
 
-   ///////////////////////////////////////////////////////////////////////
-   /// 0. Assemble Convective term (linearized: u_ext \cdot \grad u)   ///
-   ///////////////////////////////////////////////////////////////////////
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
+   /// 0. Assemble Convective term (linearized: u_ext \cdot \grad u)  and update Operator/Preconditioner ///
+   /////////////////////////////////////////////////////////////////////////////////////////////////////////
 
    sw_conv_assembly.Start();
 
+   //// 0.1 Update NS Operator
    // Extrapolate velocity    u_ext = b1 un + b2 u_{n-1} + b3 u_{n-2}    
    // NOTE: we can create method for extrapolating that incorporates the SetTimeIntegrationCoefficients,
    // receives vectors, computes coefficients, return extrap (can be used to extrapolate pressure for Incremental version)
@@ -340,21 +347,38 @@ void MonolithicNavierSolver::Step(real_t &time, real_t dt, int current_step)
    Cmat->Add(1.0, *(opNL.As<HypreParMatrix>()));
    opC.Reset( Cmat, true );     // C = alpha/dt M + K + NL
    Ce = opC.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
+   
+   nsOp->SetBlock(0, 0, opC.Ptr());
 
-   if (pc_type == 3) // Create sigmaM only for Chorin-Temam, and Pressure Corrected Preconditioners
+   //// 0.2 Update NS Preconditioner
+
+   // Create sigmaM for Chorin-Temam, and Pressure Corrected Preconditioners
+   if (pc_type == 3 || pc_type > 4)
    {
-      opSigmaM.Reset( new HypreParMatrix(*(opM.As<HypreParMatrix>())) );
+      opSigmaM.Reset(new HypreParMatrix(*(opM.As<HypreParMatrix>())));
       *opSigmaM.As<HypreParMatrix>() *= C_bdfcoeff.constant;
       auto sigmaMe = opSigmaM.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
       delete sigmaMe;
 
-      static_cast<ChorinTemamPreconditioner *>(nsPrec)->SetH2Operator(opSigmaM.Ptr());
+      switch (pc_type)
+      {
+      case 3: // Chorin-Temam
+         static_cast<ChorinTemamPreconditioner *>(nsPrec)->SetH2Operator(opSigmaM.Ptr());
+         break;
+      case 5: // Chorin-Temam Pressure Corrected
+         static_cast<ChorinTemamPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
+         static_cast<ChorinTemamPressureCorrectedPreconditioner *>(nsPrec)->SetH2Operator(opSigmaM.Ptr());
+         break;
+      case 6: // Yosida Pressure Corrected
+         static_cast<YosidaPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
+         break;
+      default:
+         MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown preconditioner type: " << pc_type);
+         break;
+      }
    }
 
-   nsOp->SetBlock(0, 0, opC.Ptr());
-
-   // Update preconditioner
-   // Update timestep for schur complement
+   // Update schur complement preconditioner
    switch (schur_pc_type)
    {
    case 0:
@@ -376,10 +400,11 @@ void MonolithicNavierSolver::Step(real_t &time, real_t dt, int current_step)
       static_cast<ApproximateDiscreteLaplacian *>(invS)->SetCoefficients(C_bdfcoeff.constant);
       break;
    default:
-      MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown preconditioner type: " << pc_type);
+      MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown Schur preconditioner type: " << schur_pc_type);
       break;
    }
 
+   // Update Block Preconditioner
    nsPrec->SetOperator(*nsOp);
 
 

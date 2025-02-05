@@ -1,6 +1,6 @@
 /**
- * @file preconditioners_ns.hpp
- * @brief File containing declarations for various preconditioners for Navier Stokes.
+ * @file navier_preconditioners.hpp
+ * @brief File containing declarations for various block preconditioners for Navier Stokes.
  */
 
 #ifndef PRECONDITIONERS_NAVIER_HPP
@@ -8,6 +8,7 @@
 
 #include <mfem.hpp>
 #include "utils.hpp"
+#include "pressure_correction.hpp"
 
 namespace mfem
 {
@@ -20,7 +21,7 @@ namespace mfem
       ////////////////////////////////////////////////////////////////////
 
       /**
-       * @class MonolithicNavierPreconditioner
+       * @class NavierBlockPreconditioner
        * @brief Abstract class for Navier Stokes Block preconditioners.
        * The Navier Stokes operator has the form:
        * 
@@ -28,12 +29,12 @@ namespace mfem
        *      [ D  0 ] 
        */     
 
-      class MonolithicNavierPreconditioner : public Solver
+      class NavierBlockPreconditioner : public Solver
       {
       public:
-         MonolithicNavierPreconditioner(Array<int> block_offsets_);
+         NavierBlockPreconditioner(Array<int> block_offsets_);
 
-         virtual ~MonolithicNavierPreconditioner();
+         virtual ~NavierBlockPreconditioner();
 
          virtual void SetOperator(const Operator &op)
          {
@@ -91,7 +92,7 @@ namespace mfem
        * where C is an approximation of the momentum block and S is an approximation of the Schur complement.
        * 
        */
-      class NavierBlockDiagonalPreconditioner : public MonolithicNavierPreconditioner
+      class NavierBlockDiagonalPreconditioner : public NavierBlockPreconditioner
       {
       public:
          NavierBlockDiagonalPreconditioner(Array<int> block_offsets_);
@@ -127,7 +128,7 @@ namespace mfem
        * see:
        * --> Veneziani, Alessandro. "Block factorized preconditioners for high‐order accurate in time approximation of the Navier‐Stokes equations." Numerical Methods for Partial Differential Equations: An International Journal 19.4 (2003): 487-510.
        */
-      class NavierBlockLowerTriangularPreconditioner : public MonolithicNavierPreconditioner
+      class NavierBlockLowerTriangularPreconditioner : public NavierBlockPreconditioner
       {
       public:
          NavierBlockLowerTriangularPreconditioner(Array<int> block_offsets_);
@@ -164,7 +165,7 @@ namespace mfem
        * --> Elman, Howard C., et al. "A parallel block multi-level preconditioner for the 3D incompressible Navier–Stokes equations." Journal of Computational Physics 187.2 (2003): 504-523.
        */
 
-      class NavierBlockUpperTriangularPreconditioner : public MonolithicNavierPreconditioner
+      class NavierBlockUpperTriangularPreconditioner : public NavierBlockPreconditioner
       {
       public:
          NavierBlockUpperTriangularPreconditioner(Array<int> block_offsets_);
@@ -200,7 +201,7 @@ namespace mfem
        * --> Veneziani, Alessandro. "Block factorized preconditioners for high‐order accurate in time approximation of the Navier‐Stokes equations." Numerical Methods for Partial Differential Equations: An International Journal 19.4 (2003): 487-510.
        */ 
 
-      class ChorinTemamPreconditioner : public MonolithicNavierPreconditioner
+      class ChorinTemamPreconditioner : public NavierBlockPreconditioner
       {
       public:
          ChorinTemamPreconditioner(Array<int> block_offsets_);
@@ -219,13 +220,13 @@ namespace mfem
 
          void Mult(const Vector &x, Vector &y) const override;
 
-      private:
+      protected:
          Solver *H2 = nullptr;
          bool own_H2 = false;
          TransposeOperator *H2Gt = nullptr;
          ProductOperator *H2G = nullptr;
          BlockLowerTriangularPreconditioner *L = nullptr;
-         BlockLowerTriangularPreconditioner *U = nullptr; // Define it as Lower Triangular, but we will use MultTranspose
+         BlockLowerTriangularPreconditioner *U = nullptr; // Define U^T as Lower Triangular, but we will use MultTranspose
          mutable BlockVector tmp;
       };
 
@@ -253,7 +254,7 @@ namespace mfem
        * --> Veneziani, Alessandro. "Block factorized preconditioners for high‐order accurate in time approximation of the Navier‐Stokes equations." Numerical Methods for Partial Differential Equations: An International Journal 19.4 (2003): 487-510.
        */
 
-      class YosidaPreconditioner : public MonolithicNavierPreconditioner
+      class YosidaPreconditioner : public NavierBlockPreconditioner
       {
       public:
          YosidaPreconditioner(Array<int> block_offsets_);
@@ -272,15 +273,118 @@ namespace mfem
 
          void Mult(const Vector &x, Vector &y) const override;
 
-      private:
+      protected:
          Solver *H2 = nullptr;
          bool own_H2 = false;
          TransposeOperator *H2Gt = nullptr;
          ProductOperator *H2G = nullptr;
          BlockLowerTriangularPreconditioner *L = nullptr;
-         BlockLowerTriangularPreconditioner *U = nullptr; // Define it as Lower Triangular, but we will use MultTranspose
+         BlockLowerTriangularPreconditioner *U = nullptr; // Define U^T as Lower Triangular, but we will use MultTranspose
          mutable BlockVector tmp;
       };
+
+
+      ////////////////////////////////////////////////////////////////////////////
+      ///                 Yosida Pressure Corrected Preconditioner             ///
+      ////////////////////////////////////////////////////////////////////////////
+
+      /**
+       * @class YosidaPressureCorrectedPreconditioner
+       * @brief Preconditioner based on Yosida (momentum preserving) Algebraic Factorization of Navier Stokes operator with Pressure Correction.
+       * 
+       * The Yosida preconditioner is defined as:
+       * 
+       *    P = [ C     ][ I   C^-1 G ] = L U,    where Q = B^-1 S,   B = (D H1 C H1 G)
+       *        [ D  -S ][         Q  ]
+       * 
+       * with inverse :
+       * 
+       *   P^-1 = U^-1 L^-1
+       * 
+       * where C is an approximation of the momentum block, S is an approximation of the Schur complement.
+       * 
+       * see:
+       * --> Saleri, Fausto, and Alessandro Veneziani. "Pressure correction algebraic splitting methods for the incompressible Navier--Stokes equations." SIAM journal on numerical analysis 43.1 (2005): 174-194.
+       * --> Badia, Santiago, and Ramon Codina. "Algebraic pressure segregation methods for the incompressible Navier-Stokes equations." Archives of Computational Methods in Engineering 15 (2007): 1-52.
+       * --> Gauthier, Alain, Fausto Saleri, and Alessandro Veneziani. "A fast preconditioner for the incompressible Navier Stokes Equations." Computing and Visualization in science 6 (2004): 105-112.
+       * --> Gervasio, Paola, and Fausto Saleri. "Algebraic fractional-step schemes for time-dependent incompressible Navier–Stokes equations." Journal of Scientific Computing 27.1 (2006): 257-269.
+       */
+
+      class YosidaPressureCorrectedPreconditioner : public YosidaPreconditioner
+      {
+      public:
+         YosidaPressureCorrectedPreconditioner(Array<int> block_offsets_);
+
+         ~YosidaPressureCorrectedPreconditioner() override;
+
+         void SetOperator(const Operator &op) override;
+
+         void SetSchurSolver(Solver *invS_, bool own_schur_ = false) override;
+
+         using YosidaPreconditioner::Mult;
+
+         // Methods to forward the SetH1Solver and SetH1Operator to the PressureCorrectionSolver
+         void SetH1Solver(Solver *H1_, bool own_H1_ = false);
+
+         void SetH1Operator(Operator *H1Op);
+
+      private:
+         PressureCorrectionSolver *Q = nullptr;
+         TransposeOperator *Qt = nullptr;
+      };
+
+
+
+   /////////////////////////////////////////////////////////////////////////////
+   ///              Chorin Temam Pressure Corrected Preconditioner           ///
+   /////////////////////////////////////////////////////////////////////////////
+
+   /* 
+    * @class ChorinTemamPressureCorrectedPreconditioner
+    * @brief Preconditioner based on Chorin-Temam (mass preserving) Algebraic Factorization of Navier Stokes operator with Pressure Correction.
+    * 
+    * The Chorin-Temam preconditioner is defined as:
+    * 
+    *    P = [ C     ][ I   H2 G Q ] = [ C     ][ I   H2 G ] [ I    ] = L U T   where Q = B^-1 S,   B = (D H1 C H1 G)
+    *        [ D  -S ][        Q   ]   [ D  -S ][       I  ] [    Q ]
+    * 
+    * with inverse :
+    * 
+    *   P^-1 = T^-1 U^-1 L^-1
+    * 
+    * where C is an approximation of the momentum block, S is an approximation of the Schur complement and H2 = (alpha/dt M)^-1.
+    * 
+    * see:
+    * --> Saleri, Fausto, and Alessandro Veneziani. "Pressure correction algebraic splitting methods for the incompressible Navier--Stokes equations." SIAM journal on numerical analysis 43.1 (2005): 174-194.
+    * --> Badia, Santiago, and Ramon Codina. "Algebraic pressure segregation methods for the incompressible Navier-Stokes equations." Archives of Computational Methods in Engineering 15 (2007): 1-52.
+    * --> Gauthier, Alain, Fausto Saleri, and Alessandro Veneziani. "A fast preconditioner for the incompressible Navier Stokes Equations." Computing and Visualization in science 6 (2004): 105-112.
+    * --> Gervasio, Paola, and Fausto Saleri. "Algebraic fractional-step schemes for time-dependent incompressible Navier–Stokes equations." Journal of Scientific Computing 27.1 (2006): 257-269.
+    */
+
+   class ChorinTemamPressureCorrectedPreconditioner : public ChorinTemamPreconditioner
+   {
+   public:
+      ChorinTemamPressureCorrectedPreconditioner(Array<int> block_offsets_);
+
+      ~ChorinTemamPressureCorrectedPreconditioner() override;
+
+      void SetOperator(const Operator &op) override;
+
+      void SetSchurSolver(Solver *invS_, bool own_schur_ = false) override;
+
+      void Mult(const Vector &x, Vector &y) const override;
+
+      // Methods to forward the SetH1Solver and SetH1Operator to the PressureCorrectionSolver
+      void SetH1Solver(Solver *H1_, bool own_H1_ = false);
+
+      void SetH1Operator(Operator *H1Op);
+
+   private:
+      PressureCorrectionSolver *Q = nullptr;
+      BlockDiagonalPreconditioner *T = nullptr;
+      mutable BlockVector tmp2;
+   };
+
 
 
 

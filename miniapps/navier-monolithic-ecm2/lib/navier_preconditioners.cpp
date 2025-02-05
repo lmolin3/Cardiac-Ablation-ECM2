@@ -10,8 +10,8 @@ namespace mfem
         ///                     Abstract Monolithic Preconditioner                ///
         /////////////////////////////////////////////////////////////////////////////
 
-        // Implementation of MonolithicNavierPreconditioner constructor
-        MonolithicNavierPreconditioner::MonolithicNavierPreconditioner(Array<int> block_offsets_) : block_offsets(block_offsets_)
+        // Implementation of NavierBlockPreconditioner constructor
+        NavierBlockPreconditioner::NavierBlockPreconditioner(Array<int> block_offsets_) : Solver(block_offsets_[2]), block_offsets(block_offsets_) 
         {
             // Compute sizes
             usize = block_offsets[1] - block_offsets[0];
@@ -22,8 +22,8 @@ namespace mfem
             own_schur = false;
         }
 
-        // Implementation of MonolithicNavierPreconditioner destructor
-        MonolithicNavierPreconditioner::~MonolithicNavierPreconditioner()
+        // Implementation of NavierBlockPreconditioner destructor
+        NavierBlockPreconditioner::~NavierBlockPreconditioner()
         {
             if (own_momentum)
                 delete invC;
@@ -37,7 +37,7 @@ namespace mfem
         ////////////////////////////////////////////////////////////////////////////////////////
 
         // Implementation of NavierBlockDiagonalPreconditioner constructor
-        NavierBlockDiagonalPreconditioner::NavierBlockDiagonalPreconditioner(Array<int> block_offsets_) : MonolithicNavierPreconditioner(block_offsets_)
+        NavierBlockDiagonalPreconditioner::NavierBlockDiagonalPreconditioner(Array<int> block_offsets_) : NavierBlockPreconditioner(block_offsets_)
         {
             invC = new HypreBoomerAMG();
             static_cast<HypreBoomerAMG *>(invC)->SetPrintLevel(0);
@@ -49,7 +49,7 @@ namespace mfem
         // Implementation of NavierBlockDiagonalPreconditioner RebuildPreconditioner
         void NavierBlockDiagonalPreconditioner::SetOperator(const Operator &op)
         {   
-            MonolithicNavierPreconditioner::SetOperator(op);
+            NavierBlockPreconditioner::SetOperator(op);
             invC->SetOperator(nsOp->GetBlock(0, 0));
         }
 
@@ -75,7 +75,7 @@ namespace mfem
         //////////////////////////////////////////////////////////////////////////////
 
         // Implementation of NavierBlockLowerTriangularPreconditioner constructor
-        NavierBlockLowerTriangularPreconditioner::NavierBlockLowerTriangularPreconditioner(Array<int> block_offsets_) : MonolithicNavierPreconditioner(block_offsets_)
+        NavierBlockLowerTriangularPreconditioner::NavierBlockLowerTriangularPreconditioner(Array<int> block_offsets_) : NavierBlockPreconditioner(block_offsets_)
         {
             // Set the momentum solver
             invC = new HypreBoomerAMG();
@@ -87,7 +87,7 @@ namespace mfem
         // Implementation of NavierBlockLowerTriangularPreconditioner SetOperator
         void NavierBlockLowerTriangularPreconditioner::SetOperator(const Operator &op)
         {
-            MonolithicNavierPreconditioner::SetOperator(op);
+            NavierBlockPreconditioner::SetOperator(op);
             invC->SetOperator(nsOp->GetBlock(0, 0));
         }
 
@@ -123,7 +123,7 @@ namespace mfem
         /////////////////////////////////////////////////////////////////////////////////////
 
         // Implementation of NavierBlockUpperTriangularPreconditioner constructor
-        NavierBlockUpperTriangularPreconditioner::NavierBlockUpperTriangularPreconditioner(Array<int> block_offsets_) : MonolithicNavierPreconditioner(block_offsets_)
+        NavierBlockUpperTriangularPreconditioner::NavierBlockUpperTriangularPreconditioner(Array<int> block_offsets_) : NavierBlockPreconditioner(block_offsets_)
         {
             // Set the momentum solver
             invC = new HypreBoomerAMG();
@@ -135,7 +135,7 @@ namespace mfem
         // Implementation of NavierBlockUpperTriangularPreconditioner SetOperator
         void NavierBlockUpperTriangularPreconditioner::SetOperator(const Operator &op)
         {
-            MonolithicNavierPreconditioner::SetOperator(op);
+            NavierBlockPreconditioner::SetOperator(op);
             invC->SetOperator(nsOp->GetBlock(0, 0));
         }
 
@@ -170,7 +170,7 @@ namespace mfem
         ////////////////////////////////////////////////////////////////////////////
 
         // Implementation of ChorinTemamPreconditioner constructor
-        ChorinTemamPreconditioner::ChorinTemamPreconditioner(Array<int> block_offsets_) : MonolithicNavierPreconditioner(block_offsets_)
+        ChorinTemamPreconditioner::ChorinTemamPreconditioner(Array<int> block_offsets_) : NavierBlockPreconditioner(block_offsets_)
         {
             // Set the momentum solver
             invC = new HypreBoomerAMG();
@@ -204,14 +204,14 @@ namespace mfem
         // Implementation of ChorinTemamPreconditioner SetMomentumSolver
         void ChorinTemamPreconditioner::SetMomentumSolver(Solver *invC_, bool own_momentum_)
         {
-            MonolithicNavierPreconditioner::SetMomentumSolver(invC_, own_momentum_);
+            NavierBlockPreconditioner::SetMomentumSolver(invC_, own_momentum_);
             L->SetDiagonalBlock(0, invC);
         }
 
         // Implementation of ChorinTemamPreconditioner SetSchurSolver
         void ChorinTemamPreconditioner::SetSchurSolver(Solver *invS_, bool own_schur_)
         {
-            MonolithicNavierPreconditioner::SetSchurSolver(invS_, own_schur_);
+            NavierBlockPreconditioner::SetSchurSolver(invS_, own_schur_);
             L->SetDiagonalBlock(1, invS);
         }
 
@@ -250,7 +250,7 @@ namespace mfem
         // Implementation of ChorinTemamPreconditioner SetOperator
         void ChorinTemamPreconditioner::SetOperator(const Operator &op)
         {
-            MonolithicNavierPreconditioner::SetOperator(op);
+            NavierBlockPreconditioner::SetOperator(op);
 
             // Set the momentum operator
             invC->SetOperator(nsOp->GetBlock(0, 0));
@@ -291,7 +291,7 @@ namespace mfem
         /////////////////////////////////////////////////////////////////////////////////////
 
         // Implementation of YosidaPreconditioner constructor
-        YosidaPreconditioner::YosidaPreconditioner(Array<int> block_offsets_) : MonolithicNavierPreconditioner(block_offsets_)
+        YosidaPreconditioner::YosidaPreconditioner(Array<int> block_offsets_) : NavierBlockPreconditioner(block_offsets_)
         {
             // Set the momentum solver
             invC = new HypreBoomerAMG();
@@ -326,14 +326,14 @@ namespace mfem
         // Implementation of YosidaPreconditioner SetMomentumSolver
         void YosidaPreconditioner::SetMomentumSolver(Solver *invC_, bool own_momentum_)
         {
-            MonolithicNavierPreconditioner::SetMomentumSolver(invC_, own_momentum_);
+            NavierBlockPreconditioner::SetMomentumSolver(invC_, own_momentum_);
             L->SetDiagonalBlock(0, invC);
         }
 
         // Implementation of YosidaPreconditioner SetSchurSolver
         void YosidaPreconditioner::SetSchurSolver(Solver *invS_, bool own_schur_)
         {
-            MonolithicNavierPreconditioner::SetSchurSolver(invS_, own_schur_);
+            NavierBlockPreconditioner::SetSchurSolver(invS_, own_schur_);
             L->SetDiagonalBlock(1, invS);
         }
 
@@ -372,7 +372,7 @@ namespace mfem
         // Implementation of YosidaPreconditioner SetOperator
         void YosidaPreconditioner::SetOperator(const Operator &op)
         {
-            MonolithicNavierPreconditioner::SetOperator(op);
+            NavierBlockPreconditioner::SetOperator(op);
 
             // Set the momentum operator
             invC->SetOperator(nsOp->GetBlock(0, 0));
@@ -409,6 +409,123 @@ namespace mfem
         }
 
         
+        ////////////////////////////////////////////////////////////////////////////
+        ///                 Yosida Pressure Corrected Preconditioner             ///
+        ////////////////////////////////////////////////////////////////////////////
+
+        // Implementation of YosidaPressureCorrectedPreconditioner constructor
+        YosidaPressureCorrectedPreconditioner::YosidaPressureCorrectedPreconditioner(Array<int> block_offsets_) : YosidaPreconditioner(block_offsets_)
+        {
+            // Create pressure correction solver
+            Q = new PressureCorrectionSolver(block_offsets);
+
+            // Need to wrap in a TransposeOperator since we'll use MultTranspose (U is defined as Lower Triangular)               
+            Qt = new TransposeOperator(*Q);
+            U->SetDiagonalBlock(1, Qt);
+        }
+
+        // Implementation of YosidaPressureCorrectedPreconditioner destructor
+        YosidaPressureCorrectedPreconditioner::~YosidaPressureCorrectedPreconditioner()
+        {
+            delete Q;
+            delete Qt;
+        }
+
+        // Implementation of YosidaPressureCorrectedPreconditioner SetOperator
+        void YosidaPressureCorrectedPreconditioner::SetOperator(const Operator &op)
+        {
+            YosidaPreconditioner::SetOperator(op);
+            Q->SetOperator(op);
+        }
+
+        // Implementation of YosidaPressureCorrectedPreconditioner SetSchurSolver
+        void YosidaPressureCorrectedPreconditioner::SetSchurSolver(Solver *invS_, bool own_schur_)
+        {
+            YosidaPreconditioner::SetSchurSolver(invS_, own_schur_);
+            Q->SetSchurSolver(invS_, false);
+        }
+
+        // Implementation of YosidaPressureCorrectedPreconditioner SetH1Solver
+        void YosidaPressureCorrectedPreconditioner::SetH1Solver(Solver *H1_, bool own_H1_)
+        {
+            Q->SetH1Solver(H1_, own_H1_);
+        }
+
+        // Implementation of YosidaPressureCorrectedPreconditioner SetH1Operator
+        void YosidaPressureCorrectedPreconditioner::SetH1Operator(Operator *H1Op)
+        {
+            Q->SetH1Operator(H1Op);
+        }        
+
+
+    ////////////////////////////////////////////////////////////////////////////
+    ///            Chorin Temam Pressure Corrected Preconditioner            ///
+    ////////////////////////////////////////////////////////////////////////////
+
+    // Implementation of ChorinTemamPressureCorrectedPreconditioner constructor
+    ChorinTemamPressureCorrectedPreconditioner::ChorinTemamPressureCorrectedPreconditioner(Array<int> block_offsets_) : ChorinTemamPreconditioner(block_offsets_)
+    {
+        // Create pressure correction solver
+        Q = new PressureCorrectionSolver(block_offsets);
+
+        // Create diagonal block preconditioner for pressure correction
+        T = new BlockDiagonalPreconditioner(block_offsets);
+        T->SetDiagonalBlock(1, Q);
+    }
+
+    // Implementation of ChorinTemamPressureCorrectedPreconditioner destructor
+    ChorinTemamPressureCorrectedPreconditioner::~ChorinTemamPressureCorrectedPreconditioner()
+    {
+        delete Q;
+        delete T;
+    }
+
+    // Implementation of ChorinTemamPressureCorrectedPreconditioner SetOperator
+    void ChorinTemamPressureCorrectedPreconditioner::SetOperator(const Operator &op)
+    {
+        ChorinTemamPreconditioner::SetOperator(op);
+        Q->SetOperator(op);
+    }
+
+    // Implementation of ChorinTemamPressureCorrectedPreconditioner SetSchurSolver
+    void ChorinTemamPressureCorrectedPreconditioner::SetSchurSolver(Solver *invS_, bool own_schur_)
+    {
+        ChorinTemamPreconditioner::SetSchurSolver(invS_, own_schur_);
+        Q->SetSchurSolver(invS_, false);
+    }
+
+    // Implementation of ChorinTemamPressureCorrectedPreconditioner SetH1Solver
+    void ChorinTemamPressureCorrectedPreconditioner::SetH1Solver(Solver *H1_, bool own_H1_)
+    {
+        Q->SetH1Solver(H1_, own_H1_);
+    }
+
+    // Implementation of ChorinTemamPressureCorrectedPreconditioner SetH1Operator
+    void ChorinTemamPressureCorrectedPreconditioner::SetH1Operator(Operator *H1Op)
+    {
+        Q->SetH1Operator(H1Op);
+    }        
+
+    // Implementation of ChorinTemamPressureCorrectedPreconditioner Mult
+    void ChorinTemamPressureCorrectedPreconditioner::Mult(const Vector &x, Vector &y) const
+    {
+        tmp.Update(block_offsets);
+        tmp = 0.0;
+        tmp2.Update(block_offsets);
+        tmp2 = 0.0;
+
+        // Unpack the temporary block vector
+        Vector upred, ppred;
+        upred.MakeRef(tmp, block_offsets[0], usize);
+        ppred.MakeRef(tmp, block_offsets[1], psize);
+
+        // Perform the block elimination for the preconditioner
+        L->Mult(x, tmp);
+        ppred.Neg(); // Because we are applying the negative of the Schur complement
+        U->MultTranspose(tmp, tmp2);
+        T->Mult(tmp2, y);
+    }
+
 
     } // namespace navier
 
