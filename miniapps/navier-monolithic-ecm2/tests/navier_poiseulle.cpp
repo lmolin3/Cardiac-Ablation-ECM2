@@ -32,9 +32,16 @@
 //
 //
 // Sample run:
-// 1. Block diagonal preconditioner
-// mpirun -np 4 ./navier-poiseulle-monolithic -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -dp 1.0 --preconditioner 0 --schur-preconditioner 5
-
+//
+// 1. Yosida block preconditioner + ApproximateDiscreteLaplacian Schur complement preconditioner
+// mpirun -np 4 ./navier-poiseulle-monolithic -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -dp 1.0 --preconditioner 4 --schur-preconditioner 5
+//
+// 2. Mass lumping
+// mpirun -np 4 ./navier-poiseulle-monolithic -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -dp 1.0 --preconditioner 4 --schur-preconditioner 5 --mass-lumping
+//
+// 3. Stiff strain
+// mpirun -np 4 ./navier-poiseulle-monolithic -d 2 -rs 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -kv 1.0 -dp 1.0 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
+//
    
 #include "lib/navier_solver.hpp"
 #include <fstream>
@@ -66,7 +73,8 @@ struct s_NavierContext // Navier Stokes params
    int bdf = 3;
    int pc_type = 0;       // 0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected
    int schur_pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse
-   bool mass_lumping = false;
+   bool mass_lumping = false; // Enable mass lumping
+   bool stiff_strain = false; // false: viscous stress (Δu), true: stiff strain ( ∇u + ∇u^T )
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -148,6 +156,12 @@ int main(int argc, char *argv[])
                      "-no-ml",
                      "--no-mass-lumping",
                      "Enable or disable mass lumping. (default = false)");
+   args.AddOption(&NS_ctx.stiff_strain,
+                     "-ss",
+                     "--stiff-strain",
+                     "-no-ss",
+                     "--no-stiff-strain",
+                     "Enable or disable stiff strain. (default = false)");
    args.AddOption(&Mesh_ctx.dim,
                    "-d",
                    "--dimension",
@@ -280,7 +294,7 @@ int main(int argc, char *argv[])
    /// 7. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.mass_lumping);
+   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.mass_lumping, NS_ctx.stiff_strain);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem

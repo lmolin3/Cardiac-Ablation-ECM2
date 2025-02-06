@@ -24,7 +24,8 @@
 #include "navier_preconditioners.hpp"
 #include "schur_preconditioners.hpp"
 #include "navier_qoi.hpp"
-#include "integrators/custom_integrators.hpp"
+#include "integrators/custom_bilinear_integrators.hpp"
+#include "integrators/custom_linear_integrators.hpp"
 #include "bc/navier_bchandler.hpp"
 #include "mesh_extras.hpp"
 #include "pfem_extras.hpp"
@@ -153,7 +154,7 @@ namespace mfem
              * - Setting the Linear solvers.
              * - Setting PA
              */
-            virtual void Setup(real_t dt, int pc_type_ = 0, int schur_pc_type_ = 5, bool mass_lumping = false);
+            virtual void Setup(real_t dt, int pc_type_ = 0, int schur_pc_type_ = 5, bool mass_lumping = false, bool stiff_strain = false);
 
             /// Initial condition for velocity
             void SetInitialConditionVel(VectorCoefficient &u_in);
@@ -315,6 +316,8 @@ namespace mfem
             NavierBlockPreconditioner *nsPrec = nullptr; // Navier-Stokes block preconditioner
 
             bool mass_lumping;      // Enable Mass Lumping 
+            bool stiff_strain;      // Enable Stiff Strain
+            
             int schur_pc_type = 0;  // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
             Solver *invS = nullptr; // Schur Complement Preconditioner
 

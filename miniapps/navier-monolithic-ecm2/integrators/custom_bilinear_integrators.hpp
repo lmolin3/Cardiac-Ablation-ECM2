@@ -146,42 +146,34 @@ public:
 };
 
 
+/**
+ *  Class for Stiff Strain Integrator for the Navier Stokes equations
+ * 
+ * a(u,v) := 2 nu ( epsilon(u), epsilon(v) ), where epsilon(u) = 1/2 (grad u + grad u^T)
+ * 
+ * This is a 'Vector' integrator, i.e. defined for FE spaces
+ * using multiple copies of a scalar FE space.
+ * 
+ */
 
-/** Class for boundary integration of Neumann BCs with known vector and scalar field
- * 
- * L(v) := (Q1 n.grad(U) + Q2 P.n, v), where
- * 
- * U is a vector field and P is a scalar field. Q1 and Q2 are scalar Coefficients.
- * 
- * (e.g. for Navier Stokes Q1=viscosity, Q2 = -1.0)
- * 
- **/
-class VectorNeumannLFIntegrator : public LinearFormIntegrator
+class StiffStrainIntegrator : public ElasticityIntegrator
 {
-private:
-    const ParGridFunction *U;
-    const ParGridFunction *P;
-    Coefficient &Q1, &Q2;
-    Vector shape, vec, nor, pn, gradUn;
-    DenseMatrix gradU;
-
 public:
-   /// Constructs a boundary integrator with a given VectorCoefficient QG
-   VectorNeumannLFIntegrator(ParGridFunction &U, ParGridFunction &P, Coefficient &Q1, Coefficient &Q2)
-    : U(&U), P(&P), Q1(Q1), Q2(Q2) {}
+   StiffStrainIntegrator(Coefficient *Q) : ElasticityIntegrator(*Q, 0.0, 1.0) {}
 
-   /** Given a particular boundary Finite Element and a transformation (Tr)
-       computes the element boundary vector, elvect. */
-   virtual void AssembleRHSElementVect(const FiniteElement &el,
-                                       ElementTransformation &Tr,
-                                       Vector &elvect);
+   StiffStrainIntegrator() : ElasticityIntegrator(*new ConstantCoefficient(1.0), 0.0, 1.0)
+   {
+      own_mu = true;
+   }
 
-   // For DG spaces    NYI
-   virtual void AssembleRHSElementVect(const FiniteElement &el,
-                                       FaceElementTransformations &Tr,
-                                       Vector &elvect);
+   ~StiffStrainIntegrator()
+   {
+      if (own_mu)
+         delete mu;
+   }
 
-   using LinearFormIntegrator::AssembleRHSElementVect;
+   private:
+      bool own_mu = false;
 };
 
 }

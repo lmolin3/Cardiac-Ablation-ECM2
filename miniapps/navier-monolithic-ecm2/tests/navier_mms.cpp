@@ -26,8 +26,16 @@
 // Bottom=1, Right=2, Top=3, Left=4
 //
 // Sample run:
-// 1. 
-// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --preconditioner 0 --schur-preconditioner 5
+//
+// 1. Yosida block preconditioner + ApproximateDiscreteLaplacian Schur complement preconditioner
+// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5
+// 
+// 2. Mass lumping
+// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --mass-lumping
+//
+// 3. Stiff strain
+// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
+//
 
 #include "lib/navier_solver.hpp"
 #include <fstream>
@@ -61,6 +69,8 @@ struct s_NavierContext // Navier Stokes params
    // int correction_order = 1; // Correction order for High-Order Yosida   
    int pc_type = 0;       // 0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected
    int schur_pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse
+   bool mass_lumping = false; // Enable mass lumping
+   bool stiff_strain = false; // false: viscous stress (Δu), true: stiff strain ( ∇u + ∇u^T )
 } NS_ctx;
 
 struct s_MeshContext // mesh
@@ -246,10 +256,6 @@ int main(int argc, char *argv[])
                    "-bdf",
                    "--bdf-order",
                    "Maximum bdf order (1<=bdf<=3)");
-   //args.AddOption(&NS_ctx.splitting_type,
-   //               "-s",
-   //              "--splitting",
-   //                "Splitting type (0: Chorin-Temam, 1: Yosida, 2: High-Order Yosida)"); 
    args.AddOption(&NS_ctx.pc_type,
                    "-pc",
                    "--preconditioner",
@@ -258,6 +264,18 @@ int main(int argc, char *argv[])
                    "-schur-pc",
                    "--schur-preconditioner",
                    "Preconditioner type (0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Discrete Laplacian)");
+   args.AddOption(&NS_ctx.mass_lumping,
+                     "-ml",
+                     "--mass-lumping",
+                     "-no-ml",
+                     "--no-mass-lumping",
+                     "Enable or disable mass lumping. (default = false)");
+   args.AddOption(&NS_ctx.stiff_strain,
+                     "-ss",
+                     "--stiff-strain",
+                     "-no-ss",
+                     "--no-stiff-strain",
+                     "Enable or disable stiff strain. (default = false)");
     args.AddOption(&Mesh_ctx.dim,
                    "-d",
                    "--dimension",
@@ -505,7 +523,7 @@ int main(int argc, char *argv[])
    /// 7. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type);
+   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.mass_lumping, NS_ctx.stiff_strain);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem

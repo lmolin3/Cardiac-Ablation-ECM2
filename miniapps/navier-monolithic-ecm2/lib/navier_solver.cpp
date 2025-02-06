@@ -111,11 +111,12 @@ void MonolithicNavierSolver::SetInitialConditionPres(Coefficient &p_in)
    p_gf->GetTrueDofs(x->GetBlock(1));
 }
 
-void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, bool mass_lumping_)
+void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, bool mass_lumping_, bool stiff_strain_)
 {
    pc_type = pc_type_;              // preconditioner type
    schur_pc_type = schur_pc_type_;  // preconditioner type for Schur Complement
    mass_lumping = mass_lumping_;    // enable mass lumping (and forward to preconditioners if needed)
+   stiff_strain = stiff_strain_;    // enable stiff strain integrator
 
    if (verbose && pmesh->GetMyRank() == 0)
    {
@@ -174,8 +175,11 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, 
    Array<int> empty;
 
    // Velocity laplacian K (not scaled by viscosity --> done in assembly of Momentum operator)
-   K_form = new ParBilinearForm(ufes);  
-   K_form->AddDomainIntegrator(new VectorDiffusionIntegrator());
+   K_form = new ParBilinearForm(ufes);
+   if (stiff_strain)
+      K_form->AddDomainIntegrator(new StiffStrainIntegrator());
+   else
+      K_form->AddDomainIntegrator(new VectorDiffusionIntegrator());
    K_form->Assemble(skip_zeros); 
    //K_form->Finalize();
    K_form->FormSystemMatrix(empty, opK);

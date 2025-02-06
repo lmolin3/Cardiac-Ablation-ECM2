@@ -25,7 +25,8 @@ if (MFEM_USE_MPI)
     lib/pressure_correction.cpp
     lib/schur_preconditioners.cpp
     bc/navier_bchandler.cpp
-    integrators/custom_integrators.cpp
+    integrators/custom_bilinear_integrators.cpp
+    integrators/custom_linear_integrators.cpp
   )
 
   list(APPEND NAVIER_MONO_HDRS
@@ -35,7 +36,8 @@ if (MFEM_USE_MPI)
     lib/schur_preconditioners.hpp
     lib/navier_qoi.hpp
     bc/navier_bchandler.hpp
-    integrators/custom_integrators.hpp
+    integrators/custom_bilinear_integrators.hpp
+    integrators/custom_linear_integrators.hpp
   )
 
   mfem_add_library(navier_monolithic_ecm2 ${NAVIER_MONO_SRCS} ${NAVIER_MONO_HDRS})
