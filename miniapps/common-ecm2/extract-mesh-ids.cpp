@@ -20,10 +20,7 @@
 #include <fstream>
 #include <limits>
 #include <cstdlib>
-
-#include <experimental/filesystem> // or #include <filesystem> for C++17 and up
-    
-namespace fs = std::experimental::filesystem;
+#include "FilesystemHelper.hpp"  
 
 using namespace mfem;
 using namespace std;

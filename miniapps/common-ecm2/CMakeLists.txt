@@ -34,8 +34,13 @@ set(MINIAPPS_COMMON_HEADERS ${MINIAPPS_COMMON_HEADERS} ${HDRS} PARENT_SCOPE)
 mfem_add_library(mfem-common-ecm2 ${SRCS} ${HDRS})
 target_link_libraries(mfem-common-ecm2 mfem)
 
+# Check if we need to link stdc++fs for C++14
+if (CMAKE_CXX_STANDARD LESS 17)
+    target_link_libraries(mfem-common-ecm2 stdc++fs)
+endif()
 
 add_mfem_miniapp(extract-mesh-ids
   MAIN extract-mesh-ids.cpp
   ${MFEM_MINIAPPS_COMMON_HEADERS}
-  LIBRARIES mfem-common stdc++fs)
+  LIBRARIES mfem-common mfem-common-ecm2)
+

@@ -47,9 +47,11 @@
 
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h> // Include for mkdir
+
 #include <iostream>
 #include <memory>
+
+#include "FilesystemHelper.hpp"
 
 using namespace mfem;
 
@@ -62,7 +64,8 @@ std::function<void(const Vector &, Vector &)> FiberDirection(std::function<void(
 
 // Forward declaration
 void print_matrix(const DenseMatrix &A);
-void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step);
+void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step);
+void saveSubiterationCount(const Array<int> &data, const std::string &outfolder, const std::string &name);
 
 static real_t T_solid = 37;    // 37.0;   // Body temperature
 static real_t T_fluid = 37;    // 30.0;  // Fluid temperature
@@ -121,7 +124,7 @@ int main(int argc, char *argv[])
    // Postprocessing
    bool print_timing = false;
    bool visit = false;
-   bool paraview = true;
+   bool paraview = false;
    int save_freq = 1; // Save fields every 'save_freq' time steps
    const char *outfolder = "./Output/Test";
    bool save_convergence = false;
@@ -1006,8 +1009,6 @@ int main(int argc, char *argv[])
       mfem::out << "\033[31m\nSolving RF... \033[0m" << std::endl;
 
    {
-      Array<real_t> convergence_subiter;
-
       bool converged = false;
       double tol = 1.0e-4;
       int max_iter = 100;
@@ -1027,6 +1028,8 @@ int main(int argc, char *argv[])
       real_t t_transfer, t_interp, t_solve_fluid, t_solve_solid, t_relax_fluid, t_relax_solid, t_error, t_error_bdry, t_paraview, t_joule;
 
       bool assembleRHS = true;
+      Array2D<real_t> convergence_rf(max_iter, 3); convergence_rf = 0.0;
+
       while (!converged && iter <= max_iter)
       {
 
@@ -1126,9 +1129,11 @@ int main(int argc, char *argv[])
 
          iter++;
 
-         if (Mpi::Root())
+         if (Mpi::Root() && save_convergence)
          {
-            convergence_subiter.Append(norm_diff);
+            convergence_rf(iter, 0) = iter;
+            convergence_rf(iter, 1) = global_norm_diff_fluid;
+            convergence_rf(iter, 2) = global_norm_diff_solid;
          }
 
          if (Mpi::Root() && print_subiter)
@@ -1155,6 +1160,18 @@ int main(int argc, char *argv[])
             out << "Total: " << chrono_total.RealTime() << " s" << std::endl;
             out << "------------------------------------------------------------" << std::endl;
          }
+      } // END OF CONVERGENCE LOOP
+
+      if (Mpi::Root() && save_convergence)
+      {
+         std::string name_rf = "RF-pre";
+         saveConvergenceArray(convergence_rf, outfolder, name_rf, 0);
+
+         Array<int> subiter_count_rf; subiter_count_rf.Append(iter);
+         saveSubiterationCount(subiter_count_rf, outfolder, name_rf);
+
+         convergence_rf.DeleteAll();
+         subiter_count_rf.DeleteAll();
       }
 
       // Compute Joule heating
@@ -1205,15 +1222,14 @@ int main(int argc, char *argv[])
    }
 
 
-   int num_steps = (int)(t_final / dt);
-   Array2D<real_t> convergence(num_steps, 3);
-   Array<real_t> convergence_subiter;
-
    real_t t = 0.0;
    bool last_step = false;
    bool converged = false;
    double tol = 1.0e-4;
    int max_iter = 100;
+   int num_steps = (int)(t_final / dt);
+
+   Array<int> subiter_count_heat;
 
    // Timing
    StopWatch chrono, chrono_total_subiter;
@@ -1240,6 +1256,7 @@ int main(int argc, char *argv[])
       /////////////////////////////////////////
       //         Solve HEAT TRANSFER         //
       /////////////////////////////////////////
+      Array2D<real_t> convergence_heat(max_iter, 3); convergence_heat = 0.0;
       {
          temperature_solid_tn = *temperature_solid_gf->GetTrueDofs();
          temperature_cylinder_tn = *temperature_cylinder_gf->GetTrueDofs();
@@ -1411,24 +1428,25 @@ int main(int argc, char *argv[])
             chrono.Stop();
             t_error_bdry = chrono.RealTime();
 
-            // Check convergence on domains
+            if (Mpi::Root() && save_convergence)
+            {
+               convergence_heat(iter, 0) = iter+1;
+               convergence_heat(iter, 1) = global_norm_diff_fluid;
+               convergence_heat(iter, 2) = global_norm_diff_solid;
+            }
+
+            // Check convergence
             converged_solid = global_norm_diff_solid < tol;
             converged_fluid = global_norm_diff_fluid < tol;
             converged_cylinder = global_norm_diff_cylinder < tol;
-
-            // Check convergence
             converged = converged_solid && converged_fluid && converged_cylinder;
-
+            
             iter++;
-
-            if (Mpi::Root())
-            {
-               convergence_subiter.Append(norm_diff);
-            }
 
             chrono_total_subiter.Stop();
             t_total_subiter = chrono_total_subiter.RealTime();
-         }
+         } // END OF CONVERGENCE LOOP
+
 
          if (iter > max_iter)
          {
@@ -1438,12 +1456,11 @@ int main(int argc, char *argv[])
          }
 
          if (Mpi::Root() && save_convergence)
-         {
-            convergence(step - 1, 0) = t;
-            convergence(step - 1, 1) = iter;
-            convergence(step - 1, 2) = norm_diff;
-            saveConvergenceSubiter(convergence_subiter, outfolder, step);
-            convergence_subiter.DeleteAll();
+         { // Save convergence data            
+            subiter_count_heat.Append(iter);
+            std::string name_heat = "Heat";
+            saveConvergenceArray(convergence_heat, outfolder, name_heat, step);
+            convergence_heat.DeleteAll();
          }
 
          // Reset the convergence flag and time for the next iteration
@@ -1531,22 +1548,13 @@ int main(int argc, char *argv[])
          out << "Total: " << chrono_total.RealTime() << " s" << std::endl;
          out << "------------------------------------------------------------" << std::endl;
       }
-   }
+   } // END OF TIME INTEGRATION
 
    // Save convergence data
    if (Mpi::Root() && save_convergence)
    {
-      std::string outputFilePath = std::string(outfolder) + "/convergence" + "/convergence.txt";
-      std::ofstream outFile(outputFilePath);
-      if (outFile.is_open())
-      {
-         convergence.Save(outFile);
-         outFile.close();
-      }
-      else
-      {
-         std::cerr << "Unable to open file: " << std::string(outfolder) + "/convergence.txt" << std::endl;
-      }
+      std::string name_heat = "Heat";
+      saveSubiterationCount(subiter_count_heat, outfolder, name_heat);
    }
    
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -1630,15 +1638,13 @@ void print_matrix(const DenseMatrix &A)
              << std::flush; // Debugging print
 }
 
-void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step)
+void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step)
 {
-   // Create the output folder path
-   std::string outputFolder = outfolder + "/convergence";
+   // Create the output folder path + name
+   std::string outputFolder = outfolder + "/convergence/" + name;
 
-   // Ensure the directory exists
-   if ((mkdir(outputFolder.c_str(), 0777) == -1) && Mpi::Root())
-   {
-      // check error
+   if (!fs::is_directory(outputFolder.c_str()) || !fs::exists(outputFolder.c_str())) { // Check if folder exists
+      fs::create_directories(outputFolder); // create folder
    }
 
    // Construct the filename
@@ -1649,7 +1655,7 @@ void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std:
    std::ofstream outFile(filename.str());
    if (outFile.is_open())
    {
-      convergence_subiter.Save(outFile);
+      data.Save(outFile);
       outFile.close();
    }
    else
@@ -1657,6 +1663,33 @@ void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std:
       std::cerr << "Unable to open file: " << filename.str() << std::endl;
    }
 }
+
+void saveSubiterationCount(const Array<int> &data, const std::string &outfolder, const std::string &name)
+{
+   // Create the output folder path + name
+   std::string outputFolder = outfolder + "/convergence/" + name;
+
+   if (!fs::is_directory(outputFolder.c_str()) || !fs::exists(outputFolder.c_str())) { // Check if folder exists
+      fs::create_directories(outputFolder); // create folder
+   }
+
+   // Construct the filename
+   std::ostringstream filename;
+   filename << outputFolder << "/Subiter.txt";
+
+   // Open the file and save the data
+   std::ofstream outFile(filename.str());
+   if (outFile.is_open())
+   {
+      data.Save(outFile);
+      outFile.close();
+   }
+   else
+   {
+      std::cerr << "Unable to open file: " << filename.str() << std::endl;
+   }
+}
+
 
 
 std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles)
