@@ -200,6 +200,17 @@ namespace mfem
             /// Return the pressure GridFunction
             ParGridFunction *GetPressure() { return p_gf; }
 
+            // Problem size
+            HYPRE_BigInt GetVelocitySize()
+            {
+               return ufes->GlobalTrueVSize();
+            }
+
+            HYPRE_BigInt GetPressureSize()
+            {
+               return pfes->GlobalTrueVSize();
+            }
+
             // Visualization and Postprocessing
             void RegisterVisItFields(VisItDataCollection &visit_dc_);
 

@@ -229,6 +229,17 @@ public:
     /// Return the predicted pressure GridFunction
     ParGridFunction* GetPredictedPressure() { return p_pred_gf; }
 
+    // Problem size
+    HYPRE_BigInt GetVelocitySize()
+    {
+        return ufes->GlobalTrueVSize();
+    }
+
+    HYPRE_BigInt GetPressureSize()
+    {
+        return pfes->GlobalTrueVSize();
+    }
+
    /// Print timing summary of the solving routine.
    /**
     * The summary shows the timing in seconds in the first row of
