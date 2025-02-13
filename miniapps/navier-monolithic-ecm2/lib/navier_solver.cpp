@@ -495,7 +495,7 @@ void MonolithicNavierSolver::SetTimeIntegrationCoefficients(int step)
       b2 = 0.0; 
       b3 = 0.0; 
    }
-   else if (step >= 2 && bdf_order == 2)
+   else if (step > 2 && bdf_order == 2)
    {
       alpha = 3.0/2.0;
       a1 = 2.0; 
@@ -505,7 +505,7 @@ void MonolithicNavierSolver::SetTimeIntegrationCoefficients(int step)
       b2 = -1.0; 
       b3 = 0.0;  
    }
-   else if (step >= 3 && bdf_order == 3)
+   else if (step > 3 && bdf_order == 3)
    {
       alpha = 11.0/6.0;
       a1 = 3.0; 
