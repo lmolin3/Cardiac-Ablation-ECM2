@@ -372,6 +372,7 @@ public:
    ConstantCoefficient S_visccoeff;
 
    // BDF coefficients
+   std::vector<real_t> dthist = {0.0, 0.0, 0.0}; // Time step history (BDF extension to variable time step)
    int max_bdf_order = 3;
    real_t alpha = 0.0;
    real_t a1 = 0.0;
@@ -455,8 +456,8 @@ public:
    void SetTimeIntegrationCoefficients(int step);
 
     /// Update solution at previous timesteps for BDF
-    void UpdateSolution();
-
+    void UpdateHistory(real_t dt);
+    
     /**
      * @brief Update time in acceleration and traction coefficients, and re-assemble rhs vector fv.
      *

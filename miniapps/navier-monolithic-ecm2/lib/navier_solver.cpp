@@ -245,6 +245,10 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, 
    // Update time in coefficients for rhs (acceleration/neumann) and assemble vector fv
    UpdateTimeRHS( 0.0 );
 
+   // Set initial time step in the history array
+   dthist[0] = dt;
+   dthist[1] = dt;
+   dthist[2] = dt;
 
    /// 5. Construct the NS Operator, Solver and Preconditioner
    
@@ -474,52 +478,75 @@ void MonolithicNavierSolver::Step(real_t &time, real_t dt, int current_step)
    }
 
    // Update solution at previous timesteps and time
-   UpdateSolution(); 
-
+   UpdateHistory(dt);
 }
 
 /// Private Interface
 void MonolithicNavierSolver::SetTimeIntegrationCoefficients(int step)
 {
    // Maximum BDF order to use at current time step
-   // step + 1 <= order <= max_bdf_order
-   int bdf_order = std::min(step, max_bdf_order);
+   // step  <= order <= max_bdf_order
+   int bdf_order = std::min(step-1, max_bdf_order);
 
-   if (step == 1 && bdf_order == 1)
+   // Ratio of time step history at dt(t_{n}) - dt(t_{n-1})
+   real_t rho1 = 0.0;
+
+   // Ratio of time step history at dt(t_{n-1}) - dt(t_{n-2})
+   real_t rho2 = 0.0;
+
+   if (bdf_order >= 2)
+   {
+      rho1 = dthist[0] / dthist[1];
+   }
+
+
+   if (bdf_order == 3)
+   {
+      rho2 = dthist[1] / dthist[2];
+   }
+
+   if (step == 1 && bdf_order <= 1)
    {
       alpha = 1.0;
-      a1 = 1.0; 
-      a2 = 0.0; 
-      a3 = 0.0; 
-      b1 = 1.0; 
-      b2 = 0.0; 
-      b3 = 0.0; 
+      a1 = 1.0;
+      a2 = 0.0;
+      a3 = 0.0;
+      b1 = 1.0;
+      b2 = 0.0;
+      b3 = 0.0;
    }
-   else if (step > 2 && bdf_order == 2)
+   else if (step >= 2 && bdf_order == 2)
    {
-      alpha = 3.0/2.0;
-      a1 = 2.0; 
-      a2 = -1.0/2.0; 
-      a3 = 0.0; 
-      b1 = 2.0;  
-      b2 = -1.0; 
-      b3 = 0.0;  
+      alpha = (1.0 + 2.0 * rho1) / (1.0 + rho1);
+      a1 = (1.0 + rho1);
+      a2 = -pow(rho1, 2.0) / (1.0 + rho1);
+      a3 = 0.0;
+      b1 = 1.0 + rho1;
+      b2 = -rho1;
+      b3 = 0.0;
    }
-   else if (step > 3 && bdf_order == 3)
+   else if (step >= 3 && bdf_order == 3)
    {
-      alpha = 11.0/6.0;
-      a1 = 3.0; 
-      a2 = -3.0/2.0; 
-      a3 = 1.0/3.0; 
-      b1 = 3.0;
-      b2 = -3.0;
-      b3 = 1.0;
+      alpha = 1.0 + rho1 / (1.0 + rho1)
+            + (rho2 * rho1) / (1.0 + rho2 * (1 + rho1));
+      a1 = 1.0 + rho1 + (rho2 * rho1 * (1.0 + rho1)) / (1.0 + rho2);
+      a2 = -pow(rho1, 2.0) * (rho2 + 1.0 / (1.0 + rho1));
+      a3 = (pow(rho2, 3.0) * pow(rho1, 2.0) * (1.0 + rho1))
+            / ((1.0 + rho2) * (1.0 + rho2 + rho2 * rho1));
+      b1 = ((1.0 + rho1) * (1.0 + rho2 * (1.0 + rho1))) / (1.0 + rho2);
+      b2 = -rho1 * (1.0 + rho2 * (1.0 + rho1));
+      b3 = (pow(rho2, 2.0) * rho1 * (1.0 + rho1)) / (1.0 + rho2);
    }
 
 }
 
-void MonolithicNavierSolver::UpdateSolution()
+void MonolithicNavierSolver::UpdateHistory(real_t dt)
 {
+   // Rotate values in time step history
+   dthist[2] = dthist[1];
+   dthist[1] = dthist[0];
+   dthist[0] = dt;
+
    // Update solution at previous timesteps for BDF
    *un2 = *un1;
    *un1 = *un;
