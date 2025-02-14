@@ -49,6 +49,7 @@
 
 using namespace std;
 using namespace mfem;
+using namespace navier;
 
 
 struct s_NavierContext // Navier Stokes params
@@ -65,8 +66,9 @@ struct s_NavierContext // Navier Stokes params
    int bcs = 0; // 0 = FullyDirichlet, 1 = FullyNeumann, 2 = Mixed
    // int splitting_type = 0;  // 0 = Chorin-Temam, 1 = Yosida, 2 = High-Order Yosida 
    // int correction_order = 1; // Correction order for High-Order Yosida   
-   int pc_type = 0;       // 0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected
-   int schur_pc_type = 1; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse
+   BlockPreconditionerType pc_type = BlockPreconditionerType::BLOCK_DIAGONAL;       // 0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected
+   SchurPreconditionerType schur_pc_type = SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse
+   TimeAdaptivityType time_adaptivity_type = TimeAdaptivityType::NONE; // Time adaptivity type (NONE, CFL, HOPC)
    bool mass_lumping = false; // Enable mass lumping
    bool stiff_strain = false; // false: viscous stress (Δu), true: stiff strain ( ∇u + ∇u^T )
 } NS_ctx;
@@ -232,14 +234,18 @@ int main(int argc, char *argv[])
                    "-bdf",
                    "--bdf-order",
                    "Maximum bdf order (1<=bdf<=3)");
-   args.AddOption(&NS_ctx.pc_type,
+   args.AddOption((int *)&NS_ctx.pc_type,
                    "-pc",
                    "--preconditioner",
                    "Preconditioner type (0: Block Diagonal, 1: Pressure Corrected Yosida)");                 
-   args.AddOption(&NS_ctx.schur_pc_type,
+   args.AddOption((int *)&NS_ctx.schur_pc_type,
                    "-schur-pc",
                    "--schur-preconditioner",
                    "Preconditioner type (0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Discrete Laplacian)");
+   args.AddOption((int *)&NS_ctx.time_adaptivity_type,
+                   "-ta",
+                   "--time-adaptivity",
+                   "Time adaptivity type (0: None, 1: CFL, 2: HOPC)");
    args.AddOption(&NS_ctx.mass_lumping,
                      "-ml",
                      "--mass-lumping",
@@ -490,7 +496,7 @@ int main(int argc, char *argv[])
    /// 7. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.mass_lumping, NS_ctx.stiff_strain);
+   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.time_adaptivity_type, NS_ctx.mass_lumping, NS_ctx.stiff_strain);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem

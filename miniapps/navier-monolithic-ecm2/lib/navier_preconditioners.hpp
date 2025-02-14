@@ -339,7 +339,7 @@ namespace mfem
    ///              Chorin Temam Pressure Corrected Preconditioner           ///
    /////////////////////////////////////////////////////////////////////////////
 
-   /* 
+   /** 
     * @class ChorinTemamPressureCorrectedPreconditioner
     * @brief Preconditioner based on Chorin-Temam (mass preserving) Algebraic Factorization of Navier Stokes operator with Pressure Correction.
     * 
@@ -385,8 +385,46 @@ namespace mfem
       mutable BlockVector tmp2;
    };
 
+   /**
+    * @class HOYPressureCorrectedPreconditioner
+    * @brief Preconditioner based on Yosida (momentum preserving) Algebraic Factorization of Navier Stokes operator with High Order Pressure Correction.
+    *
+    * The Yosida preconditioner is defined as:
+    *
+    *    P = [ C     ][ I   C^-1 G ] = L U,    where Q is a high-order (q) pressure correction
+    *        [ D  -S ][         Q  ]
+    *
+    * with inverse :
+    *
+    *   P^-1 = U^-1 L^-1
+    *
+    * where C is an approximation of the momentum block, S is an approximation of the Schur complement.
+    *
+    * see:
+    * --> Alessandro Veneziani and Umberto Villa. Aladins: An algebraic splitting time adaptive solver for the incompressible navier–stokes equations. Journal of Computational Physics, 238:359–375, 2013.
+   */
+   class HOYPressureCorrectedPreconditioner : public YosidaPressureCorrectedPreconditioner
+   {
+   public:
+      HOYPressureCorrectedPreconditioner(Array<int> block_offsets_) : YosidaPressureCorrectedPreconditioner(block_offsets_) { MFEM_ABORT("Not yet implemented."); }
 
+      ~HOYPressureCorrectedPreconditioner() override { MFEM_ABORT("Not yet implemented."); }
 
+      void SetOperator(const Operator &op) override { MFEM_ABORT("Not yet implemented."); }
+
+      void SetSchurSolver(Solver *invS_, bool own_schur_ = false) override { MFEM_ABORT("Not yet implemented."); }
+
+      void Mult(const Vector &x, Vector &y) const override { MFEM_ABORT("Not yet implemented."); }
+
+      // Methods to forward the SetH1Solver and SetH1Operator to the PressureCorrectionSolver
+      void SetH1Solver(Solver *H1_, bool own_H1_ = false) { MFEM_ABORT("Not yet implemented."); }
+
+      void SetH1Operator(Operator *H1Op) { MFEM_ABORT("Not yet implemented."); }
+
+   private:
+      PressureCorrectionSolver *Q = nullptr; // High Order Pressure Correction
+      int q; // Pressure Correction Order
+   };
 
    } // namespace navier
 } // namespace mfem

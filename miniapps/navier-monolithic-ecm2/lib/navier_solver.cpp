@@ -56,6 +56,9 @@ MonolithicNavierSolver::MonolithicNavierSolver(std::shared_ptr<ParMesh> pmesh_,
    // Create coefficient for kinematic viscosity
    kin_vis = new ConstantCoefficient(kin_vis_);
 
+   // QoI
+   qoi = new QuantitiesOfInterest(pmesh.get());
+
 }
 
 
@@ -111,10 +114,12 @@ void MonolithicNavierSolver::SetInitialConditionPres(Coefficient &p_in)
    p_gf->GetTrueDofs(x->GetBlock(1));
 }
 
-void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, bool mass_lumping_, bool stiff_strain_)
+void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, SchurPreconditionerType schur_pc_type_,
+                                   TimeAdaptivityType time_adaptivity_type_, bool mass_lumping_, bool stiff_strain_)
 {
    pc_type = pc_type_;              // preconditioner type
    schur_pc_type = schur_pc_type_;  // preconditioner type for Schur Complement
+   time_adaptivity_type = time_adaptivity_type_; // time adaptivity type
    mass_lumping = mass_lumping_;    // enable mass lumping (and forward to preconditioners if needed)
    stiff_strain = stiff_strain_;    // enable stiff strain integrator
 
@@ -259,58 +264,58 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, 
 
    // Schur Complement Preconditioner invS
    // Preconditioner for discrete pressure laplacian
-   switch (schur_pc_type)
+   switch (static_cast<SchurPreconditionerType>(schur_pc_type)) 
    {
-   case 0: // Pressure Mass
-      invS = new PMass(pfes, pres_ess_tdof, C_visccoeff.constant);
-      break;
-   case 1: // Pressure Laplacian
-      invS = new PLap(pfes, pres_ess_tdof, C_bdfcoeff.constant);
-      break;
-   case 2: // PCD
-      invS = new PCD(pfes, pres_ess_tdof, &C_bdfcoeff, &C_visccoeff, u_ext_vc);
-      break;
-   case 3: // Cahouet-Chabard
-      invS = new CahouetChabard(pfes, pres_ess_tdof, dt, C_visccoeff.constant);
-      break;
-   case 4: // LSC
-      invS = new LSC(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>());
-      break;
-   case 5: // Approximate discrete pressure laplacian
-      invS = new ApproximateDiscreteLaplacian(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>(), C_bdfcoeff.constant);
-      break;
-   default:
-      MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown Schur preconditioner type: " << schur_pc_type);
-      break;
+       case SchurPreconditionerType::PRESSURE_MASS:
+           invS = new PMass(pfes, pres_ess_tdof, C_visccoeff.constant);
+           break;
+       case SchurPreconditionerType::PRESSURE_LAPLACIAN:
+           invS = new PLap(pfes, pres_ess_tdof, C_bdfcoeff.constant);
+           break;
+       case SchurPreconditionerType::PCD:
+           invS = new PCD(pfes, pres_ess_tdof, &C_bdfcoeff, &C_visccoeff, u_ext_vc);
+           break;
+       case SchurPreconditionerType::CAHOUET_CHABARD:
+           invS = new CahouetChabard(pfes, pres_ess_tdof, dt, C_visccoeff.constant);
+           break;
+       case SchurPreconditionerType::LSC:
+           invS = new LSC(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>());
+           break;
+       case SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN:
+           invS = new ApproximateDiscreteLaplacian(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>(), C_bdfcoeff.constant);
+           break;
+       default:
+           MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown Schur preconditioner type: " << static_cast<int>(pc_type));
+           break;
    }
 
    // Navier-Stokes Preconditioner 
-   switch (pc_type)
+   switch (static_cast<BlockPreconditionerType>(pc_type))
    {
-   case 0: // Block diagonal
-      nsPrec = new NavierBlockDiagonalPreconditioner(block_offsets);
-      break;
-   case 1: // Block Lower Triangular
-      nsPrec = new NavierBlockLowerTriangularPreconditioner(block_offsets);
-      break;
-   case 2: // Block Upper Triangular
-      nsPrec = new NavierBlockUpperTriangularPreconditioner(block_offsets);
-      break;
-   case 3: // Chorin-Temam
-      nsPrec = new ChorinTemamPreconditioner(block_offsets);
-      break;
-   case 4: // Yosida
-      nsPrec = new YosidaPreconditioner(block_offsets);
-      break;
-   case 5: // Chorin-Temam Pressure Corrected
-      nsPrec = new ChorinTemamPressureCorrectedPreconditioner(block_offsets);
-      break;
-   case 6: // Yosida Pressure Corrected
-      nsPrec = new YosidaPressureCorrectedPreconditioner(block_offsets);
-      break;
-   default:
-      MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown preconditioner type: " << pc_type);
-      break;
+       case BlockPreconditionerType::BLOCK_DIAGONAL:
+           nsPrec = new NavierBlockDiagonalPreconditioner(block_offsets);
+           break;
+       case BlockPreconditionerType::LOWER_TRIANGULAR:
+           nsPrec = new NavierBlockLowerTriangularPreconditioner(block_offsets);
+           break;
+       case BlockPreconditionerType::UPPER_TRIANGULAR:
+           nsPrec = new NavierBlockUpperTriangularPreconditioner(block_offsets);
+           break;
+       case BlockPreconditionerType::CHORIN_TEMAM:
+           nsPrec = new ChorinTemamPreconditioner(block_offsets);
+           break;
+       case BlockPreconditionerType::YOSIDA:
+           nsPrec = new YosidaPreconditioner(block_offsets);
+           break;
+       case BlockPreconditionerType::CHORIN_TEMAM_PRESSURE_CORRECTED:
+           nsPrec = new ChorinTemamPressureCorrectedPreconditioner(block_offsets);
+           break;
+       case BlockPreconditionerType::YOSIDA_PRESSURE_CORRECTED:
+           nsPrec = new YosidaPressureCorrectedPreconditioner(block_offsets);
+           break;
+       default:
+           MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown preconditioner type: " << static_cast<int>(pc_type));
+           break;
    }
    nsPrec->SetSchurSolver(invS);
 
@@ -327,7 +332,7 @@ void MonolithicNavierSolver::Setup(real_t dt, int pc_type_, int schur_pc_type_, 
    sw_setup.Stop();
 }
 
-void MonolithicNavierSolver::Step(real_t &time, real_t dt, int current_step)
+bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int current_step)
 {
    /// 0.1 Update BDF time integration coefficients
    SetTimeIntegrationCoefficients( current_step );
@@ -374,55 +379,55 @@ void MonolithicNavierSolver::Step(real_t &time, real_t dt, int current_step)
    //// 0.2 Update NS Preconditioner
 
    // Create sigmaM for Chorin-Temam, and Pressure Corrected Preconditioners
-   if (pc_type == 3 || pc_type > 4)
+   if (static_cast<int>(pc_type) == 3 || static_cast<int>(pc_type) > 4)
    {
       opSigmaM.Reset(new HypreParMatrix(*(opM.As<HypreParMatrix>())));
       *opSigmaM.As<HypreParMatrix>() *= C_bdfcoeff.constant;
       auto sigmaMe = opSigmaM.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
       delete sigmaMe;
 
-      switch (pc_type)
+      switch (static_cast<BlockPreconditionerType>(pc_type))
       {
-      case 3: // Chorin-Temam
-         static_cast<ChorinTemamPreconditioner *>(nsPrec)->SetH2Operator(opSigmaM.Ptr());
-         break;
-      case 5: // Chorin-Temam Pressure Corrected
-         static_cast<ChorinTemamPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
-         static_cast<ChorinTemamPressureCorrectedPreconditioner *>(nsPrec)->SetH2Operator(opSigmaM.Ptr());
-         break;
-      case 6: // Yosida Pressure Corrected
-         static_cast<YosidaPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
-         break;
-      default:
-         MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown preconditioner type: " << pc_type);
-         break;
+         case BlockPreconditionerType::CHORIN_TEMAM:
+            static_cast<ChorinTemamPreconditioner *>(nsPrec)->SetH2Operator(opSigmaM.Ptr());
+            break;
+         case BlockPreconditionerType::CHORIN_TEMAM_PRESSURE_CORRECTED:
+            static_cast<ChorinTemamPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
+            static_cast<ChorinTemamPressureCorrectedPreconditioner *>(nsPrec)->SetH2Operator(opSigmaM.Ptr());
+            break;
+         case BlockPreconditionerType::YOSIDA_PRESSURE_CORRECTED:
+            static_cast<YosidaPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
+            break;
+         default:
+            MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown preconditioner type: " << static_cast<int>(pc_type));
+            break;
       }
    }
 
    // Update schur complement preconditioner
-   switch (schur_pc_type)
+   switch (static_cast<SchurPreconditionerType>(schur_pc_type))
    {
-   case 0:
-      static_cast<PMass *>(invS)->SetCoefficients(C_visccoeff.constant);
-      break;
-   case 1: // Pressure Laplacian
-      static_cast<PLap *>(invS)->SetCoefficients(C_bdfcoeff.constant);
-      break;
-   case 2: // PCD
-      static_cast<PCD *>(invS)->Rebuild();
-      break;
-   case 3: // Cahouet-Chabard
-      static_cast<CahouetChabard *>(invS)->SetCoefficients(dt, C_visccoeff.constant);
-      break;
-   case 4: // LSC
-      static_cast<LSC *>(invS)->SetOperator(*opC.Ptr());
-      break;
-   case 5: // Approximate discrete pressure laplacian
-      static_cast<ApproximateDiscreteLaplacian *>(invS)->SetCoefficients(C_bdfcoeff.constant);
-      break;
-   default:
-      MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown Schur preconditioner type: " << schur_pc_type);
-      break;
+       case SchurPreconditionerType::PRESSURE_MASS:
+           static_cast<PMass *>(invS)->SetCoefficients(C_visccoeff.constant);
+           break;
+       case SchurPreconditionerType::PRESSURE_LAPLACIAN:
+           static_cast<PLap *>(invS)->SetCoefficients(C_bdfcoeff.constant);
+           break;
+       case SchurPreconditionerType::PCD:
+           static_cast<PCD *>(invS)->Rebuild();
+           break;
+       case SchurPreconditionerType::CAHOUET_CHABARD:
+           static_cast<CahouetChabard *>(invS)->SetCoefficients(dt, C_visccoeff.constant);
+           break;
+       case SchurPreconditionerType::LSC:
+           static_cast<LSC *>(invS)->SetOperator(*opC.Ptr());
+           break;
+       case SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN:
+           static_cast<ApproximateDiscreteLaplacian *>(invS)->SetCoefficients(C_bdfcoeff.constant);
+           break;
+       default:
+           MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown Schur preconditioner type: " << static_cast<int>(schur_pc_type));
+           break;
    }
 
    // Update Block Preconditioner
@@ -465,20 +470,49 @@ void MonolithicNavierSolver::Step(real_t &time, real_t dt, int current_step)
 
    sw_solve.Stop();
 
-   // Print summary
-   if (verbose && pmesh->GetMyRank() == 0)
-   {
-      mfem::out << std::setw(10) << "Step" << std::setw(10) << "Time" << std::setw(15) << "dt" << std::setw(10) << "It" 
-                << std::setw(15) << "Resid" << std::setw(15) << "Reltol" << std::endl;
-      mfem::out << std::setw(9) << current_step << std::scientific << std::setprecision(5) << std::setw(15) << time 
-                << std::setw(15) << dt << std::setw(6) << iter_solve << std::scientific << std::setprecision(5) 
-               << std::setw(15) << res_solve << std::setw(15) << sParams.rtol << std::endl;
-      mfem::out << std::setprecision(8);
-      mfem::out << std::fixed;
-   }
+   // Time adaptivity
+   real_t dt_new;
+   bool accept_step = TimeAdaptivityEstimator(time_adaptivity_type, dt, dt_new);
 
    // Update solution at previous timesteps and time
-   UpdateHistory(dt);
+   if (accept_step)
+   {
+      UpdateHistory(dt_new);
+
+      // Print summary
+      if (verbose && pmesh->GetMyRank() == 0)
+      {
+         mfem::out << std::setw(10) << "Step" << std::setw(10) << "Time" << std::setw(15) << "dt" << std::setw(10) << "It" 
+                  << std::setw(15) << "Resid" << std::setw(15) << "Reltol" << std::endl;
+         mfem::out << std::setw(9) << current_step << std::scientific << std::setprecision(5) << std::setw(15) << time 
+                  << std::setw(15) << dt << std::setw(6) << iter_solve << std::scientific << std::setprecision(5) 
+                  << std::setw(15) << res_solve << std::setw(15) << sParams.rtol << std::endl;
+         mfem::out << std::setprecision(8);
+         mfem::out << std::fixed;
+      }
+      dt = dt_new;
+   }
+   else
+   {
+      // Revert to previous time step
+      current_step -= 1;
+      time -= dt;
+      dt = dt_new;
+
+      if (verbose && pmesh->GetMyRank() == 0)
+      {
+         mfem::out << "Rejected step. Trying again with dt = " << dt_new << std::endl;
+      }
+   }
+
+   return accept_step;
+
+}
+
+
+real_t MonolithicNavierSolver::ComputeCFL(ParGridFunction &u_gf, real_t dt)
+{
+   return qoi->ComputeCFL(u_gf, dt);
 }
 
 /// Private Interface
@@ -637,6 +671,56 @@ void MonolithicNavierSolver::UpdateTimeBCS( real_t new_time )
       // Initialize solution gf with vector containing projected coefficients 
       // and update grid function and vector for provisional velocity
       u_gf->SetFromTrueDofs(u);
+}
+
+bool MonolithicNavierSolver::TimeAdaptivityEstimator(TimeAdaptivityType type, real_t dt_old, real_t &dt_new)
+{
+   bool accept = false;
+
+   switch (static_cast<TimeAdaptivityType>(type))
+   {
+   case TimeAdaptivityType::NONE: // Fixed time step
+      accept = true;
+      dt_new = dt_old;
+      break;
+
+   case TimeAdaptivityType::CFL: // CFL-based adaptivity
+   {
+      // Compute CFL number
+      real_t cfl = qoi->ComputeCFL(*u_gf, dt_old);
+      // Define error estimator 
+      error_est = cfl / (cfl_max + cfl_tol);            
+      if (error_est < 1.0) // CFL < CFL_max
+         accept = true;
+      // Compute new time step
+      real_t fac_safety = 2.0;
+      real_t eta_new = pow(1.0 / (fac_safety * error_est), 1.0 / (1.0 + 3.0));
+      real_t eta = std::min(fac_max, std::max(fac_min, eta_new));
+      real_t dt_tmp = dt_old * eta;
+      // Check if new time step is within bounds, otherwise limit to bounds
+      dt_new = std::min(std::max(dt_tmp, dt_min), dt_max);   
+   }
+   break;
+
+   case TimeAdaptivityType::HOPC: // High Order Pressure Correction adaptivity
+   {
+      HOYPressureCorrectedPreconditioner *hoy_prec = dynamic_cast<HOYPressureCorrectedPreconditioner *>(nsPrec);
+      if (hoy_prec == nullptr)
+      {
+         MFEM_ABORT("TimeAdaptivityEstimator() >> Time adaptivity type 2 requires HOYPressureCorrectedPreconditioner.");
+      }
+
+      // Placeholder for type 2 adaptivity logic
+      MFEM_ABORT("TimeAdaptivityEstimator() >> Time adaptivity type 2 not implemented.");
+   }
+   break;
+
+   default:
+      MFEM_ABORT("TimeAdaptivityEstimator() >> Unknown time adaptivity type.");
+      break;
+   }
+
+   return accept;
 }
 
 void MonolithicNavierSolver::MeanZero(ParGridFunction &gf)
@@ -833,6 +917,8 @@ MonolithicNavierSolver::~MonolithicNavierSolver()
 
    delete kin_vis; kin_vis = nullptr;
    delete u_ext_vc; u_ext_vc = nullptr;   
+
+   delete qoi; qoi = nullptr;
 
    opK.Clear();
    opM.Clear();

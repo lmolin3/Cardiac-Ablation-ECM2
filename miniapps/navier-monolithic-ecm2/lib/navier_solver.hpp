@@ -39,6 +39,34 @@ namespace mfem
     namespace navier
     {
 
+        enum class TimeAdaptivityType : int
+        {
+            NONE = 0, // Fixed time step
+            CFL = 1,  // CFL-based adaptivity
+            HOPC = 2  // High Order Pressure Correction based adaptivity
+        };
+
+        enum class BlockPreconditionerType : int
+        {
+            BLOCK_DIAGONAL = 0,
+            LOWER_TRIANGULAR = 1,
+            UPPER_TRIANGULAR = 2,
+            CHORIN_TEMAM = 3,
+            YOSIDA = 4,
+            CHORIN_TEMAM_PRESSURE_CORRECTED = 5,
+            YOSIDA_PRESSURE_CORRECTED = 6
+        };
+
+        enum class SchurPreconditionerType : int
+        {
+            PRESSURE_MASS = 0,
+            PRESSURE_LAPLACIAN = 1,
+            PCD = 2,
+            CAHOUET_CHABARD = 3,
+            LSC = 4,
+            APPROXIMATE_DISCRETE_LAPLACIAN = 5
+        };
+
         /**
          * \class MonolithicNavierSolver
          * \brief Unsteady Incompressible Navier Stokes solver with (Picard) Algebraic Chorin-Temam splitting formulation with Pressure Correction (CTPC).
@@ -154,7 +182,9 @@ namespace mfem
              * - Setting the Linear solvers.
              * - Setting PA
              */
-            virtual void Setup(real_t dt, int pc_type_ = 0, int schur_pc_type_ = 5, bool mass_lumping = false, bool stiff_strain = false);
+            virtual void Setup(real_t dt,
+                               BlockPreconditionerType pc_type_ = BlockPreconditionerType::BLOCK_DIAGONAL, SchurPreconditionerType schur_pc_type_ = SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN,
+                               TimeAdaptivityType time_adaptivity_type_ = TimeAdaptivityType::NONE, bool mass_lumping = false, bool stiff_strain = false);
 
             /// Initial condition for velocity
             void SetInitialConditionVel(VectorCoefficient &u_in);
@@ -167,23 +197,25 @@ namespace mfem
              * @brief Compute the solution at the next time step t+dt.
              *
              * This function computes the solution of unsteady Navier-Stokes for the next time step.
-             * The solver uses a segregated scheme (Chorin-Temam with Pressure Correction) and solves
-             * the problem in he following 4 steps:
-             *
-             * 1. Velocity prediction
-             * 2. Pressure prediction
-             * 3. Pressure correction
-             * 4. Velocity correction
-             *
-             * Time adaptivity should be implemented outside this class, and user should run the solver
-             * with the updated timestep dt.
+             * The solver is an FGMRES on a BlockOperator for the Navier-Stokes system, preconditioned with a
+             * BlockPreconditioner. The BlockPreconditioner is constructed using a SchurComplementPreconditioner.
              *
              * @param[in, out] time The current time, which will be updated to t+dt.
-             * @param[in] dt The time step size to be applied for the update.
-             * @param[in] current_step The current time step number or index (used to switch BDF order).
+             * @param[in, out] dt The time step size to be applied for the update.
+             * @param[in, out] current_step The current time step number or index (used to switch BDF order).
+             *                              If timestep is not accepted, the current_step is decremented.
+             * @return true if the timestep is accepted, false otherwise.
              *
              */
-            virtual void Step(real_t &time, real_t dt, int current_step);
+            virtual bool Step(real_t &time, real_t &dt, int current_step);
+
+            /**
+             * @brief Compute CFL.
+             * 
+             */
+            real_t ComputeCFL(ParGridFunction &u_gf, real_t dt);
+
+            //// Getters
 
             /// Return a pointer to the velocity ParGridFunction.
             ParFiniteElementSpace *GetFESpaceVelocity() { return ufes; }
@@ -324,18 +356,32 @@ namespace mfem
             Array<int> block_offsets;        // Block offsets for velocity and pressure
             BlockOperator *nsOp = nullptr;   // Navier-Stokes block operator
 
-            int pc_type = 0;                      // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
+            BlockPreconditionerType pc_type;                      // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
             NavierBlockPreconditioner *nsPrec = nullptr; // Navier-Stokes block preconditioner
-
-            bool mass_lumping;      // Enable Mass Lumping 
-            bool stiff_strain;      // Enable Stiff Strain
-            
-            int schur_pc_type = 0;  // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
+            SchurPreconditionerType schur_pc_type;  // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
             Solver *invS = nullptr; // Schur Complement Preconditioner
 
             /// Variables for iterations/norm solvers
             int iter_solve = 0;
             real_t res_solve = 0.0;
+
+            QuantitiesOfInterest *qoi = nullptr; // Quantities of Interest
+
+            /// Time adaptivity
+            TimeAdaptivityType time_adaptivity_type = TimeAdaptivityType::NONE; // Time adaptivity type (NONE, CFL, HOPC)
+            real_t error_est = 0.0;
+            real_t cfl_max = 0.8;
+            real_t cfl_tol = 1e-4;
+            real_t fac_min = 0.1;
+            real_t fac_max = 10;
+            real_t dt_min = 1e-6;
+            real_t dt_max = 1e-1; // TODO: create method to set it
+
+            // Other features
+            bool mass_lumping;      // Enable Mass Lumping 
+            bool stiff_strain;      // Enable Stiff Strain
+            
+
 
             /// Timers
             StopWatch sw_setup;
@@ -399,6 +445,23 @@ namespace mfem
              *       Be sure to call this function whenever the time is updated in your simulation.
              */
             virtual void UpdateTimeBCS(real_t new_time);
+
+            /**
+             * @brief Compute the adaptive time step for the next iteration.
+             *
+             * This function computes the adaptive time step for the next iteration.
+             * The time step is computed based on the CFL condition for the velocity field,
+             * or based on the error estimate from the pressure correction step.
+             *
+             * see Alessandro Veneziani and Umberto Villa. Aladins: An algebraic splitting time adaptive solver for the incompressible navier–stokes equations. Journal of Computational Physics, 238:359–375, 2013.
+             *
+             * @param type Type of time adaptivity to use: 0 CFL, 1 High Order Pressure Correction; default 0
+             * @param dt_old Old time step size
+             * @param dt_new New time step size
+             * @return true if the time step is accepted, false otherwise
+             * 
+             */
+            bool TimeAdaptivityEstimator(TimeAdaptivityType type, real_t dt_old, real_t &dt_new);
 
             /// Remove mean from a Vector.
             /**

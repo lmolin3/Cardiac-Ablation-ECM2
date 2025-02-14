@@ -4,6 +4,7 @@
 
 using namespace mfem;
 using namespace navier;
+using namespace navier;
 
 BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
     : pmesh(mesh), verbose(verbose)
