@@ -527,6 +527,54 @@ namespace mfem
     }
 
 
+    ////////////////////////////////////////////////////////////////////////////
+    ///            HOY Pressure Corrected Preconditioner                     ///
+    ////////////////////////////////////////////////////////////////////////////
+
+    // Implementation of HOYPressureCorrectedPreconditioner constructor
+    HOYPressureCorrectedPreconditioner::HOYPressureCorrectedPreconditioner(Array<int> block_offsets_) : YosidaPreconditioner(block_offsets_)
+    {
+        // Create pressure correction solver
+        Q = new HighOrderPressureCorrectionSolver(block_offsets);
+
+        // Need to wrap in a TransposeOperator since we'll use MultTranspose (U is defined as Lower Triangular)
+        Qt = new TransposeOperator(*Q);
+        U->SetDiagonalBlock(1, Qt);
+    }
+
+    // Implementation of HOYPressureCorrectedPreconditioner destructor
+    HOYPressureCorrectedPreconditioner::~HOYPressureCorrectedPreconditioner()
+    {
+        delete Q;
+        delete Qt;
+    }
+
+    // Implementation of HOYPressureCorrectedPreconditioner SetOperator
+    void HOYPressureCorrectedPreconditioner::SetOperator(const Operator &op)
+    {
+        YosidaPreconditioner::SetOperator(op);
+        Q->SetOperator(op);
+    }
+
+    // Implementation of HOYPressureCorrectedPreconditioner SetSchurSolver
+    void HOYPressureCorrectedPreconditioner::SetSchurSolver(Solver *invS_, bool own_schur_)
+    {
+        YosidaPreconditioner::SetSchurSolver(invS_, own_schur_);
+        Q->SetSchurSolver(invS_, false);
+    }
+
+    // Implementation of HOYPressureCorrectedPreconditioner SetH1Solver
+    void HOYPressureCorrectedPreconditioner::SetH1Solver(Solver *H1_, bool own_H1_)
+    {
+        Q->SetH1Solver(H1_, own_H1_);
+    }
+
+    // Implementation of HOYPressureCorrectedPreconditioner SetH1Operator
+    void HOYPressureCorrectedPreconditioner::SetH1Operator(Operator *H1Op)
+    {
+        Q->SetH1Operator(H1Op);
+    }
+
     } // namespace navier
 
 } // namespace mfem

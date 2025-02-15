@@ -313,6 +313,9 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
        case BlockPreconditionerType::YOSIDA_PRESSURE_CORRECTED:
            nsPrec = new YosidaPressureCorrectedPreconditioner(block_offsets);
            break;
+       case BlockPreconditionerType::YOSIDA_HIGH_ORDER_PRESSURE_CORRECTED:
+           nsPrec = new HOYPressureCorrectedPreconditioner(block_offsets);
+           break;
        default:
            MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown preconditioner type: " << static_cast<int>(pc_type));
            break;
@@ -386,6 +389,10 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int current_step)
       auto sigmaMe = opSigmaM.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
       delete sigmaMe;
 
+      opA.Reset( Add( C_visccoeff.constant, *(opK.As<HypreParMatrix>()), 1.0, *(opNL.As<HypreParMatrix>()) ) );
+      auto opAe = opA.As<HypreParMatrix>()->EliminateRowsCols(vel_ess_tdof);
+      delete opAe;
+
       switch (static_cast<BlockPreconditionerType>(pc_type))
       {
          case BlockPreconditionerType::CHORIN_TEMAM:
@@ -397,6 +404,10 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int current_step)
             break;
          case BlockPreconditionerType::YOSIDA_PRESSURE_CORRECTED:
             static_cast<YosidaPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
+            break;
+         case BlockPreconditionerType::YOSIDA_HIGH_ORDER_PRESSURE_CORRECTED:
+            static_cast<HOYPressureCorrectedPreconditioner *>(nsPrec)->SetH1Operator(opSigmaM.Ptr());
+            static_cast<HOYPressureCorrectedPreconditioner *>(nsPrec)->SetMomentumOperator(opA.Ptr());
             break;
          default:
             MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown preconditioner type: " << static_cast<int>(pc_type));
@@ -532,7 +543,6 @@ void MonolithicNavierSolver::SetTimeIntegrationCoefficients(int step)
    {
       rho1 = dthist[0] / dthist[1];
    }
-
 
    if (bdf_order == 3)
    {
@@ -928,6 +938,7 @@ MonolithicNavierSolver::~MonolithicNavierSolver()
    opNL.Clear();
    opC.Clear();
    opSigmaM.Clear();
+   opA.Clear();
 }
 
 } // namespace navier

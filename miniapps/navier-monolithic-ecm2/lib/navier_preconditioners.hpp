@@ -328,9 +328,9 @@ namespace mfem
 
          void SetH1Operator(Operator *H1Op);
 
-      private:
-         PressureCorrectionSolver *Q = nullptr;
+      protected:
          TransposeOperator *Qt = nullptr;
+         PressureCorrectionSolver *Q = nullptr;
       };
 
 
@@ -400,30 +400,38 @@ namespace mfem
     *
     * where C is an approximation of the momentum block, S is an approximation of the Schur complement.
     *
+    * Note: The default order for the high order pressure correction is 2.
+    *       Alternatively this can be set at any time using MonolithicNavierSolver::SetPressureCorrectionOrder,
+    *       after the preconditioner has been created.
+    * 
     * see:
-    * --> Alessandro Veneziani and Umberto Villa. Aladins: An algebraic splitting time adaptive solver for the incompressible navier–stokes equations. Journal of Computational Physics, 238:359–375, 2013.
+    * --> A. Veneziani and U. Villa. Aladins: An algebraic splitting time adaptive solver for the incompressible navier–stokes equations. Journal of Computational Physics, 238:359–375, 2013.
    */
-   class HOYPressureCorrectedPreconditioner : public YosidaPressureCorrectedPreconditioner
+   class HOYPressureCorrectedPreconditioner : public YosidaPreconditioner
    {
    public:
-      HOYPressureCorrectedPreconditioner(Array<int> block_offsets_) : YosidaPressureCorrectedPreconditioner(block_offsets_) { MFEM_ABORT("Not yet implemented."); }
+      HOYPressureCorrectedPreconditioner(Array<int> block_offsets_);
 
-      ~HOYPressureCorrectedPreconditioner() override { MFEM_ABORT("Not yet implemented."); }
+      ~HOYPressureCorrectedPreconditioner() override;
 
-      void SetOperator(const Operator &op) override { MFEM_ABORT("Not yet implemented."); }
+      void SetOrder(int q_order_) { Q->SetOrder(q_order_); }
 
-      void SetSchurSolver(Solver *invS_, bool own_schur_ = false) override { MFEM_ABORT("Not yet implemented."); }
+      void SetMomentumOperator(const Operator *op) { Q->SetMomentumOperator(*op); }
 
-      void Mult(const Vector &x, Vector &y) const override { MFEM_ABORT("Not yet implemented."); }
+      void SetOperator(const Operator &op) override;
+
+      void SetSchurSolver(Solver *invS_, bool own_schur_ = false) override;
+
+      using YosidaPreconditioner::Mult;
 
       // Methods to forward the SetH1Solver and SetH1Operator to the PressureCorrectionSolver
-      void SetH1Solver(Solver *H1_, bool own_H1_ = false) { MFEM_ABORT("Not yet implemented."); }
+      void SetH1Solver(Solver *H1_, bool own_H1_ = false);
 
-      void SetH1Operator(Operator *H1Op) { MFEM_ABORT("Not yet implemented."); }
+      void SetH1Operator(Operator *H1Op);
 
    private:
-      PressureCorrectionSolver *Q = nullptr; // High Order Pressure Correction
-      int q; // Pressure Correction Order
+      HighOrderPressureCorrectionSolver *Q = nullptr; // High Order Pressure Correction
+      TransposeOperator *Qt = nullptr;
    };
 
    } // namespace navier

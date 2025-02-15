@@ -75,6 +75,7 @@ struct s_NavierContext // Navier Stokes params
    BlockPreconditionerType pc_type = BlockPreconditionerType::BLOCK_DIAGONAL;       // 0: Block Diagonal, 1: BlowLowerTri, 2: BlockUpperTri, 3: Chorin-Temam, 4: Yosida, 5: Chorin-Temam Pressure Corrected, 6: Yosida Pressure Corrected
    SchurPreconditionerType schur_pc_type = SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse
    TimeAdaptivityType time_adaptivity_type = TimeAdaptivityType::NONE; // Time adaptivity type (NONE, CFL, HOPC)
+   int pressure_correction_order = 2; // Order of the pressure correction
    bool mass_lumping = false; // Enable mass lumping
    bool stiff_strain = false; // false: viscous stress (Δu), true: stiff strain ( ∇u + ∇u^T )
 } NS_ctx;
@@ -156,6 +157,10 @@ int main(int argc, char *argv[])
                    "-ta",
                    "--time-adaptivity",
                    "Time adaptivity type (0: None, 1: CFL, 2: HOPC)");
+   args.AddOption(&NS_ctx.pressure_correction_order,
+                   "-pco",
+                   "--pressure-correction-order",
+                   "Order of the pressure correction >= 1");
    args.AddOption(&NS_ctx.mass_lumping,
                      "-ml",
                      "--mass-lumping",
@@ -302,6 +307,11 @@ int main(int argc, char *argv[])
 
    naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.time_adaptivity_type, NS_ctx.mass_lumping, NS_ctx.stiff_strain);
 
+   if (NS_ctx.pc_type == navier::BlockPreconditionerType::YOSIDA_HIGH_ORDER_PRESSURE_CORRECTED)
+   {
+      naviersolver->SetPressureCorrectionOrder(NS_ctx.pressure_correction_order);
+   }
+
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Solve unsteady problem
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -309,7 +319,7 @@ int main(int argc, char *argv[])
    real_t t = 0.0;
    real_t dt = NS_ctx.dt;
    bool last_step = false;
-
+   bool accept_step = false;
 
    for (int step = 1; !last_step; ++step)
    {
@@ -318,9 +328,9 @@ int main(int argc, char *argv[])
          last_step = true;
       }
 
-      naviersolver->Step(t, dt, step);
+      accept_step = naviersolver->Step(t, dt, step);
 
-      if( NS_ctx.paraview )
+      if( NS_ctx.paraview && accept_step)
       {
          naviersolver->WriteFields(step, t);
       }

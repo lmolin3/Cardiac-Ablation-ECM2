@@ -54,7 +54,8 @@ namespace mfem
             CHORIN_TEMAM = 3,
             YOSIDA = 4,
             CHORIN_TEMAM_PRESSURE_CORRECTED = 5,
-            YOSIDA_PRESSURE_CORRECTED = 6
+            YOSIDA_PRESSURE_CORRECTED = 6,
+            YOSIDA_HIGH_ORDER_PRESSURE_CORRECTED = 7
         };
 
         enum class SchurPreconditionerType : int
@@ -185,6 +186,19 @@ namespace mfem
             virtual void Setup(real_t dt,
                                BlockPreconditionerType pc_type_ = BlockPreconditionerType::BLOCK_DIAGONAL, SchurPreconditionerType schur_pc_type_ = SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN,
                                TimeAdaptivityType time_adaptivity_type_ = TimeAdaptivityType::NONE, bool mass_lumping = false, bool stiff_strain = false);
+
+
+            /// Set Pressure Correction order for High Order Pressure Correction
+            void SetPressureCorrectionOrder(int q_order_)
+            { 
+                auto HOYPrec = dynamic_cast<HOYPressureCorrectedPreconditioner*>(nsPrec);
+                if (HOYPrec != nullptr)
+                {
+                    HOYPrec->SetOrder(q_order_);
+                }
+                else
+                    MFEM_WARNING("Pressure Correction order can only be set for High Order Pressure Correction Preconditioner.");
+            }
 
             /// Initial condition for velocity
             void SetInitialConditionVel(VectorCoefficient &u_in);
@@ -324,6 +338,8 @@ namespace mfem
             OperatorHandle opC;           // C = alpha/dt + A
             HypreParMatrix *Ce = nullptr; // matrix for dirichlet bc modification
 
+            OperatorHandle opA;           // A = K + N(u)
+
             /// Linear form to compute the mass matrix to set pressure mean to zero.
             ParLinearForm *mass_lf = nullptr;
             real_t volume = 0.0;
@@ -369,6 +385,7 @@ namespace mfem
 
             /// Time adaptivity
             TimeAdaptivityType time_adaptivity_type = TimeAdaptivityType::NONE; // Time adaptivity type (NONE, CFL, HOPC)
+   int pressure_correction_order = 2; // Order of the pressure correction
             real_t error_est = 0.0;
             real_t cfl_max = 0.8;
             real_t cfl_tol = 1e-4;
