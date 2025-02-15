@@ -248,13 +248,15 @@ namespace mfem
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         /** @brief Matrix vector multiplication with the original uneliminated
-        matrix.  The original matrix is \f$ mat + mat_e \f$ so we have:
-        \f$ y = mat x + mat_e x \f$ */
+        * matrix.  The original matrix.  The original matrix is $ mat + mat_e $ so we have:
+        * $ y = mat x + mat_e x $
+        */
         void FullMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y);
 
         /** @brief Addition of matrix vector multiplication with the original uneliminated
-           matrix.  The original matrix is \f$ mat + mat_e \f$ so we have:
-           \f$ y += a ( mat x + mat_e x ) \f$ */
+        * matrix.  The original matrix is $ mat + mat_e $ so we have:
+        * $ y += a ( mat x + mat_e x ) $
+        */
         void FullAddMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y, double a = 1.0);
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
