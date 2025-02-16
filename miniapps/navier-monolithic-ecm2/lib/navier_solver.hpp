@@ -221,7 +221,7 @@ namespace mfem
              * @return true if the timestep is accepted, false otherwise.
              *
              */
-            virtual bool Step(real_t &time, real_t &dt, int current_step);
+            virtual bool Step(real_t &time, real_t &dt, int &current_step);
 
             /**
              * @brief Compute CFL.
@@ -385,12 +385,12 @@ namespace mfem
 
             /// Time adaptivity
             TimeAdaptivityType time_adaptivity_type = TimeAdaptivityType::NONE; // Time adaptivity type (NONE, CFL, HOPC)
-   int pressure_correction_order = 2; // Order of the pressure correction
+            int pressure_correction_order = 2; // Order of the pressure correction
             real_t error_est = 0.0;
             real_t cfl_max = 0.8;
             real_t cfl_tol = 1e-4;
             real_t fac_min = 0.1;
-            real_t fac_max = 10;
+            real_t fac_max = 5;
             real_t dt_min = 1e-6;
             real_t dt_max = 1e-1; // TODO: create method to set it
 

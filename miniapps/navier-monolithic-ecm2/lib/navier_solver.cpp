@@ -335,7 +335,7 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
    sw_setup.Stop();
 }
 
-bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int current_step)
+bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int &current_step)
 {
    /// 0.1 Update BDF time integration coefficients
    SetTimeIntegrationCoefficients( current_step );
@@ -467,8 +467,31 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int current_step)
    nsSolver->Mult(*rhs, *x);
    iter_solve = nsSolver->GetNumIterations();
    res_solve = nsSolver->GetFinalNorm();
-   MFEM_VERIFY(nsSolver->GetConverged(), "GMRES solver did not converge. Aborting!");
+   //MFEM_VERIFY(nsSolver->GetConverged(), "GMRES solver did not converge. Aborting!");
+   if (!nsSolver->GetConverged())
+   {
+      if (time_adaptivity_type != TimeAdaptivityType::NONE) // Try again with smaller time step
+      {
+         current_step -= 1;
+         time -= dt;
 
+         if (verbose && pmesh->GetMyRank() == 0)
+         {
+            mfem::out << "Rejected step dt = " << dt << ". Trying again with dt = " << dt/2.0 << std::endl;
+         }
+
+         dt /= 2.0;
+
+      }
+      else // Time adaptivity not enabled, abort
+      {
+         MFEM_ABORT("GMRES solver did not converge. Aborting!");
+      }
+
+      return false;
+
+   }
+      
    // Update gf 
    // Update gfs 
    u_gf->SetFromTrueDofs(x->GetBlock(0));
@@ -512,7 +535,7 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int current_step)
 
       if (verbose && pmesh->GetMyRank() == 0)
       {
-         mfem::out << "Rejected step. Trying again with dt = " << dt_new << std::endl;
+         mfem::out << "Rejected step dt = " << dt << ". Trying again with dt = " << dt_new << std::endl;
       }
    }
 
