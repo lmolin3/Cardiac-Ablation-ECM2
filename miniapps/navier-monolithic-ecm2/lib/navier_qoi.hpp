@@ -9,6 +9,8 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
+#pragma once
+
 #ifndef MFEM_NAVIER_QOI_HPP
 #define MFEM_NAVIER_QOI_HPP
 

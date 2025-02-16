@@ -3,6 +3,8 @@
  * @brief File containing declarations for various pressure corrections used in block preconditioners for Navier Stokes.
  */
 
+#pragma once
+
 #ifndef PRESSURE_CORRECTION_NAVIER_HPP
 #define PRESSURE_CORRECTION_NAVIER_HPP
 
@@ -68,27 +70,26 @@ namespace mfem
        */
       class HighOrderPressureCorrectionSolver : public PressureCorrectionSolver
       {
-         public:
-            HighOrderPressureCorrectionSolver(Array<int> &offsets, int q_order_ = 2); 
-      
-            // Set Operator A = K + N(u). This is required since SetOperator gives access only to C = alpha/dt M + K + N(u).
-            void SetMomentumOperator(const Operator &op)
-            {
-               opA = &op;
-            }
+         friend class HOYPressureCorrectedPreconditioner;
 
-            void SetOrder(int q_order_);
+      public:
+         HighOrderPressureCorrectionSolver(Array<int> &offsets, int q_order_ = 2);
 
-            void Mult(const Vector &x, Vector &y) const override;
+         // Set Operator A = K + N(u). This is required since SetOperator gives access only to C = alpha/dt M + K + N(u).
+         void SetMomentumOperator(const Operator &op)
+         {
+            opA = &op;
+         }
 
-            // Get the latest pressure correction. This will be used for time adaptivity.
-            Vector GetLatestPressureCorrection() const { return zq; }
+         void SetOrder(int q_order_);
 
-            private:
-               const Operator *opA = nullptr; // NOT OWNED
-               int q_order; // Pressure Correction Order
-               mutable std::vector<Vector> ZData; // Pressure Correction Data
-               mutable Vector z, zq; // Temporary solution, final update
+         void Mult(const Vector &x, Vector &y) const override;
+
+      private:
+         const Operator *opA = nullptr;     // NOT OWNED
+         int q_order;                       // Pressure Correction Order
+         mutable std::vector<Vector> ZData; // Pressure Correction Data
+         mutable Vector z, zq;              // Temporary solution, final update
       };
 
    } // namespace navier

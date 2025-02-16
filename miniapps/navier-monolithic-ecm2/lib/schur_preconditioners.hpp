@@ -3,6 +3,8 @@
  * @brief File containing declarations for various preconditioners for Navier Stokes.
  */
 
+#pragma once
+
 #ifndef SCHUR_PRECONDITIONERS_NAVIER_HPP
 #define SCHUR_PRECONDITIONERS_NAVIER_HPP
 

@@ -3,6 +3,8 @@
  * @brief File containing declarations for various block preconditioners for Navier Stokes.
  */
 
+#pragma once
+
 #ifndef PRECONDITIONERS_NAVIER_HPP
 #define PRECONDITIONERS_NAVIER_HPP
 
@@ -428,6 +430,8 @@ namespace mfem
       void SetH1Solver(Solver *H1_, bool own_H1_ = false);
 
       void SetH1Operator(Operator *H1Op);
+
+      void GetLastPressureCorrection(Vector &z) const { z = Q->zq; }
 
    private:
       HighOrderPressureCorrectionSolver *Q = nullptr; // High Order Pressure Correction

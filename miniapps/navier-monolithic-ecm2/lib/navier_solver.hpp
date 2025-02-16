@@ -9,6 +9,8 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
+#pragma once
+
 #ifndef MFEM_NAVIER_UNSTEADY_HPP
 #define MFEM_NAVIER_UNSTEADY_HPP
 
@@ -21,8 +23,10 @@
 #include "utils.hpp"
 
 // From navier-monolithic-ecm2
+#include "navier_types.hpp"
 #include "navier_preconditioners.hpp"
 #include "schur_preconditioners.hpp"
+#include "time_adaptivity.hpp"
 #include "navier_qoi.hpp"
 #include "integrators/custom_bilinear_integrators.hpp"
 #include "integrators/custom_linear_integrators.hpp"
@@ -38,36 +42,6 @@ namespace mfem
 
     namespace navier
     {
-
-        enum class TimeAdaptivityType : int
-        {
-            NONE = 0, // Fixed time step
-            CFL = 1,  // CFL-based adaptivity
-            HOPC = 2  // High Order Pressure Correction based adaptivity
-        };
-
-        enum class BlockPreconditionerType : int
-        {
-            BLOCK_DIAGONAL = 0,
-            LOWER_TRIANGULAR = 1,
-            UPPER_TRIANGULAR = 2,
-            CHORIN_TEMAM = 3,
-            YOSIDA = 4,
-            CHORIN_TEMAM_PRESSURE_CORRECTED = 5,
-            YOSIDA_PRESSURE_CORRECTED = 6,
-            YOSIDA_HIGH_ORDER_PRESSURE_CORRECTED = 7
-        };
-
-        enum class SchurPreconditionerType : int
-        {
-            PRESSURE_MASS = 0,
-            PRESSURE_LAPLACIAN = 1,
-            PCD = 2,
-            CAHOUET_CHABARD = 3,
-            LSC = 4,
-            APPROXIMATE_DISCRETE_LAPLACIAN = 5
-        };
-
         /**
          * \class MonolithicNavierSolver
          * \brief Unsteady Incompressible Navier Stokes solver with (Picard) Algebraic Chorin-Temam splitting formulation with Pressure Correction (CTPC).
@@ -384,22 +358,14 @@ namespace mfem
             QuantitiesOfInterest *qoi = nullptr; // Quantities of Interest
 
             /// Time adaptivity
-            TimeAdaptivityType time_adaptivity_type = TimeAdaptivityType::NONE; // Time adaptivity type (NONE, CFL, HOPC)
-            int pressure_correction_order = 2; // Order of the pressure correction
-            real_t error_est = 0.0;
-            real_t cfl_max = 0.8;
-            real_t cfl_tol = 1e-4;
-            real_t fac_min = 0.1;
-            real_t fac_max = 5;
-            real_t dt_min = 1e-6;
-            real_t dt_max = 1e-1; // TODO: create method to set it
+            TimeAdaptivityType time_adaptivity_type; // Time adaptivity type: 0 CFL, 1 High Order Pressure Correction 
+            TimeAdaptivityManager *time_adaptivity_manager = nullptr;
+            
 
             // Other features
             bool mass_lumping;      // Enable Mass Lumping 
             bool stiff_strain;      // Enable Stiff Strain
             
-
-
             /// Timers
             StopWatch sw_setup;
             StopWatch sw_conv_assembly;

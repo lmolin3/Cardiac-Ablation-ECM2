@@ -332,6 +332,9 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
    nsSolver->SetPreconditioner(*nsPrec);
    nsSolver->SetPrintLevel(sParams.pl);
 
+   // Time adaptivity manager
+   time_adaptivity_manager = new TimeAdaptivityManager(nsPrec, qoi, u_gf);
+
    sw_setup.Stop();
 }
 
@@ -506,7 +509,7 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int &current_step)
 
    // Time adaptivity
    real_t dt_new;
-   bool accept_step = TimeAdaptivityEstimator(time_adaptivity_type, dt, dt_new);
+   bool accept_step = time_adaptivity_manager->PredictTimeStep(time_adaptivity_type, dt, dt_new);
 
    // Update solution at previous timesteps and time
    if (accept_step)
@@ -706,55 +709,6 @@ void MonolithicNavierSolver::UpdateTimeBCS( real_t new_time )
       u_gf->SetFromTrueDofs(u);
 }
 
-bool MonolithicNavierSolver::TimeAdaptivityEstimator(TimeAdaptivityType type, real_t dt_old, real_t &dt_new)
-{
-   bool accept = false;
-
-   switch (static_cast<TimeAdaptivityType>(type))
-   {
-   case TimeAdaptivityType::NONE: // Fixed time step
-      accept = true;
-      dt_new = dt_old;
-      break;
-
-   case TimeAdaptivityType::CFL: // CFL-based adaptivity
-   {
-      // Compute CFL number
-      real_t cfl = qoi->ComputeCFL(*u_gf, dt_old);
-      // Define error estimator 
-      error_est = cfl / (cfl_max + cfl_tol);            
-      if (error_est < 1.0) // CFL < CFL_max
-         accept = true;
-      // Compute new time step
-      real_t fac_safety = 2.0;
-      real_t eta_new = pow(1.0 / (fac_safety * error_est), 1.0 / (1.0 + 3.0));
-      real_t eta = std::min(fac_max, std::max(fac_min, eta_new));
-      real_t dt_tmp = dt_old * eta;
-      // Check if new time step is within bounds, otherwise limit to bounds
-      dt_new = std::min(std::max(dt_tmp, dt_min), dt_max);   
-   }
-   break;
-
-   case TimeAdaptivityType::HOPC: // High Order Pressure Correction adaptivity
-   {
-      HOYPressureCorrectedPreconditioner *hoy_prec = dynamic_cast<HOYPressureCorrectedPreconditioner *>(nsPrec);
-      if (hoy_prec == nullptr)
-      {
-         MFEM_ABORT("TimeAdaptivityEstimator() >> Time adaptivity type 2 requires HOYPressureCorrectedPreconditioner.");
-      }
-
-      // Placeholder for type 2 adaptivity logic
-      MFEM_ABORT("TimeAdaptivityEstimator() >> Time adaptivity type 2 not implemented.");
-   }
-   break;
-
-   default:
-      MFEM_ABORT("TimeAdaptivityEstimator() >> Unknown time adaptivity type.");
-      break;
-   }
-
-   return accept;
-}
 
 void MonolithicNavierSolver::MeanZero(ParGridFunction &gf)
 {
@@ -952,6 +906,7 @@ MonolithicNavierSolver::~MonolithicNavierSolver()
    delete u_ext_vc; u_ext_vc = nullptr;   
 
    delete qoi; qoi = nullptr;
+   delete time_adaptivity_manager; time_adaptivity_manager = nullptr;
 
    opK.Clear();
    opM.Clear();
