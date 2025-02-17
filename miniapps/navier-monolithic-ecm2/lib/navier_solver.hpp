@@ -161,6 +161,24 @@ namespace mfem
                                BlockPreconditionerType pc_type_ = BlockPreconditionerType::BLOCK_DIAGONAL, SchurPreconditionerType schur_pc_type_ = SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN,
                                TimeAdaptivityType time_adaptivity_type_ = TimeAdaptivityType::NONE, bool mass_lumping = false, bool stiff_strain = false);
 
+            /// Set the type of time adaptivity to use
+            // Useful for changing time adaptivity type during simulation
+            // Note: TimeAdaptivity type is used only at runtime in the Step() method
+            // However, for now be sure the Setup() method is called with the desired time adaptivity type
+            // (default parameters are initialized for CFL or HOPC)
+            void SetTimeAdaptivityType(TimeAdaptivityType time_adaptivity_type_, bool reset_parameters = false)
+            {
+                time_adaptivity_type = time_adaptivity_type_;
+
+                if (reset_parameters)
+                {
+                    SetDefaultTimeAdaptivityParameters(time_adaptivity_type);
+                }
+            }
+
+            // Set the default parameters for the time adaptivity type. 
+            // TODO: implement method to set custom parameters
+            void SetDefaultTimeAdaptivityParameters(TimeAdaptivityType time_adaptivity_type_) { time_adaptivity_manager->SetDefaultParameters(time_adaptivity_type_); }
 
             /// Set Pressure Correction order for High Order Pressure Correction
             void SetPressureCorrectionOrder(int q_order_)
@@ -428,23 +446,6 @@ namespace mfem
              *       Be sure to call this function whenever the time is updated in your simulation.
              */
             virtual void UpdateTimeBCS(real_t new_time);
-
-            /**
-             * @brief Compute the adaptive time step for the next iteration.
-             *
-             * This function computes the adaptive time step for the next iteration.
-             * The time step is computed based on the CFL condition for the velocity field,
-             * or based on the error estimate from the pressure correction step.
-             *
-             * see Alessandro Veneziani and Umberto Villa. Aladins: An algebraic splitting time adaptive solver for the incompressible navier–stokes equations. Journal of Computational Physics, 238:359–375, 2013.
-             *
-             * @param type Type of time adaptivity to use: 0 CFL, 1 High Order Pressure Correction; default 0
-             * @param dt_old Old time step size
-             * @param dt_new New time step size
-             * @return true if the time step is accepted, false otherwise
-             * 
-             */
-            bool TimeAdaptivityEstimator(TimeAdaptivityType type, real_t dt_old, real_t &dt_new);
 
             /// Remove mean from a Vector.
             /**

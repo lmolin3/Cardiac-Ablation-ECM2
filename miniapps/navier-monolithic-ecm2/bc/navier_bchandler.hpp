@@ -275,6 +275,11 @@ namespace mfem
             void UpdateTimeCustomTractionBCs(double new_time);
 
 
+            /**
+             * \brief Check if problem is fully dirichlet (velocity).
+             *        Check if all velocity dofs are constrained by Dirichlet BCs.
+             */
+            bool IsFullyDirichlet();
 
             // Getter for vel_dbcs
             std::vector<VecCoeffContainer> &GetVelDbcs() 
@@ -379,6 +384,10 @@ namespace mfem
             Array<int> custom_traction_attr; // Custom traction mesh attributes.
             Array<int> ess_attr_tmp;   // Temporary variable for essential mesh attributes.
             Array<int> trac_attr_tmp;  // Temporary variable for traction mesh attributes.
+
+            // Check if problem is fully dirichlet (velocity).
+            bool is_fully_dirichlet;
+            bool cached_is_fully_dirichlet = false;
 
             // Verbosity
             bool verbose;

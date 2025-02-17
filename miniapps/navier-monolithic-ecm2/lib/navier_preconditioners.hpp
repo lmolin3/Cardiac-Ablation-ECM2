@@ -153,8 +153,8 @@ namespace mfem
        * 
        * The block upper triangular preconditioner is defined a:
        * 
-       *      P = [ C  G ]
-       *          [    D ]
+       *      P = [ C   G ]
+       *          [    -S ]
        * 
        * with inverse :
        * 
@@ -431,7 +431,9 @@ namespace mfem
 
       void SetH1Operator(Operator *H1Op);
 
-      void GetLastPressureCorrection(Vector &z) const { z = Q->zq; }
+      const Vector& GetLastPressureCorrection() const { return Q->zq; }
+      
+      int GetPressureCorrectionOrder() const { return Q->q_order; }
 
    private:
       HighOrderPressureCorrectionSolver *Q = nullptr; // High Order Pressure Correction

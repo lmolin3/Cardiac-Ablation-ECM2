@@ -299,6 +299,25 @@ void BCHandler::AddCustomTractionBC(Coefficient *alpha, ParGridFunction *u, Coef
 }
 
 
+bool BCHandler::IsFullyDirichlet()
+{
+    // NOTE: if boundary condition type is changed during simulation, cachedisFullyDirichlet should be reset
+    if (!cached_is_fully_dirichlet)
+    {
+        is_fully_dirichlet = true;
+        for (int i = 0; i < max_bdr_attributes; ++i)
+        {
+            if (vel_ess_attr[i] == 0)
+            {
+                is_fully_dirichlet = false;
+                break;
+            }
+        }
+        cached_is_fully_dirichlet = true;
+    }
+    return is_fully_dirichlet;
+}
+
 void BCHandler::UpdateTimeVelocityBCs(double new_time)
 {
     for (auto &vel_dbc : vel_dbcs)

@@ -321,6 +321,9 @@ int main(int argc, char *argv[])
    bool last_step = false;
    bool accept_step = false;
 
+   // Initialize solver without time adaptivity
+   naviersolver->SetTimeAdaptivityType(TimeAdaptivityType::NONE);
+
    for (int step = 1; !last_step; ++step)
    {
       if (t + dt >= NS_ctx.t_final - dt / 2)
@@ -328,6 +331,15 @@ int main(int argc, char *argv[])
          last_step = true;
       }
 
+      // Set time adaptivity type after 10 steps
+      if ( step == 10)
+      {
+         if (Mpi::Root())
+            mfem::out << "Turning on time adaptivity." << std::endl;
+         naviersolver->SetTimeAdaptivityType(NS_ctx.time_adaptivity_type, true); // true: reset parameters to default for the time adaptivity type
+      }
+
+      // Solve
       accept_step = naviersolver->Step(t, dt, step);
 
       if( NS_ctx.paraview && accept_step)

@@ -170,10 +170,11 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
       vel_ess_tdof.Append(vel_ess_tdof_y);
       vel_ess_tdof.Append(vel_ess_tdof_z);
    }
- /*  if ((bcs->GetPresDbcs()).size() > 0) // Dirichlet pressure bcs
-   {
-      pfes->GetEssentialTrueDofs(bcs->GetPresEssAttr(), pres_ess_tdof); 
-   } */
+   // TODO: put it back in after implementing pressure bcs
+   //if ((bcs->GetPresDbcs()).size() > 0) // Dirichlet pressure bcs
+   //{
+   //   pfes->GetEssentialTrueDofs(bcs->GetPresEssAttr(), pres_ess_tdof); 
+   //}
 
    /// 3. Setup and assemble bilinear forms 
    int skip_zeros = 0;
@@ -252,8 +253,6 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
 
    // Set initial time step in the history array
    dthist[0] = dt;
-   dthist[1] = dt;
-   dthist[2] = dt;
 
    /// 5. Construct the NS Operator, Solver and Preconditioner
    
@@ -285,7 +284,7 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
            invS = new ApproximateDiscreteLaplacian(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>(), C_bdfcoeff.constant);
            break;
        default:
-           MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown Schur preconditioner type: " << static_cast<int>(pc_type));
+           MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown Schur preconditioner type: " << static_cast<int>(schur_pc_type));
            break;
    }
 
@@ -334,6 +333,7 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
 
    // Time adaptivity manager
    time_adaptivity_manager = new TimeAdaptivityManager(nsPrec, qoi, u_gf);
+   time_adaptivity_manager->SetDefaultParameters(time_adaptivity_type);   
 
    sw_setup.Stop();
 }
@@ -499,10 +499,13 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int &current_step)
    // Update gfs 
    u_gf->SetFromTrueDofs(x->GetBlock(0));
    p_gf->SetFromTrueDofs(x->GetBlock(1)); // Remove nullspace by removing mean of the pressure solution 
-   if ((bcs->GetPresDbcs()).empty()) // TODO: change, since homogeneous neumann are not included in the list (include them in a vector like homogeneous_neumann.empty(). Can be done at setup time )
+   if (bcs->IsFullyDirichlet()) // If fully Dirichlet, we need to remove the mean of the pressure solution
    {
+      // NOTE: this is the part causing trouble with U and Yosida preconditioners at step 3 in Poiseulle problem 
       MeanZero(*p_gf);
       p_gf->GetTrueDofs(x->GetBlock(1));
+      //Orthogonalize(x->GetBlock(1));
+      //p_gf->SetFromTrueDofs(x->GetBlock(1));
    }
 
    sw_solve.Stop();
@@ -534,12 +537,13 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int &current_step)
       // Revert to previous time step
       current_step -= 1;
       time -= dt;
-      dt = dt_new;
 
       if (verbose && pmesh->GetMyRank() == 0)
       {
          mfem::out << "Rejected step dt = " << dt << ". Trying again with dt = " << dt_new << std::endl;
       }
+      dt = dt_new;
+
    }
 
    return accept_step;
@@ -670,13 +674,14 @@ void MonolithicNavierSolver::UpdateTimeBCS( real_t new_time )
       p.MakeRef(*x, block_offsets[1],
                    block_offsets[2]-block_offsets[1]);
 
+      // TODO: put it back in after implementing pressure bcs
       // Projection of coeffs (pressure)
-      for (auto &pres_dbc : bcs->GetPresDbcs())
-      {
-         pres_dbc.coeff->SetTime(new_time);
-         p_gf->ProjectBdrCoefficient(*pres_dbc.coeff, pres_dbc.attr);
-      }
-      p_gf->GetTrueDofs(p);
+      //for (auto &pres_dbc : bcs->GetPresDbcs())
+      //{
+      //   pres_dbc.coeff->SetTime(new_time);
+      //   p_gf->ProjectBdrCoefficient(*pres_dbc.coeff, pres_dbc.attr);
+      //}
+      //p_gf->GetTrueDofs(p);
 
       // Projection of coeffs (full velocity applied)
       for (auto &vel_dbc : bcs->GetVelDbcs())
