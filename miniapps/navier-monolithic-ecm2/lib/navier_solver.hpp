@@ -1,14 +1,3 @@
-// Copyright (c) 2010-2023, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-
 #pragma once
 
 #ifndef MFEM_NAVIER_UNSTEADY_HPP
@@ -367,7 +356,9 @@ namespace mfem
             BlockPreconditionerType pc_type;                      // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
             NavierBlockPreconditioner *nsPrec = nullptr; // Navier-Stokes block preconditioner
             SchurPreconditionerType schur_pc_type;  // PC type for Schur Complement: 0 Pressure Mass, 1 Pressure Laplacian, 2 PCD, 3 Cahouet-Chabard, 4 Approximate inverse
-            Solver *invS = nullptr; // Schur Complement Preconditioner
+            Solver *invS_NonOrtho = nullptr;   // Schur Complement Preconditioner
+            OrthoSolver *invS_Ortho = nullptr; // Schur Complement Preconditioner (wrapper for invS_NonOrtho, which removes pressure nullspace)
+            Solver *invS = nullptr;            // Schur Complement Preconditioner
 
             /// Variables for iterations/norm solvers
             int iter_solve = 0;
@@ -446,20 +437,6 @@ namespace mfem
              *       Be sure to call this function whenever the time is updated in your simulation.
              */
             virtual void UpdateTimeBCS(real_t new_time);
-
-            /// Remove mean from a Vector.
-            /**
-             * Modify the Vector @a v by subtracting its mean using
-             * \f$v = v - \frac{\sum_i^N v_i}{N} \f$
-             */
-            void Orthogonalize(Vector &v);
-
-            /// Remove the mean from a ParGridFunction.
-            /**
-             * Modify the ParGridFunction @a v by subtracting its mean using
-             * \f$ v = v - \int_\Omega \frac{v}{vol(\Omega)} dx \f$.
-             */
-            void MeanZero(ParGridFunction &v);
 
             /// Print logo of the Navier solver.
             void PrintLogo();

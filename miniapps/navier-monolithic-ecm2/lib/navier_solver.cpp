@@ -244,7 +244,21 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
    {
       f_form->AddBoundaryIntegrator(new VectorNeumannLFIntegrator( *(traction_bc.u),*(traction_bc.p),*(traction_bc.alpha),*(traction_bc.beta)) , traction_bc.attr);
    }
-   
+
+   if (bcs->IsFullyDirichlet())
+   { // If fully Dirichlet, we need to remove mean from the pressure
+      ConstantCoefficient onecoeff(1.0);
+      mass_lf = new ParLinearForm(pfes);
+      auto *dlfi = new DomainLFIntegrator(onecoeff);
+      mass_lf->AddDomainIntegrator(dlfi);
+      mass_lf->Assemble();
+
+      ParGridFunction one_gf(pfes);
+      one_gf.ProjectCoefficient(onecoeff);
+
+      volume = mass_lf->operator()(one_gf);
+   }
+
    // Update time in Dirichlet velocity coefficients and project on predicted/corrected vectors and gf
    UpdateTimeBCS( 0.0 );
 
@@ -261,31 +275,42 @@ void MonolithicNavierSolver::Setup(real_t dt, BlockPreconditionerType pc_type_, 
    nsOp->SetBlock(0, 1, opG.Ptr());
    nsOp->SetBlock(1, 0, opD.Ptr());
 
-   // Schur Complement Preconditioner invS
+   // Schur Complement Preconditioner invS_NonOrtho
    // Preconditioner for discrete pressure laplacian
    switch (static_cast<SchurPreconditionerType>(schur_pc_type)) 
    {
        case SchurPreconditionerType::PRESSURE_MASS:
-           invS = new PMass(pfes, pres_ess_tdof, C_visccoeff.constant);
+           invS_NonOrtho = new PMass(pfes, pres_ess_tdof, C_visccoeff.constant);
            break;
        case SchurPreconditionerType::PRESSURE_LAPLACIAN:
-           invS = new PLap(pfes, pres_ess_tdof, C_bdfcoeff.constant);
+           invS_NonOrtho = new PLap(pfes, pres_ess_tdof, C_bdfcoeff.constant);
            break;
        case SchurPreconditionerType::PCD:
-           invS = new PCD(pfes, pres_ess_tdof, &C_bdfcoeff, &C_visccoeff, u_ext_vc);
+           invS_NonOrtho = new PCD(pfes, pres_ess_tdof, &C_bdfcoeff, &C_visccoeff, u_ext_vc);
            break;
        case SchurPreconditionerType::CAHOUET_CHABARD:
-           invS = new CahouetChabard(pfes, pres_ess_tdof, dt, C_visccoeff.constant);
+           invS_NonOrtho = new CahouetChabard(pfes, pres_ess_tdof, dt, C_visccoeff.constant);
            break;
        case SchurPreconditionerType::LSC:
-           invS = new LSC(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>());
+           invS_NonOrtho = new LSC(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>());
            break;
        case SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN:
-           invS = new ApproximateDiscreteLaplacian(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>(), C_bdfcoeff.constant);
+           invS_NonOrtho = new ApproximateDiscreteLaplacian(pfes, pres_ess_tdof, opD.As<HypreParMatrix>(), opG.As<HypreParMatrix>(), opM.As<HypreParMatrix>(), C_bdfcoeff.constant);
            break;
        default:
            MFEM_ABORT("MonolithicNavierSolver::Setup() >> Unknown Schur preconditioner type: " << static_cast<int>(schur_pc_type));
            break;
+   }
+
+   if ( bcs->IsFullyDirichlet() )
+   {
+      invS_Ortho = new OrthoSolver(pfes->GetComm());
+      invS_Ortho->SetSolver(*invS_NonOrtho);
+      invS = invS_Ortho;
+   }
+   else
+   {
+      invS = invS_NonOrtho;
    }
 
    // Navier-Stokes Preconditioner 
@@ -422,22 +447,22 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int &current_step)
    switch (static_cast<SchurPreconditionerType>(schur_pc_type))
    {
        case SchurPreconditionerType::PRESSURE_MASS:
-           static_cast<PMass *>(invS)->SetCoefficients(C_visccoeff.constant);
+           static_cast<PMass *>(invS_NonOrtho)->SetCoefficients(C_visccoeff.constant);
            break;
        case SchurPreconditionerType::PRESSURE_LAPLACIAN:
-           static_cast<PLap *>(invS)->SetCoefficients(C_bdfcoeff.constant);
+           static_cast<PLap *>(invS_NonOrtho)->SetCoefficients(C_bdfcoeff.constant);
            break;
        case SchurPreconditionerType::PCD:
-           static_cast<PCD *>(invS)->Rebuild();
+           static_cast<PCD *>(invS_NonOrtho)->Rebuild();
            break;
        case SchurPreconditionerType::CAHOUET_CHABARD:
-           static_cast<CahouetChabard *>(invS)->SetCoefficients(dt, C_visccoeff.constant);
+           static_cast<CahouetChabard *>(invS_NonOrtho)->SetCoefficients(dt, C_visccoeff.constant);
            break;
        case SchurPreconditionerType::LSC:
-           static_cast<LSC *>(invS)->SetOperator(*opC.Ptr());
+           static_cast<LSC *>(invS_NonOrtho)->SetOperator(*opC.Ptr());
            break;
        case SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN:
-           static_cast<ApproximateDiscreteLaplacian *>(invS)->SetCoefficients(C_bdfcoeff.constant);
+           static_cast<ApproximateDiscreteLaplacian *>(invS_NonOrtho)->SetCoefficients(C_bdfcoeff.constant);
            break;
        default:
            MFEM_ABORT("MonolithicNavierSolver::Step() >> Unknown Schur preconditioner type: " << static_cast<int>(schur_pc_type));
@@ -475,6 +500,10 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int &current_step)
    {
       if (time_adaptivity_type != TimeAdaptivityType::NONE) // Try again with smaller time step
       {
+         // Revert to previous time step solution
+         u_gf->GetTrueDofs(x->GetBlock(0)); 
+         p_gf->GetTrueDofs(x->GetBlock(1));
+         
          current_step -= 1;
          time -= dt;
 
@@ -502,9 +531,9 @@ bool MonolithicNavierSolver::Step(real_t &time, real_t &dt, int &current_step)
    if (bcs->IsFullyDirichlet()) // If fully Dirichlet, we need to remove the mean of the pressure solution
    {
       // NOTE: this is the part causing trouble with U and Yosida preconditioners at step 3 in Poiseulle problem 
-      MeanZero(*p_gf);
+      ecm2_utils::MeanZero(*p_gf, mass_lf, volume);
       p_gf->GetTrueDofs(x->GetBlock(1));
-      //Orthogonalize(x->GetBlock(1));
+      //ecm2_utils::Orthogonalize(x->GetBlock(1), pfes->GetComm());
       //p_gf->SetFromTrueDofs(x->GetBlock(1));
    }
 
@@ -663,6 +692,10 @@ void MonolithicNavierSolver::UpdateTimeRHS( real_t new_time )
 
       // Update pressure block of rhs (bcs from velocity)
       opDe->AddMult(x->GetBlock(0), fp, -1.0);
+
+      //if (bcs->IsFullyDirichlet())
+      //   ecm2_utils::Orthogonalize(fp, pfes->GetComm());
+
 }
 
 void MonolithicNavierSolver::UpdateTimeBCS( real_t new_time )
@@ -714,42 +747,6 @@ void MonolithicNavierSolver::UpdateTimeBCS( real_t new_time )
       u_gf->SetFromTrueDofs(u);
 }
 
-
-void MonolithicNavierSolver::MeanZero(ParGridFunction &gf)
-{
-   // Make sure not to recompute the inner product linear form every
-   // application.
-   if (mass_lf == nullptr)
-   {
-      ConstantCoefficient onecoeff(1.0);
-      mass_lf = new ParLinearForm(gf.ParFESpace());
-      auto *dlfi = new DomainLFIntegrator(onecoeff);
-      mass_lf->AddDomainIntegrator(dlfi);
-      mass_lf->Assemble();
-
-      ParGridFunction one_gf(gf.ParFESpace());
-      one_gf.ProjectCoefficient(onecoeff);
-
-      volume = mass_lf->operator()(one_gf);
-   }
-
-   real_t integ = mass_lf->operator()(gf);
-
-   gf -= integ / volume;
-}
-
-void MonolithicNavierSolver::Orthogonalize(Vector &v)
-{
-   real_t loc_sum = v.Sum();
-   real_t global_sum = 0.0;
-   int loc_size = v.Size();
-   int global_size = 0;
-
-   MPI_Allreduce(&loc_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, ufes->GetComm());
-   MPI_Allreduce(&loc_size, &global_size, 1, MPI_INT, MPI_SUM, ufes->GetComm());
-
-   v -= global_sum / static_cast<real_t>(global_size);
-}
 
 void MonolithicNavierSolver::PrintLogo()
 {
@@ -904,7 +901,8 @@ MonolithicNavierSolver::~MonolithicNavierSolver()
    delete nsSolver;   nsSolver = nullptr;
    delete nsOp;       nsOp = nullptr;
 
-   delete invS;       invS = nullptr;
+   delete invS_NonOrtho;       invS_NonOrtho = nullptr;
+   delete invS_Ortho;  invS_Ortho = nullptr;
    delete nsPrec;     nsPrec = nullptr;
 
    delete kin_vis; kin_vis = nullptr;

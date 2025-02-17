@@ -259,6 +259,20 @@ namespace mfem
         */
         void FullAddMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y, double a = 1.0);
 
+        /// Remove mean from a Vector.
+        /**
+         * Modify the Vector @a v by subtracting its mean using
+         * \f$v = v - \frac{\sum_i^N v_i}{N} \f$
+         */
+        void Orthogonalize(Vector &v, const MPI_Comm &comm);
+
+        /// Remove the mean from a ParGridFunction.
+        /**
+         * Modify the ParGridFunction @a v by subtracting its mean using
+         * \f$ v = v - \int_\Omega \frac{v}{vol(\Omega)} dx \f$.
+         */
+        void MeanZero(ParGridFunction &v, ParLinearForm *mass_lf = nullptr, real_t volume = 0.0);
+
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                              Mesh utils                                              ///
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
