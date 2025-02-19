@@ -1,19 +1,12 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-//
 //            -------------------------------
 //            Mesh Boundary/Domain idexporter
 //            -------------------------------
 //
 // Sample runs:
+// 1. Load mesh and patition it into 4 parts
+//          ./MeshUtils -m ../../data/<MESH-FILE> -p 4 -of ./Output
+// 2. Generate a uniform quad mesh and partition it into 4 parts
+//          ./MeshUtils -d 2 -e 0 -n 10 -p 4 -of ./Output
 
 #include "mfem.hpp"
 #include "../common/mfem-common.hpp"
@@ -21,6 +14,7 @@
 #include <limits>
 #include <cstdlib>
 #include "FilesystemHelper.hpp"  
+#include "utils.hpp"
 
 using namespace mfem;
 using namespace std;
@@ -30,18 +24,22 @@ int main(int argc, char *argv[])
    //
    /// 1. Parse command-line options.
    //
-   int n = 10; // custom mesh
+   const char *mesh_file = "";  // mesh
+   int n = 10; 
    int dim = 2;
    int elem = 0;
+   int order = 1; // FE order of mesh nodes
 
    int ser_ref_levels = 0; // mesh refinement
-   int par_ref_levels = 0;
-   const char *mesh_file = "";
 
-   const char *folderPath = "./";
+   int partitions = 0; // partitioning
+   int partitioning_type = 1;
+
+   const char *folderPath = "./"; // output
 
    // TODO: check parsing and assign variables
    OptionsParser args(argc, argv);
+   // Mesh file or Mesh generation
    args.AddOption(&mesh_file,
                   "-m",
                   "--mesh",
@@ -58,26 +56,33 @@ int main(int argc, char *argv[])
                   "-n",
                   "--num-elements",
                   "Number of elements in uniform mesh.");
+   args.AddOption(&order,
+                  "-o",
+                  "--order",
+                  "Order of the finite elements.");
+   // Mesh refinement
    args.AddOption(&ser_ref_levels,
                   "-rs",
                   "--refine-serial",
                   "Number of times to refine the mesh uniformly in serial.");
-   args.AddOption(&par_ref_levels,
-                  "-rp",
-                  "--refine-parallel",
-                  "Number of times to refine the mesh uniformly in parallel.");
+   // Partitioning
+   args.AddOption(&partitions,
+                  "-p",
+                  "--partitions",
+                  "Number of partitions.");
+   args.AddOption(&partitioning_type,
+                  "-pt",
+                  "--partitioning-type",
+                  "Type of partitioning (0: METIS_PartGraphRecursive, 1: METIS_PartGraphKway, 2: METIS_PartGraphVKway)");
+   // Output
    args.AddOption(&folderPath,
-                  "-o",
+                  "-of",
                   "--output-folder",
                   "Output folder.");
-
    args.Parse();
-   if (!args.Good())
-   {
-      args.PrintUsage(std::cout);
-   }
 
-   args.PrintOptions(std::cout);
+   args.ParseCheck();
+
 
    //
    /// 2. Read the (serial) mesh from the given mesh file on all processors.
@@ -87,10 +92,13 @@ int main(int argc, char *argv[])
 
    if (mesh_file[0] != '\0')
    {
+      mfem::out << "Reading serial mesh file: " << mesh_file << std::endl;
       mesh = Mesh::LoadFromFile(mesh_file);
+      dim = mesh.Dimension();
    }
    else // Create square mesh
    {
+      mfem::out << "Generating a uniform mesh..." << std::endl;
       Element::Type type;
       switch (elem)
       {
@@ -113,6 +121,7 @@ int main(int argc, char *argv[])
       }
    }
 
+
    // Serial Refinement
    for (int l = 0; l < ser_ref_levels; l++)
    {
@@ -120,17 +129,55 @@ int main(int argc, char *argv[])
    }
 
    //
-   /// 3. Save the refined mesh 
+   /// 3. Generate the partitioning of the mesh
    //
+   // Partition type:
+   // 0) METIS_PartGraphRecursive (sorted neighbor lists)
+   // 1) METIS_PartGraphKway      (sorted neighbor lists) (default)
+   // 2) METIS_PartGraphVKway     (sorted neighbor lists)
+   // 3) METIS_PartGraphRecursive
+   // 4) METIS_PartGraphKway
+   // 5) METIS_PartGraphVKway
+   int *partitioning;
+   if (partitions > 0)
+   {
+      mfem::out << "Generating partitioning..." << std::endl;
+      partitioning = mesh.GeneratePartitioning(partitions, partitioning_type);}
+
+   // Create gridfunction for visualization of quadrature points
+   H1_FECollection fec(order, dim);
+   FiniteElementSpace fespace(&mesh, &fec);
+   GridFunction gf(&fespace);
+   gf = 0.0;
+
+   ParaViewDataCollection paraview_dc("QP", &mesh);
+   paraview_dc.SetPrefixPath(folderPath);
+   paraview_dc.RegisterField("zero", &gf);
+   if (order > 1)
+   {
+      paraview_dc.SetHighOrderOutput(true);
+      paraview_dc.SetLevelsOfDetail(order);
+   }
+   paraview_dc.Save();
+
+   
+   //
+   /// 4. Save the refined mesh 
+   //
+   
+   mfem::out << "Saving the mesh..." << std::endl;
+
    if (!fs::is_directory(folderPath) || !fs::exists(folderPath)) { // Check if folder exists
       fs::create_directories(folderPath); // create folder
    }
 
+   // Save mesh
    std::ostringstream mesh_name;
    std::ofstream mesh_ofs(mesh_name.str().c_str());
    mesh_ofs.precision(8);
    mesh.Print(mesh_ofs);
 
+   // Saver mesh boundaries
    std::ostringstream omesh_file, omesh_file_bdr;
    omesh_file << folderPath << "/mesh.vtk";
    omesh_file_bdr << folderPath << "/mesh_bdr";
@@ -138,6 +185,10 @@ int main(int argc, char *argv[])
    omesh.precision(14);
    mesh.PrintVTK(omesh);
    mesh.PrintBdrVTU(omesh_file_bdr.str());
+
+   // Save partitioning
+   if (partitions > 0)
+      ecm2_utils::ExportMeshwithPartitioning(folderPath, mesh, partitioning);
 
    // Free used memory.
 

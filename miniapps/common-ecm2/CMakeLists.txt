@@ -39,8 +39,8 @@ if (CMAKE_CXX_STANDARD LESS 17)
     target_link_libraries(mfem-common-ecm2 stdc++fs)
 endif()
 
-add_mfem_miniapp(extract-mesh-ids
-  MAIN extract-mesh-ids.cpp
+add_mfem_miniapp(MeshUtils
+  MAIN MeshUtils.cpp
   ${MFEM_MINIAPPS_COMMON_HEADERS}
   LIBRARIES mfem-common mfem-common-ecm2)
 
