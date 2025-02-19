@@ -33,6 +33,7 @@ include_directories(
   ${CMAKE_SOURCE_DIR}/miniapps/heat-ecm2
   ${CMAKE_SOURCE_DIR}/miniapps/celldeath-ecm2
   ${CMAKE_SOURCE_DIR}/miniapps/electrostatics-ecm2
+  ${CMAKE_SOURCE_DIR}/miniapps/navier-monolithic-ecm2
 )
 
 # Parallel apps.

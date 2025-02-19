@@ -48,6 +48,48 @@ namespace mfem
             mat_e->AddMult(x, y, a); // y += a mat_e x
         }
 
+        void MeanZero(ParGridFunction &gf, ParLinearForm *mass_lf, real_t volume)
+        {
+            // Make sure not to recompute the inner product linear form if already provided
+            if (mass_lf == nullptr)
+            {
+                ConstantCoefficient onecoeff(1.0);
+                mass_lf = new ParLinearForm(gf.ParFESpace());
+                auto *dlfi = new DomainLFIntegrator(onecoeff);
+                mass_lf->AddDomainIntegrator(dlfi);
+                mass_lf->Assemble();
+
+                ParGridFunction one_gf(gf.ParFESpace());
+                one_gf.ProjectCoefficient(onecoeff);
+
+                volume = mass_lf->operator()(one_gf);
+            }
+
+            if (volume == 0.0)
+            {
+                ConstantCoefficient onecoeff(1.0);
+                ParGridFunction one_gf(gf.ParFESpace());
+                one_gf.ProjectCoefficient(onecoeff);
+                volume = mass_lf->operator()(one_gf);
+            }
+
+            real_t integ = mass_lf->operator()(gf);
+            gf -= integ / volume;
+        }
+
+        void Orthogonalize(Vector &v, const MPI_Comm &comm)
+        {
+            real_t loc_sum = v.Sum();
+            real_t global_sum = 0.0;
+            int loc_size = v.Size();
+            int global_size = 0;
+
+            MPI_Allreduce(&loc_sum, &global_sum, 1, MPI_DOUBLE, MPI_SUM, comm);
+            MPI_Allreduce(&loc_size, &global_size, 1, MPI_INT, MPI_SUM, comm);
+
+            v -= global_sum / static_cast<real_t>(global_size);
+        }
+
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                              Mesh utils                                              ///
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
