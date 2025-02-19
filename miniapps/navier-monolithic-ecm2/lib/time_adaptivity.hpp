@@ -24,9 +24,9 @@ namespace mfem
       {
          static constexpr real_t chi_min = 0.1;
          static constexpr real_t chi_max = 5;
-         static constexpr real_t chi_reject = 0.5;
+         static constexpr real_t chi_reject = 0.25;
          static constexpr real_t chi_tol = 1e-3;
-         static constexpr real_t chi_safety = 1.05; // >= 1.0
+         static constexpr real_t chi_safety = 1.5; // >= 1.0
          static constexpr real_t dt_min = 1e-6;
          static constexpr real_t dt_max = 1e-1;
       

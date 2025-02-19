@@ -56,6 +56,11 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common navier_monolithic_ecm2)
 
+  add_mfem_miniapp(navier-time-convergence-monolithic
+    MAIN tests/navier_time_convergence.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common navier_monolithic_ecm2)
+
   add_mfem_miniapp(navier-flowaroundcyl-monolithic
     MAIN tests/navier_flowaroundcyl.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}

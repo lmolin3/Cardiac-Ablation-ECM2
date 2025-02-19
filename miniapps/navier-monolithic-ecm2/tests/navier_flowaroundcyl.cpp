@@ -337,7 +337,7 @@ int main(int argc, char *argv[])
       if (pmesh->GetMyRank() == 0)
          mfem::out << "CFL: " << CFL << std::endl;
 
-      if( NS_ctx.paraview && accept_step)
+      if( NS_ctx.paraview && accept_step )
       {
          naviersolver->WriteFields(step, t);
       }

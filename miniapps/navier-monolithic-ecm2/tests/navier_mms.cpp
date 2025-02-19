@@ -17,13 +17,13 @@
 // Sample run:
 //
 // 1. Yosida block preconditioner + ApproximateDiscreteLaplacian Schur complement preconditioner
-// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5
+// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 3 -bcs 0 --preconditioner 4 --schur-preconditioner 5
 // 
 // 2. Mass lumping
-// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --mass-lumping
+// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 3 -bcs 0 --preconditioner 4 --schur-preconditioner 5 --mass-lumping
 //
 // 3. Stiff strain
-// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
+// mpirun -np 4 ./navier-mms-monolithic -d 2 -e 1 -n 10 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-2 -f 3 -bcs 0 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
 //
 
 #include "lib/navier_solver.hpp"

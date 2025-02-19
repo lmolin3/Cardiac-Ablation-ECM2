@@ -17,13 +17,13 @@
 // Sample run:
 //
 // 1. Yosida block preconditioner + ApproximateDiscreteLaplacian Schur complement preconditioner
-// mpirun -np 4 ./navier-convergence-monolithic -d 2 -e 1 -n 10 -r 3 -ou 2 -op 1 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5
+// mpirun -np 4 ./navier-time-convergence-monolithic -d 2 -e 1 -n 10 -r 3 -ou 2 -op 1 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5
 // 
 // 2. Mass lumping
-// mpirun -np 4 ./navier-convergence-monolithic -d 2 -e 1 -n 10 -r 3 -ou 2 -op 1 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --mass-lumping 
+// mpirun -np 4 ./navier-time-convergence-monolithic -d 2 -e 1 -n 10 -r 3 -ou 2 -op 1 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --mass-lumping 
 //
 // 3. Stiff strain
-// mpirun -np 4 ./navier-convergence-monolithic -d 2 -e 1 -n 10 -r 3 -ou 2 -op 1 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
+// mpirun -np 4 ./navier-time-convergence-monolithic -d 2 -e 1 -n 10 -r 3 -ou 2 -op 1 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
 //
 
 #include "lib/navier_solver.hpp"
@@ -48,7 +48,7 @@ struct s_NavierContext // Navier Stokes params
    real_t kinvis = 0.01;
    real_t a = 2.0;
    real_t dt = 1e-3;
-   real_t t_final = 10 * dt;
+   real_t t_final = 1.0;
    bool verbose = false;
    int fun = 1;
    int bdf = 1;
@@ -232,10 +232,6 @@ int main(int argc, char *argv[])
                    "-schur-pc",
                    "--schur-preconditioner",
                    "Preconditioner type (0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Discrete Laplacian)");
-   args.AddOption((int *)&NS_ctx.time_adaptivity_type,
-                   "-ta",
-                   "--time-adaptivity",
-                   "Time adaptivity type (0: None, 1: CFL, 2: HOPC)");
    args.AddOption(&NS_ctx.pressure_correction_order,
                    "-pco",
                    "--pressure-correction-order",
@@ -265,7 +261,7 @@ int main(int argc, char *argv[])
                    "--num-elements",
                    "Number of elements in uniform mesh.");
     args.AddOption(&total_refinements, "-r", "--refinements",
-                     "Number of total uniform refinements");
+                     "Number of total uniform time refinements");
    args.Parse();
    if (!args.Good())
    {
@@ -306,7 +302,7 @@ int main(int argc, char *argv[])
    {
       cout << "------------------------------------------------------------------------------------------------------------"
            << endl;
-      cout << left << setw(16) << "DOFs u " << setw(16) << "DOFs p " << setw(16) << "h " << setw(16) << "L^2 error (u) " << setw(16) << "L^2 error (p) " << setw(16);
+      cout << left << setw(16) << "DOFs u " << setw(16) << "DOFs p " << setw(16) << " Δt " << setw(16) << "L^2 error (u) " << setw(16) << "L^2 error (p) " << setw(16);
       cout << "L^2 rate (u)" << setw(16) << "L^2 rate (p)" << setw(16) << endl;
       cout << "------------------------------------------------------------------------------------------------------------"
            << endl;
@@ -316,10 +312,10 @@ int main(int argc, char *argv[])
    real_t l2_err_p_prev = 0.0;
    real_t h1_err_u_prev = 0.0;
    real_t h1_err_p_prev = 0.0;
-   real_t h_prev = 0.0;
+   real_t h_prev = 2.0*NS_ctx.dt;
 
    // Refinement loop
-   for (int serial_ref_levels = 0; serial_ref_levels < total_refinements; serial_ref_levels++)
+   for (int ref_levels = 1; ref_levels <= total_refinements; ref_levels++)
    {
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -356,6 +352,7 @@ int main(int argc, char *argv[])
       *nodes -= 1.0;
    }
 
+   int serial_ref_levels = 1;
    for (int l = 0; l < serial_ref_levels; l++)
    {
       mesh.UniformRefinement();
@@ -489,8 +486,9 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 7. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
-
-   naviersolver->Setup(NS_ctx.dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.time_adaptivity_type, NS_ctx.mass_lumping, NS_ctx.stiff_strain);
+   
+   real_t dt = h_prev / 2.0;
+   naviersolver->Setup(dt, NS_ctx.pc_type, NS_ctx.schur_pc_type, NS_ctx.time_adaptivity_type, NS_ctx.mass_lumping, NS_ctx.stiff_strain);
 
    if (NS_ctx.pc_type == navier::BlockPreconditionerType::YOSIDA_HIGH_ORDER_PRESSURE_CORRECTED)
    {
@@ -503,7 +501,6 @@ int main(int argc, char *argv[])
    real_t err_u = 0.0;
    real_t err_p = 0.0;
    real_t t = 0.0;
-   real_t dt = NS_ctx.dt;
    bool last_step = false;
    bool accept_step = false;
    for (int step = 1; !last_step; ++step)
@@ -542,16 +539,10 @@ int main(int argc, char *argv[])
       h1_err_u = 0.0;
       h1_err_p = 0.0;
 
-      real_t h_min = 0.0;
-      real_t h_max = 0.0;
-      real_t kappa_min = 0.0;
-      real_t kappa_max = 0.0;
-      pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
-
-      if (serial_ref_levels != 0)
+      if (ref_levels > 1)
       {
-         l2_rate_u = log(l2_err_u / l2_err_u_prev) / log(h_min / h_prev);
-         l2_rate_p = log(l2_err_p / l2_err_p_prev) / log(h_min / h_prev);
+         l2_rate_u = log(l2_err_u / l2_err_u_prev) / log(dt / h_prev);
+         l2_rate_p = log(l2_err_p / l2_err_p_prev) / log(dt / h_prev);
          //h1_rate = log(h1_err / h1_err_prev) / log(h_min / h_prev);
          h1_rate_u = 0.0;
          h1_rate_p = 0.0;
@@ -568,11 +559,11 @@ int main(int argc, char *argv[])
       l2_err_p_prev = l2_err_p;
       h1_err_u_prev = h1_err_u;
       h1_err_p_prev = h1_err_p;
-      h_prev = h_min;
+      h_prev = dt;
 
       if (Mpi::Root())
       {
-         cout << setw(16) << naviersolver->GetVelocitySize() << setw(16) << naviersolver->GetPressureSize()  << setw(16) << h_min << setw(16) << l2_err_u << setw(16) << l2_err_p;
+         cout << setw(16) << naviersolver->GetVelocitySize() << setw(16) << naviersolver->GetPressureSize()  << setw(16) << dt << setw(16) << l2_err_u << setw(16) << l2_err_p;
          cout << setw(16) << l2_rate_u << setw(16) << l2_rate_p << endl;
       }
 

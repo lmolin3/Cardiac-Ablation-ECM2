@@ -334,6 +334,9 @@ int main(int argc, char *argv[])
          naviersolver->WriteFields(step, t);
       }
 
+      if (pmesh->GetMyRank() == 0)
+         mfem::out << "CFL: " << CFL << std::endl;
+
    }
 
    
