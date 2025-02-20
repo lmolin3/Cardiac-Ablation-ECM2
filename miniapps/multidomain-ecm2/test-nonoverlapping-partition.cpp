@@ -1,24 +1,10 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-//
-// Sample run: 
-//             mpirun -np 10 ./test-nonoverlapping-partition -np1 3 -np2 2 -np3 7
-
 #include "mfem.hpp"
 
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h> // Include for mkdir
 #include <iostream>
 #include <memory>
+#include "FilesystemHelper.hpp"
 
 using namespace mfem;
 
@@ -82,8 +68,8 @@ int main(int argc, char *argv[])
    args.AddOption(&parallel_ref_levels[2], "-rp3", "--parallel-ref-levels",
                   "Number of parallel refinement levels for cylinder mesh.");
    // Postprocessing
-   args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
-                  "Enable or disable VisIt visualization.");
+   args.AddOption(&paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+                  "Enable or disable Paraview visualization.");
    args.AddOption(&outfolder, "-of", "--out-folder",
                   "Output folder.");
 

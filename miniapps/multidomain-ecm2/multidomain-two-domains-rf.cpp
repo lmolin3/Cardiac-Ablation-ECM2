@@ -1,14 +1,3 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-//
 // Solve quasi-static electrostatics problem with two domains (fluid and solid).
 //                            ∇•σ∇Φ = 0
 // The problem is solved using a segregated approach with two-way coupling (Neumann-Dirichlet)
@@ -25,17 +14,25 @@
 //    mpirun -np 4 ./multidomain-two-domains-rf -o 3 -hex -pa --relaxation-parameter 0.8
 
 
+// MFEM library
 #include "mfem.hpp"
-#include "lib/celldeath_solver.hpp"
+
+// Multiphysics modules
 #include "lib/electrostatics_solver.hpp"
 
+// Utils
 #include "../common/mesh_extras.hpp"
+#include "anisotropy_utils.hpp"
 
+// Physical and Domain-Decomposition parameters
+#include "contexts.hpp" 
+
+// Output
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h> // Include for mkdir
 #include <iostream>
 #include <memory>
+#include "FilesystemHelper.hpp"
 
 using namespace mfem;
 
@@ -45,8 +42,6 @@ using TransferBackend = InterfaceTransfer::Backend;
 IdentityMatrixCoefficient *Id = NULL;
 
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
-std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles);
-std::function<void(const Vector &, Vector &)> FiberDirection(std::function<void(const Vector &, Vector &)> EulerAngles, int component);
 
 // Forward declaration
 void print_matrix(const DenseMatrix &A);
@@ -68,56 +63,33 @@ int main(int argc, char *argv[])
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   // FE
-   int order = 1;
-   bool pa = false; // Enable partial assembly
-   // Physics
-
-   // Mesh
-   int serial_ref_levels = 0;
-   int parallel_ref_levels = 0;
-   bool hex = false;
-   // Domain decomposition
-   real_t omega = 0.5; // Relaxation parameter
-   real_t omega_fluid;
-   real_t omega_solid;
-   real_t omega_cyl;   
-   // Physics
-   real_t aniso_ratio_rf = 1.0;
-   // Postprocessing
-   bool print_timing = false;
-   bool visit = false;
-   bool paraview = true;
-   int save_freq = 1; // Save fields every 'save_freq' time steps
-   const char *outfolder = "";
-
    OptionsParser args(argc, argv);
    // FE
-   args.AddOption(&order, "-o", "--order",
+   args.AddOption(&RF_ctx.order, "-o", "--order",
                   "Finite element order (polynomial degree).");
-   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
+   args.AddOption(&RF_ctx.pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
                   "Enable or disable partial assembly.");
    // Mesh
-   args.AddOption(&hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
+   args.AddOption(&Mesh_ctx.hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
                   "Use hexahedral mesh.");
-   args.AddOption(&serial_ref_levels, "-rs", "--serial-ref-levels",
+   args.AddOption(&Mesh_ctx.serial_ref_levels, "-rs", "--serial-ref-levels",
                   "Number of serial refinement levels.");
-   args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
+   args.AddOption(&Mesh_ctx.parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
    // Domain decomposition
-   args.AddOption(&omega, "-omega", "--relaxation-parameter",
+   args.AddOption(&DD_ctx.omega_rf, "-omega", "--relaxation-parameter",
                   "Relaxation parameter.");
    // Physics
-   args.AddOption(&aniso_ratio_rf, "-ar", "--aniso-ratio-rf",
+   args.AddOption(&RF_ctx.aniso_ratio, "-ar", "--aniso-ratio-rf",
                   "Anisotropy ratio for RF problem.");
    // Postprocessing
-   args.AddOption(&print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
+   args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
-                  "Enable or disable VisIt visualization.");
-   args.AddOption(&save_freq, "-sf", "--save-freq",
+   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+                  "Enable or disable Paraview visualization.");
+   args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
-   args.AddOption(&outfolder, "-of", "--out-folder",
+   args.AddOption(&Sim_ctx.outfolder, "-of", "--out-folder",
                   "Output folder.");
 
    args.ParseCheck();                  
@@ -131,7 +103,7 @@ int main(int argc, char *argv[])
 
    // Load serial mesh
    Mesh *serial_mesh = nullptr;
-   if (hex)
+   if (Mesh_ctx.hex)
    { // Load Hex mesh (NETCDF required)
 #ifdef MFEM_USE_NETCDF
       serial_mesh = new Mesh("../../data/three-domains.e");
@@ -147,7 +119,7 @@ int main(int argc, char *argv[])
    int sdim = serial_mesh->SpaceDimension();
 
 
-   for (int l = 0; l < serial_ref_levels; l++)
+   for (int l = 0; l < Mesh_ctx.serial_ref_levels; l++)
    {
       serial_mesh->UniformRefinement();
    }
@@ -173,11 +145,11 @@ int main(int argc, char *argv[])
 
    // Create parallel mesh
    ParMesh parent_mesh = ParMesh(MPI_COMM_WORLD, *serial_mesh, partitioning, partition_type);
-   // ExportMeshwithPartitioning(outfolder, *serial_mesh, partitioning);
+   // ExportMeshwithPartitioning(Sim_ctx.outfolder, *serial_mesh, partitioning);
    delete[] partitioning;
    delete serial_mesh;
 
-   for (int l = 0; l < parallel_ref_levels; l++)
+   for (int l = 0; l < Mesh_ctx.parallel_ref_levels; l++)
    {
       parent_mesh.UniformRefinement();
    }
@@ -198,7 +170,7 @@ int main(int argc, char *argv[])
    Array<int> fluid_domain_attribute;
    Array<int> cylinder_domain_attribute;
 
-   if (hex)
+   if (Mesh_ctx.hex)
    {
       solid_domain_attribute.SetSize(1);
       fluid_domain_attribute.SetSize(1);
@@ -280,8 +252,8 @@ int main(int argc, char *argv[])
 
    // Solvers
    bool solv_verbose = false;
-   electrostatics::ElectrostaticsSolver RF_Solid(solid_submesh, order, bcs_solid, Sigma_solid, solv_verbose);
-   electrostatics::ElectrostaticsSolver RF_Fluid(fluid_submesh, order, bcs_fluid, Sigma_fluid, solv_verbose);
+   electrostatics::ElectrostaticsSolver RF_Solid(solid_submesh, RF_ctx.order, bcs_solid, Sigma_solid, solv_verbose);
+   electrostatics::ElectrostaticsSolver RF_Fluid(fluid_submesh, RF_ctx.order, bcs_fluid, Sigma_fluid, solv_verbose);
 
    // Grid functions
    ParGridFunction *phi_solid_gf = RF_Solid.GetPotentialGfPtr();
@@ -331,20 +303,20 @@ int main(int argc, char *argv[])
    fiber_s_gf->ProjectCoefficient(fiber_s_coeff);
    euler_angles_gf->ProjectCoefficient(euler_angles_coeff);
 
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
       ParaViewDataCollection* paraview_dc_fiber = new ParaViewDataCollection("Fiber", solid_submesh.get());
-      paraview_dc_fiber->SetPrefixPath(outfolder);
+      paraview_dc_fiber->SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_fiber->SetDataFormat(VTKFormat::BINARY);
       paraview_dc_fiber->SetCompressionLevel(9);
       paraview_dc_fiber->RegisterField("Fiber", fiber_f_gf);
       paraview_dc_fiber->RegisterField("Sheet", fiber_t_gf);
       paraview_dc_fiber->RegisterField("Sheet-normal", fiber_s_gf);
       paraview_dc_fiber->RegisterField("Euler Angles", euler_angles_gf);
-      if (order > 1)
+      if (RF_ctx.order > 1)
       {
          paraview_dc_fiber->SetHighOrderOutput(true);
-         paraview_dc_fiber->SetLevelsOfDetail(order);
+         paraview_dc_fiber->SetLevelsOfDetail(RF_ctx.order);
       }
       paraview_dc_fiber->SetTime(0.0);
       paraview_dc_fiber->SetCycle(0);
@@ -377,7 +349,7 @@ int main(int argc, char *argv[])
    Array<int> fluid_solid_interface_marker;
    Array<int> solid_cylinder_interface_marker;
 
-   if (hex)
+   if (Mesh_ctx.hex)
    {
       // Extract boundary attributes
       fluid_cylinder_interface.SetSize(1);
@@ -450,11 +422,11 @@ int main(int argc, char *argv[])
    // - Homogeneous Neumann lateral wall
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for solid domain...\033[0m" << std::endl;
-   real_t phi_gnd = 0.0;
-   real_t phi_applied = 1.0;
+   RF_ctx.phi_gnd = 0.0;
+   RF_ctx.phi_applied = 1.0;
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
-   bcs_solid->AddDirichletBC(phi_gnd, solid_bottom_attr[0]);
-   bcs_solid->AddDirichletBC(phi_applied, solid_cylinder_interface[0]);
+   bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
+   bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
    bcs_solid->AddNeumannVectorBC(E_fs_solid_coeff, fluid_solid_interface[0]);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -514,10 +486,10 @@ int main(int argc, char *argv[])
 
    StopWatch chrono_assembly;
    chrono_assembly.Start();
-   RF_Solid.EnablePA(pa);
+   RF_Solid.EnablePA(RF_ctx.pa);
    RF_Solid.Setup();
 
-   RF_Fluid.EnablePA(pa);
+   RF_Fluid.EnablePA(RF_ctx.pa);
    RF_Fluid.Setup();
    chrono_assembly.Stop();
    real_t assembly_time = chrono_assembly.RealTime();
@@ -525,15 +497,15 @@ int main(int argc, char *argv[])
    // Setup ouput
    ParaViewDataCollection paraview_dc_solid("RF-Solid", solid_submesh.get());
    ParaViewDataCollection paraview_dc_fluid("RF-Fluid", fluid_submesh.get());
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
-      paraview_dc_solid.SetPrefixPath(outfolder);
+      paraview_dc_solid.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_solid.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_solid.SetCompressionLevel(9);
       RF_Solid.RegisterParaviewFields(paraview_dc_solid);
       RF_Solid.AddParaviewField("Joule Heating", JouleHeating_gf);
 
-      paraview_dc_fluid.SetPrefixPath(outfolder);
+      paraview_dc_fluid.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_fluid.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_fluid.SetCompressionLevel(9);
       RF_Fluid.RegisterParaviewFields(paraview_dc_fluid);
@@ -551,11 +523,11 @@ int main(int argc, char *argv[])
 
    // Write fields to disk for VisIt
    bool converged = false;
-   double tol = 1.0e-4;
+   real_t tol = 1.0e-4;
    int max_iter = 100;
    int step = 0;
 
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
       RF_Solid.WriteFields(0);
       RF_Fluid.WriteFields(0);
@@ -580,17 +552,17 @@ int main(int argc, char *argv[])
    }
 
    // Outer loop for time integration
-   omega_fluid = omega; // TODO: Add different relaxation parameters for each domain
-   omega_solid = omega;
+   DD_ctx.omega_rf_fluid = DD_ctx.omega_rf; // TODO: Add different relaxation parameters for each domain
+   DD_ctx.omega_rf_solid = DD_ctx.omega_rf;
 
    Array<real_t> convergence_subiter;
    // Inner loop for the segregated solve
    int iter = 0;
    int iter_solid = 0;
    int iter_fluid = 0;
-   double norm_diff = 2 * tol;
-   double norm_diff_solid = 2 * tol;
-   double norm_diff_fluid = 2 * tol;
+   real_t norm_diff = 2 * tol;
+   real_t norm_diff_solid = 2 * tol;
+   real_t norm_diff_fluid = 2 * tol;
 
    bool converged_solid = false;
    bool converged_fluid = false;
@@ -599,7 +571,7 @@ int main(int argc, char *argv[])
    bool assembleRHS = true;
 
    // Integration rule for the L2 error
-   int order_quad = std::max(2, order + 1);
+   int order_quad = std::max(2, RF_ctx.order + 1);
    const IntegrationRule *irs[Geometry::NumGeom];
    for (int i = 0; i < Geometry::NumGeom; ++i)
    {
@@ -650,8 +622,8 @@ int main(int argc, char *argv[])
       if (iter > 0)
       {
          phi_fluid_gf->GetTrueDofs(phi_fluid);
-         phi_fluid *= omega_fluid;
-         phi_fluid.Add(1.0 - omega_fluid, phi_fluid_prev);
+         phi_fluid *= DD_ctx.omega_rf_fluid;
+         phi_fluid.Add(1.0 - DD_ctx.omega_rf_fluid, phi_fluid_prev);
          phi_fluid_gf->SetFromTrueDofs(phi_fluid);
       }
       chrono.Stop();
@@ -680,8 +652,8 @@ int main(int argc, char *argv[])
       if (iter > 0)
       {
          phi_solid_gf->GetTrueDofs(phi_solid);
-         phi_solid *= omega_solid;
-         phi_solid.Add(1.0 - omega_solid, phi_solid_prev);
+         phi_solid *= DD_ctx.omega_rf_solid;
+         phi_solid.Add(1.0 - DD_ctx.omega_rf_solid, phi_solid_prev);
          phi_solid_gf->SetFromTrueDofs(phi_solid);
       }
       chrono.Stop();
@@ -693,15 +665,15 @@ int main(int argc, char *argv[])
 
       //chrono.Clear(); chrono.Start();
       // Compute global norms directly
-      //double global_norm_diff_solid_domain = phi_solid_gf->ComputeL2Error(phi_solid_prev_coeff);
-      //double global_norm_diff_fluid_domain = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff);
+      //real_t global_norm_diff_solid_domain = phi_solid_gf->ComputeL2Error(phi_solid_prev_coeff);
+      //real_t global_norm_diff_fluid_domain = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff);
       //chrono.Stop();
       //t_error = chrono.RealTime();
 
       chrono.Clear(); chrono.Start();
       // Compute global norms directly
-      double global_norm_diff_solid = phi_solid_gf->ComputeL2Error(phi_solid_prev_coeff, irs, &fs_solid_element_idx);
-      double global_norm_diff_fluid = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff, irs, &fs_fluid_element_idx);
+      real_t global_norm_diff_solid = phi_solid_gf->ComputeL2Error(phi_solid_prev_coeff, irs, &fs_solid_element_idx);
+      real_t global_norm_diff_fluid = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff, irs, &fs_fluid_element_idx);
       chrono.Stop();
       t_error_bdry = chrono.RealTime();
 
@@ -729,7 +701,7 @@ int main(int argc, char *argv[])
 
       chrono_total.Stop();
 
-      if (Mpi::Root() && print_timing)
+      if (Mpi::Root() && Sim_ctx.print_timing)
       { // Print times
          out << "------------------------------------------------------------" << std::endl;
          out << "Transfer: " << t_transfer << " s" << std::endl;
@@ -756,7 +728,7 @@ int main(int argc, char *argv[])
    // Export converged fields
    chrono.Clear(); chrono.Start();
    real_t t_iter = 0.1; // This will be replaced by the actual time in transient simulations
-   if (paraview )
+   if (Sim_ctx.paraview )
    {
       RF_Solid.WriteFields(1, t_iter);
       RF_Fluid.WriteFields(1, t_iter);
@@ -764,7 +736,7 @@ int main(int argc, char *argv[])
    chrono.Stop();
    t_paraview = chrono.RealTime();
 
-   if (Mpi::Root() && print_timing)
+   if (Mpi::Root() && Sim_ctx.print_timing)
    { // Print times
       out << "------------------------------------------------------------" << std::endl;
       out << "Assembly: " << assembly_time << " s" << std::endl;
@@ -836,10 +808,8 @@ void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std:
    // Create the output folder path
    std::string outputFolder = outfolder + "/convergence";
 
-   // Ensure the directory exists
-   if ((mkdir(outputFolder.c_str(), 0777) == -1) && Mpi::Root())
-   {
-      // check error
+   if (!fs::is_directory(outputFolder.c_str()) || !fs::exists(outputFolder.c_str())) { // Check if folder exists
+      fs::create_directories(outputFolder); // create folder
    }
 
    // Construct the filename
@@ -859,75 +829,6 @@ void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std:
    }
 }
 
-
-std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles)
-{
-
-   return [d, EulerAngles](const Vector &x, DenseMatrix &m)
-   {
-      // Define dimension of problem
-      const int dim = x.Size();
-
-      // Compute Euler angles
-      Vector e(3);
-      EulerAngles(x, e);
-      real_t e1 = e(0); // Roll
-      real_t e2 = e(1); // Pitch
-      real_t e3 = e(2); // Yaw
-
-      // Compute rotated matrix
-      if (dim == 3)
-      {
-         // Compute cosine and sine of the angles e1, e2, e3
-         const real_t c1 = cos(e1);
-         const real_t s1 = sin(e1);
-         const real_t c2 = cos(e2);
-         const real_t s2 = sin(e2);
-         const real_t c3 = cos(e3);
-         const real_t s3 = sin(e3);
-
-         // Fill the rotation matrix R with the Euler angles.
-         DenseMatrix R(3, 3);
-         R(0, 0) = c3 * c2;
-         R(1, 0) = s3 * c2;
-         R(2, 0) = -s2;         
-         R(0, 1) = s1 * s2 * c3 - c1 * s3;
-         R(1, 1) = s1 * s2 * s3 + c1 * c3;
-         R(2, 1) = s1 * c2;
-         R(0, 2) = c1 * s2 * c3 + s1 * s3;
-         R(1, 2) = c1 * s2 * s3 - s1 * c3;
-         R(2, 2) = c1 * c2;
-
-         // Multiply the rotation matrix R with the diffusivity vector.
-         Vector l(3);
-         l(0) = d[0];
-         l(1) = d[1];
-         l(2) = d[2];
-
-         // Compute m = R^t diag(l) R
-         R.Transpose();
-         MultADBt(R, l, R, m);
-      }
-      else if (dim == 2)
-      {  // R^t diag(l) R
-         const real_t c1 = cos(e1);
-         const real_t s1 = sin(e1);
-         DenseMatrix Rt(2, 2);
-         Rt(0, 0) = c1;
-         Rt(0, 1) = s1;
-         Rt(1, 0) = -s1;
-         Rt(1, 1) = c1;
-         Vector l(2);
-         l(0) = d[0];
-         l(1) = d[1];
-         MultADAt(Rt, l, m);
-      }
-      else
-      {
-         m(0, 0) = d[0];
-      }
-   };
-}
 
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmin, real_t zmax)
 {
@@ -950,44 +851,4 @@ std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmin, real_t zm
       e(1) = 0.0;          // Pitch
       e(2) = angle_rad;    // Yaw
    };
-}
-
-std::function<void(const Vector &, Vector &)> FiberDirection(std::function<void(const Vector &, Vector &)> EulerAngles, int component)
-{
-   return [EulerAngles, component](const Vector &x, Vector &e)
-   {
-      // Compute Euler angles
-      Vector angles(3);
-      EulerAngles(x, angles);
-      real_t e1 = angles(0); // Roll
-      real_t e2 = angles(1); // Pitch
-      real_t e3 = angles(2); // Yaw
-
-      // Compute cosine and sine of the angles e1, e2, e3
-      const real_t c1 = cos(e1);
-      const real_t s1 = sin(e1);
-      const real_t c2 = cos(e2);
-      const real_t s2 = sin(e2);
-      const real_t c3 = cos(e3);
-      const real_t s3 = sin(e3);
-
-      // Fill the rotation matrix R with the Euler angles.
-      DenseMatrix R(3, 3);
-      R(0, 0) = c3 * c2;
-      R(1, 0) = s3 * c2;
-      R(2, 0) = -s2;         
-      R(0, 1) = s1 * s2 * c3 - c1 * s3;
-      R(1, 1) = s1 * s2 * s3 + c1 * c3;
-      R(2, 1) = s1 * c2;
-      R(0, 2) = c1 * s2 * c3 + s1 * s3;
-      R(1, 2) = c1 * s2 * s3 - s1 * c3;
-      R(2, 2) = c1 * c2;
-
-      // Extract the desired column from the rotation matrix R
-      e.SetSize(3);
-      e(0) = R(0, component);
-      e(1) = R(1, component);
-      e(2) = R(2, component);
-   };
-
 }

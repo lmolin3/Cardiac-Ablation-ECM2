@@ -1,14 +1,3 @@
-# Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-# at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-# LICENSE and NOTICE for details. LLNL-CODE-806117.
-#
-# This file is part of the MFEM library. For more information and source code
-# availability visit https://mfem.org.
-#
-# MFEM is free software; you can redistribute it and/or modify it under the
-# terms of the BSD-3 license. We welcome feedback and contributions, see file
-# CONTRIBUTING.md for details.
-
 set(MESH_FILES
   multidomain-hex.mesh
 )
@@ -38,12 +27,6 @@ include_directories(
 
 # Parallel apps.
 if (MFEM_USE_MPI)
-  add_mfem_miniapp(multidomain-mfem
-  MAIN multidomain-mfem.cpp
-  EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-  LIBRARIES mfem-common )
-  add_dependencies(multidomain-mfem copy_miniapps_multidomain_test_data)
-
   add_mfem_miniapp(multidomain-dirichlet
     MAIN multidomain-dirichlet.cpp
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
@@ -79,6 +62,11 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2 celldeath-ecm2 electrostatics_ecm2)
     
+
+  #add_mfem_miniapp(multidomain-three-domains-celldeath-rf-navier
+  #  MAIN multidomain-three-domains-celldeath-rf-navier.cpp
+  #  EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+  #  LIBRARIES mfem-common mfem-common-ecm2 heat-ecm2 celldeath-ecm2 electrostatics_ecm2 navier-monolithic-ecm2)  
 
   add_mfem_miniapp(multidomain-one-domain-celldeath-rf-aniso
     MAIN multidomain-one-domain-celldeath-rf-aniso.cpp

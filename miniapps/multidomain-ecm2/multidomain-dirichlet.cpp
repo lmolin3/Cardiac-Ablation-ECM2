@@ -1,14 +1,3 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-
 // This miniapp aims to demonstrate how to solve two PDEs, that represent
 // different physics, on the same domain. MFEM's SubMesh interface is used to
 // compute on and transfer between the spaces of predefined parts of the domain.
@@ -20,7 +9,7 @@
 //
 // A heat equation is described on the outer box domain
 //
-//                  dT/dt = κΔT         in outer box
+//                  dT/Sim_ctx.dt = κΔT         in outer box
 //                      T = T_out       on outside wall
 //                   ∇T•n = 0           on inside (cylinder) wall
 //
@@ -28,7 +17,7 @@
 //
 // A heat equation equation is described inside the cylinder domain
 //
-//                  dT/dt = κΔT          in inner cylinder
+//                  dT/Sim_ctx.dt = κΔT          in inner cylinder
 //                      T = T_wall       on cylinder wall (obtained from heat equation)
 //                   ∇T•n = 0            else
 //
@@ -36,13 +25,22 @@
 //
 // To couple the solutions of both equations, a segregated solve with one way
 // coupling approach is used. The heat equation of the outer box is solved from
-// the timestep T_box(t) to T_box(t+dt). Then for the convection-diffusion
-// equation T_wall is set to T_box(t+dt) and the equation is solved for T(t+dt)
+// the timestep T_box(t) to T_box(t+Sim_ctx.dt). Then for the convection-diffusion
+// equation T_wall is set to T_box(t+Sim_ctx.dt) and the equation is solved for T(t+Sim_ctx.dt)
 // which results in a first-order one way coupling.
 
+// MFEM library
 #include "mfem.hpp"
+
+// Multiphysics modules
 #include "lib/heat_solver.hpp"
 
+// Physical and Domain-Decomposition parameters
+#include "contexts.hpp"
+
+// Utils
+
+// Output
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -53,7 +51,6 @@ IdentityMatrixCoefficient *Id = NULL;
 
 int main(int argc, char *argv[])
 {
-
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 1. Initialize MPI and Hypre
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -67,44 +64,28 @@ int main(int argc, char *argv[])
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   // FE
-   int order = 1;
-   bool pa = false; // Enable partial assembly
-   // Mesh
-   int serial_ref_levels = 0;
-   int parallel_ref_levels = 0;
-   // Time integrator
-   int ode_solver_type = 1;
-   real_t t_final = 5.0;
-   real_t dt = 1.0e-5;
-   // Postprocessing
-   bool visit = false;
-   bool paraview = true;
-   int save_freq = 1; // Save fields every 'save_freq' time steps
-   const char *outfolder = "";
-
    OptionsParser args(argc, argv);
-   args.AddOption(&order, "-o", "--order",
+   args.AddOption(&Heat_ctx.order, "-o", "--order",
                   "Finite element order (polynomial degree).");
-   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
+   args.AddOption(&Heat_ctx.pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
                   "Enable or disable partial assembly.");
-   args.AddOption(&serial_ref_levels, "-rs", "--serial-ref-levels",
+   args.AddOption(&Mesh_ctx.serial_ref_levels, "-rs", "--serial-ref-levels",
                   "Number of serial refinement levels.");
-   args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
+   args.AddOption(&Mesh_ctx.parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
-   args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
+   args.AddOption(&Heat_ctx.ode_solver_type, "-ode", "--ode-solver",
                   "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
                   "\t   4 - Implicit Midpoint, 5 - SDIRK23, 6 - SDIRK34,\n\t"
                   "\t   7 - Forward Euler, 8 - RK2, 9 - RK3 SSP, 10 - RK4.");
-   args.AddOption(&t_final, "-tf", "--t-final",
+   args.AddOption(&Sim_ctx.t_final, "-tf", "--t-final",
                   "Final time; start time is 0.");
-   args.AddOption(&dt, "-dt", "--time-step",
+   args.AddOption(&Sim_ctx.dt, "-dt", "--time-step",
                   "Time step.");
-   args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
-                  "Enable or disable VisIt visualization.");
-   args.AddOption(&save_freq, "-sf", "--save-freq",
+   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+                  "Enable or disable Paraview visualization.");
+   args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
-   args.AddOption(&outfolder, "-of", "--out-folder",
+   args.AddOption(&Sim_ctx.outfolder, "-of", "--out-folder",
                   "Output folder.");
    args.ParseCheck();
 
@@ -138,45 +119,44 @@ int main(int argc, char *argv[])
 
    auto Id = new IdentityMatrixCoefficient(sdim);
 
-   Array<int> attr_cyl(0), attr_block(0);
-   attr_cyl.Append(1), attr_block.Append(2);
+   Array<int> attr_cyl(0), attr_solid(0);
+   attr_cyl.Append(1), attr_solid.Append(2);
 
-   double kval_cyl, cval_cyl, rhoval_cyl;
-   kval_cyl = 1.0;   // W/mK
-   cval_cyl = 1.0;   // J/kgK
-   rhoval_cyl = 1.0; // kg/m^3
+   // Overwrite the default values
+   Heat_ctx.k_cylinder = 1.0;   // W/mK
+   Heat_ctx.c_cylinder = 1.0;   // J/kgK
+   Heat_ctx.rho_cylinder = 1.0; // kg/m^3
 
-   double kval_block, cval_block, rhoval_block;
-   kval_block = 1.0;   // W/mK
-   cval_block = 1.0;   // J/kgK
-   rhoval_block = 1.0; // kg/m^3
+   Heat_ctx.k_solid = 1.0;   // W/mK
+   Heat_ctx.c_solid = 1.0;   // J/kgK
+   Heat_ctx.rho_solid = 1.0; // kg/m^3
 
    // Conductivity
    Array<MatrixCoefficient *> coefs_k_cyl(0);
-   coefs_k_cyl.Append(new ScalarMatrixProductCoefficient(kval_cyl, *Id));
+   coefs_k_cyl.Append(new ScalarMatrixProductCoefficient(Heat_ctx.k_cylinder, *Id));
    PWMatrixCoefficient *Kappa_cyl = new PWMatrixCoefficient(sdim, attr_cyl, coefs_k_cyl);
 
-   Array<MatrixCoefficient *> coefs_k_block(0);
-   coefs_k_block.Append(new ScalarMatrixProductCoefficient(kval_block, *Id));
-   PWMatrixCoefficient *Kappa_block = new PWMatrixCoefficient(sdim, attr_block, coefs_k_block);
+   Array<MatrixCoefficient *> coefs_k_solid(0);
+   coefs_k_solid.Append(new ScalarMatrixProductCoefficient(Heat_ctx.k_solid, *Id));
+   PWMatrixCoefficient *Kappa_solid = new PWMatrixCoefficient(sdim, attr_solid, coefs_k_solid);
 
    // Heat Capacity
    Array<Coefficient *> coefs_c_cyl(0);
-   coefs_c_cyl.Append(new ConstantCoefficient(cval_cyl));
+   coefs_c_cyl.Append(new ConstantCoefficient(Heat_ctx.c_cylinder));
    PWCoefficient *c_cyl = new PWCoefficient(attr_cyl, coefs_c_cyl);
 
-   Array<Coefficient *> coefs_c_block(0);
-   coefs_c_block.Append(new ConstantCoefficient(cval_block));
-   PWCoefficient *c_block = new PWCoefficient(attr_block, coefs_c_block);
+   Array<Coefficient *> coefs_c_solid(0);
+   coefs_c_solid.Append(new ConstantCoefficient(Heat_ctx.c_solid));
+   PWCoefficient *c_solid = new PWCoefficient(attr_solid, coefs_c_solid);
 
    // Density
    Array<Coefficient *> coefs_rho_cyl(0);
-   coefs_rho_cyl.Append(new ConstantCoefficient(rhoval_cyl));
+   coefs_rho_cyl.Append(new ConstantCoefficient(Heat_ctx.rho_cylinder));
    PWCoefficient *rho_cyl = new PWCoefficient(attr_cyl, coefs_rho_cyl);
 
-   Array<Coefficient *> coefs_rho_block(0);
-   coefs_rho_block.Append(new ConstantCoefficient(rhoval_block));
-   PWCoefficient *rho_block = new PWCoefficient(attr_block, coefs_rho_block);
+   Array<Coefficient *> coefs_rho_solid(0);
+   coefs_rho_solid.Append(new ConstantCoefficient(Heat_ctx.rho_solid));
+   PWCoefficient *rho_solid = new PWCoefficient(attr_solid, coefs_rho_solid);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 5. Create BC Handler (not populated yet)
@@ -186,37 +166,37 @@ int main(int argc, char *argv[])
    bool verbose = true;
 
    heat::BCHandler *bcs_cyl = new heat::BCHandler(cylinder_submesh, verbose); // Boundary conditions handler for cylinder
-   heat::BCHandler *bcs_block = new heat::BCHandler(block_submesh, verbose);  // Boundary conditions handler for block
+   heat::BCHandler *bcs_solid = new heat::BCHandler(block_submesh, verbose);  // Boundary conditions handler for block
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Create the Heat Solver
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   heat::HeatSolver Heat_Cylinder(cylinder_submesh, order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, ode_solver_type);
-   heat::HeatSolver Heat_Block(block_submesh, order, bcs_block, Kappa_block, c_block, rho_block, ode_solver_type);
+   heat::HeatSolver Heat_Cylinder(cylinder_submesh, Heat_ctx.order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, Heat_ctx.ode_solver_type);
+   heat::HeatSolver Heat_solid(block_submesh, Heat_ctx.order, bcs_solid, Kappa_solid, c_solid, rho_solid, Heat_ctx.ode_solver_type);
 
    ParGridFunction *temperature_cylinder_gf = Heat_Cylinder.GetTemperatureGfPtr();
-   ParGridFunction *temperature_block_gf = Heat_Block.GetTemperatureGfPtr();
+   ParGridFunction *temperature_solid_gf = Heat_solid.GetTemperatureGfPtr();
 
    // Create the transfer map needed in the time integration loop
-   auto temperature_block_to_cylinder_map = ParSubMesh::CreateTransferMap(
-       *temperature_block_gf,
+   auto temperature_solid_to_cylinder_map = ParSubMesh::CreateTransferMap(
+       *temperature_solid_gf,
        *temperature_cylinder_gf);
 
    // Setup ouput
    ParaViewDataCollection paraview_dc_cylinder("Heat-Cylinder", cylinder_submesh.get());
-   ParaViewDataCollection paraview_dc_block("Heat-Block", block_submesh.get());
-   if (paraview)
+   ParaViewDataCollection paraview_dc_solid("Heat-Block", block_submesh.get());
+   if (Sim_ctx.paraview)
    {
-      paraview_dc_cylinder.SetPrefixPath(outfolder);
+      paraview_dc_cylinder.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_cylinder.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_cylinder.SetCompressionLevel(9);
       Heat_Cylinder.RegisterParaviewFields(paraview_dc_cylinder);
 
-      paraview_dc_block.SetPrefixPath(outfolder);
-      paraview_dc_block.SetDataFormat(VTKFormat::BINARY);
-      paraview_dc_block.SetCompressionLevel(9);
-      Heat_Block.RegisterParaviewFields(paraview_dc_block);
+      paraview_dc_solid.SetPrefixPath(Sim_ctx.outfolder);
+      paraview_dc_solid.SetDataFormat(VTKFormat::BINARY);
+      paraview_dc_solid.SetCompressionLevel(9);
+      Heat_solid.RegisterParaviewFields(paraview_dc_solid);
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -234,8 +214,8 @@ int main(int argc, char *argv[])
    block_wall_attributes[2] = 1;
    block_wall_attributes[3] = 1;
 
-   double T_out = 1.0;
-   bcs_block->AddDirichletBC(T_out, block_wall_attributes);
+   real_t T_out = 1.0;
+   bcs_solid->AddDirichletBC(T_out, block_wall_attributes);
 
    // Cylinder:
    // - T = T_wall on the cylinder wall (obtained from heat equation on box)
@@ -255,20 +235,20 @@ int main(int argc, char *argv[])
    /// 8. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   Heat_Cylinder.EnablePA(pa);
+   Heat_Cylinder.EnablePA(Heat_ctx.pa);
    Heat_Cylinder.Setup();
 
-   Heat_Block.EnablePA(pa);
-   Heat_Block.Setup();
+   Heat_solid.EnablePA(Heat_ctx.pa);
+   Heat_solid.Setup();
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Perform time-integration (looping over the time iterations, step, with a
-   //     time-step dt).
+   //     time-step Sim_ctx.dt).
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    ConstantCoefficient T0(0.0);
-   temperature_block_gf->ProjectCoefficient(T0);
-   Heat_Block.SetInitialTemperature(*temperature_block_gf);
+   temperature_solid_gf->ProjectCoefficient(T0);
+   Heat_solid.SetInitialTemperature(*temperature_solid_gf);
 
    temperature_cylinder_gf->ProjectCoefficient(T0);
    Heat_Cylinder.SetInitialTemperature(*temperature_cylinder_gf);
@@ -277,36 +257,36 @@ int main(int argc, char *argv[])
    bool last_step = false;
 
    // Write fields to disk for VisIt
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
-      Heat_Block.WriteFields(0, t);
+      Heat_solid.WriteFields(0, t);
       Heat_Cylinder.WriteFields(0, t);
    }
 
    for (int step = 1; !last_step; step++)
    {
-      if (t + dt >= t_final - dt / 2)
+      if (t + Sim_ctx.dt >= Sim_ctx.t_final - Sim_ctx.dt / 2)
       {
          last_step = true;
       }
 
       // Advance the diffusion equation on the outer block to the next time step
-      Heat_Block.Step(t, dt, step);
-      t -= dt; // Reset t to same time step, since t is incremented in the Step function
+      Heat_solid.Step(t, Sim_ctx.dt, step);
+      t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
 
       // Transfer the solution from the inner surface of the outer block to
       // the cylinder outer surface to act as a boundary condition.
-      temperature_block_to_cylinder_map.Transfer(*temperature_block_gf,
+      temperature_solid_to_cylinder_map.Transfer(*temperature_solid_gf,
                                                  *temperature_cylinder_wall_gf);
 
       // Advance the convection-diffusion equation on the outer block to the
       // next time step
-      Heat_Cylinder.Step(t, dt, step);
+      Heat_Cylinder.Step(t, Sim_ctx.dt, step);
 
       // Write fields to disk for Paraview
-      if (paraview && (step % save_freq == 0))
+      if (Sim_ctx.paraview && (step % Sim_ctx.save_freq == 0))
       {
-         Heat_Block.WriteFields(step, t);
+         Heat_solid.WriteFields(step, t);
          Heat_Cylinder.WriteFields(step, t);
       }
    }
@@ -321,24 +301,24 @@ int main(int argc, char *argv[])
    delete c_cyl;
    delete rho_cyl;
 
-   delete Kappa_block;
-   delete c_block;
-   delete rho_block;
+   delete Kappa_solid;
+   delete c_solid;
+   delete rho_solid;
 
    // Delete the MatrixCoefficient objects at the end of main
-   for (int i = 0; i < coefs_k_block.Size(); i++)
+   for (int i = 0; i < coefs_k_solid.Size(); i++)
    {
-      delete coefs_k_block[i];
+      delete coefs_k_solid[i];
    }
 
-   for (int i = 0; i < coefs_c_block.Size(); i++)
+   for (int i = 0; i < coefs_c_solid.Size(); i++)
    {
-      delete coefs_c_block[i];
+      delete coefs_c_solid[i];
    }
 
-   for (int i = 0; i < coefs_rho_block.Size(); i++)
+   for (int i = 0; i < coefs_rho_solid.Size(); i++)
    {
-      delete coefs_rho_block[i];
+      delete coefs_rho_solid[i];
    }
 
    for (int i = 0; i < coefs_k_cyl.Size(); i++)

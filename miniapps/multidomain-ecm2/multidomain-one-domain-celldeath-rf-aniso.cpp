@@ -1,28 +1,26 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-//
 // Sample run:
-// mpirun -np 4 ./multidomain-one-domain-celldeath-rf-aniso -hex -pa_heat -pa_rf -oh 3 -or 4 -ode 1 -tf 1.0 -dt 0.01 -paraview -of ./Output/Solid/oh3_or4
+// mpirun -np 4 ./multidomain-one-domain-celldeath-rf-aniso -hex -pa -pa_rf -oh 3 -or 4 -ode 1 -tf 1.0 -dt 0.01 -paraview -of ./Output/Solid/oh3_or4
 
-
+// MFEM library
 #include "mfem.hpp"
+
+// Multiphyiscs modules
 #include "lib/heat_solver.hpp"
 #include "lib/celldeath_solver.hpp"
 #include "lib/electrostatics_solver.hpp"
 
+// Physical and Domain-Decomposition parameters
+#include "contexts.hpp" 
+
+// Utils
+#include "anisotropy_utils.hpp"
+
+// Output
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h> // Include for mkdir
 #include <iostream>
 #include <memory>
+#include "FilesystemHelper.hpp"
 
 using namespace mfem;
 
@@ -31,16 +29,9 @@ using TransferBackend = InterfaceTransfer::Backend;
 
 IdentityMatrixCoefficient *Id = NULL;
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
-std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles);
-std::function<void(const Vector &, Vector &)> FiberDirection(std::function<void(const Vector &, Vector &)> EulerAngles, int component);
 
 // Forward declaration
 void print_matrix(const DenseMatrix &A);
-
-static real_t T_solid = 37; // 37.0;   // Body temperature
-
-static real_t phi_applied = 10;
-static real_t phi_gnd = 0.0;
 
 real_t mesh_scale = 1e2; // cm 
 
@@ -60,90 +51,64 @@ int main(int argc, char *argv[])
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   // FE
-   int order_heat = 1;
-   int order_rf = 1;
-   int order_celldeath = -1;
-   bool pa_heat = false; // Enable partial assembly for HeatSolver
-   bool pa_rf = false;   // Enable partial assembly for ElectrostaticsSolver
-   int celldeath_solver_type = 0; // 0: Eigen, 1: GoTran
-   // Mesh
-   int serial_ref_levels = 0;
-   int parallel_ref_levels = 0;
-   bool hex = false;
-   // Physics
-   real_t aniso_ratio_rf = 1.0;
-   real_t aniso_ratio_temperature = 1.0;
-   // Time integrator
-   int ode_solver_type = 1;
-   real_t t_final = 1.0;
-   real_t dt = 1.0e-2;
-   // Postprocessing
-   bool print_timing = false;
-   bool visit = false;
-   bool paraview = true;
-   int save_freq = 1; // Save fields every 'save_freq' time steps
-   const char *outfolder = "./Output/Test";
-   bool save_convergence = false;
-
    OptionsParser args(argc, argv);
    // FE
-   args.AddOption(&order_heat, "-oh", "--order-heat",
+   args.AddOption(&Heat_ctx.order, "-oh", "--order-heat",
                   "Finite element order for heat transfer (polynomial degree).");
-   args.AddOption(&order_rf, "-or", "--order-rf",
+   args.AddOption(&RF_ctx.order, "-or", "--order-rf",
                   "Finite element order for RF problem (polynomial degree).");
-   args.AddOption(&order_celldeath, "-oc", "--order-celldeath",
+   args.AddOption(&CellDeath_ctx.order, "-oc", "--order-celldeath",
                   "Finite element order for cell death (polynomial degree).");
-   args.AddOption(&pa_heat, "-pa_heat", "--partial-assembly-heat", "-no-pa_heat", "--no-partial-assembly-heat",
+   args.AddOption(&Heat_ctx.pa, "-pa", "--partial-assembly-heat", "-no-pa", "--no-partial-assembly-heat",
                   "Enable or disable partial assembly.");
-   args.AddOption(&pa_rf, "-pa_rf", "--partial-assembly-rf", "-no-pa_rf", "--no-partial-assembly-rf",
+   args.AddOption(&RF_ctx.pa, "-pa_rf", "--partial-assembly-rf", "-no-pa_rf", "--no-partial-assembly-rf",
                   "Enable or disable partial assembly for RF problem.");
-   args.AddOption(&celldeath_solver_type, "-cdt", "--celldeath-solver-type",
+   args.AddOption(&CellDeath_ctx.solver_type, "-cdt", "--celldeath-solver-type",
                   "Cell-death solver type: 0 - Eigen, 1 - GoTran.");
    // Mesh
-   args.AddOption(&hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
+   args.AddOption(&Mesh_ctx.hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
                   "Use hexahedral mesh.");
-   args.AddOption(&serial_ref_levels, "-rs", "--serial-ref-levels",
+   args.AddOption(&Mesh_ctx.serial_ref_levels, "-rs", "--serial-ref-levels",
                   "Number of serial refinement levels.");
-   args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
+   args.AddOption(&Mesh_ctx.parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
    // Physics
-   args.AddOption(&aniso_ratio_rf, "-ar", "--aniso-ratio-rf",
+   args.AddOption(&RF_ctx.aniso_ratio, "-ar", "--aniso-ratio-rf",
                   "Anisotropy ratio for RF problem.");
-   args.AddOption(&aniso_ratio_temperature, "-at", "--aniso-ratio-temperature",
+   args.AddOption(&Heat_ctx.aniso_ratio, "-at", "--aniso-ratio-temperature",
                   "Anisotropy ratio for temperature problem.");   
    // Time integrator
-   args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
+   args.AddOption(&Heat_ctx.ode_solver_type, "-ode", "--ode-solver",
                   "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
                   "\t   4 - Implicit Midpoint, 5 - SDIRK23, 6 - SDIRK34,\n\t"
                   "\t   7 - Forward Euler, 8 - RK2, 9 - RK3 SSP, 10 - RK4.");
-   args.AddOption(&t_final, "-tf", "--t-final",
+   args.AddOption(&Sim_ctx.t_final, "-tf", "--t-final",
                   "Final time; start time is 0.");
-   args.AddOption(&dt, "-dt", "--time-step",
+   args.AddOption(&Sim_ctx.dt, "-dt", "--time-step",
                   "Time step.");
    // Physics
-   args.AddOption(&phi_applied, "-phi", "--applied-potential",
+   args.AddOption(&RF_ctx.phi_applied, "-phi", "--applied-potential",
                   "Applied potential.");
    // Postprocessing
-   args.AddOption(&print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
+   args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
-                  "Enable or disable VisIt visualization.");
-   args.AddOption(&save_freq, "-sf", "--save-freq",
+   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+                  "Enable or disable Paraview visualization.");
+   args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
-   args.AddOption(&outfolder, "-of", "--out-folder",
+   args.AddOption(&Sim_ctx.outfolder, "-of", "--out-folder",
                   "Output folder.");
 
    args.ParseCheck();
 
    // Determine order for cell death problem
-   if (order_celldeath < 0)
+   if (CellDeath_ctx.order < 0)
    {
-      order_celldeath = order_heat;
+      CellDeath_ctx.order = Heat_ctx.order;
    }
 
    // Convert temperature to kelvin
-   T_solid = heat::CelsiusToKelvin(T_solid);
+   Heat_ctx.T_solid =heat::CelsiusToKelvin(Heat_ctx.T_solid);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -154,7 +119,7 @@ int main(int argc, char *argv[])
 
    // Load serial mesh
    Mesh *serial_mesh = nullptr;
-   if (hex)
+   if (Mesh_ctx.hex)
    { // Load Hex mesh (NETCDF required)
 #ifdef MFEM_USE_NETCDF
       serial_mesh = new Mesh("../../data/three-domains.e");
@@ -169,7 +134,7 @@ int main(int argc, char *argv[])
 
    int sdim = serial_mesh->SpaceDimension();
 
-   for (int l = 0; l < serial_ref_levels; l++)
+   for (int l = 0; l < Mesh_ctx.serial_ref_levels; l++)
    {
       serial_mesh->UniformRefinement();
    }
@@ -195,11 +160,11 @@ int main(int argc, char *argv[])
 
    // Create parallel mesh
    ParMesh parent_mesh = ParMesh(MPI_COMM_WORLD, *serial_mesh, partitioning, partition_type);
-   // ExportMeshwithPartitioning(outfolder, *serial_mesh, partitioning);
+   // ExportMeshwithPartitioning(Sim_ctx.outfolder, *serial_mesh, partitioning);
    delete[] partitioning;
    delete serial_mesh;
 
-   for (int l = 0; l < parallel_ref_levels; l++)
+   for (int l = 0; l < Mesh_ctx.parallel_ref_levels; l++)
    {
       parent_mesh.UniformRefinement();
    }
@@ -220,7 +185,7 @@ int main(int argc, char *argv[])
    Array<int> fluid_domain_attribute;
    Array<int> cylinder_domain_attribute;
 
-   if (hex)
+   if (Mesh_ctx.hex)
    {
       solid_domain_attribute.SetSize(1);
       fluid_domain_attribute.SetSize(1);
@@ -260,37 +225,24 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[0mHeat transfer problem... \033[0m";
 
-   real_t cval_solid, rhoval_solid, kval_solid;
-   cval_solid = 3017;                            // J/kgK --> cm
-   rhoval_solid = 1076/std::pow(mesh_scale,3) ;  // kg/m^3 --> cm
-   kval_solid = 0.518/mesh_scale;                // W/mK --> cm
+   Heat_ctx.c_solid = 3017;                            // J/kgK --> cm
+   Heat_ctx.rho_solid = 1076/std::pow(mesh_scale,3) ;  // kg/m^3 --> cm
+   Heat_ctx.k_solid = 0.518/mesh_scale;                // W/mK --> cm
 
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
    Vector k_vec_solid(3);
-   k_vec_solid[0] = kval_solid;                               // Along fibers
-   k_vec_solid[1] = kval_solid/aniso_ratio_temperature;       // Sheet direction 
-   k_vec_solid[2] = kval_solid/aniso_ratio_temperature;       // Sheet Normal to fibers
+   k_vec_solid[0] = Heat_ctx.k_solid;                               // Along fibers
+   k_vec_solid[1] = Heat_ctx.k_solid/Heat_ctx.aniso_ratio;       // Sheet direction 
+   k_vec_solid[2] = Heat_ctx.k_solid/Heat_ctx.aniso_ratio;       // Sheet Normal to fibers
    auto *Kappa_solid = new MatrixFunctionCoefficient(3, ConductivityMatrix(k_vec_solid, EulerAngles(zmax, zmin)));
 
    // Heat Capacity
-   auto *c_solid = new ConstantCoefficient(cval_solid);
+   auto *c_solid = new ConstantCoefficient(Heat_ctx.c_solid);
 
    // Density
-   auto *rho_solid = new ConstantCoefficient(rhoval_solid);
+   auto *rho_solid = new ConstantCoefficient(Heat_ctx.rho_solid);
 
-   if (Mpi::Root())
-      mfem::out << "\033[0mdone." << std::endl;
-
-   // Cell Death Problem
-   if (Mpi::Root())
-      mfem::out << "\033[0mCell death problem... \033[0m";
-   real_t A1 = 3.68*1e30;
-   real_t A2 = 5.68*1e3;
-   real_t A3 = 2.58*1e5;
-   real_t deltaE1 = 210*1e3;
-   real_t deltaE2 = 38.6*1e3;
-   real_t deltaE3 = 47.2*1e3;
    if (Mpi::Root())
       mfem::out << "\033[0mdone." << std::endl;
 
@@ -298,14 +250,14 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[0mRF problem... \033[0m";
 
-   real_t sigma_solid = 0.54/mesh_scale; // S/m --> cm
+   real_t sigma_solid = RF_ctx.sigma_solid/mesh_scale; // S/m --> cm
 
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
    Vector sigma_vec_solid(3);
    sigma_vec_solid[0] = sigma_solid;                // Along fibers
-   sigma_vec_solid[1] = sigma_solid/aniso_ratio_rf; // Sheet direction
-   sigma_vec_solid[2] = sigma_solid/aniso_ratio_rf; // Sheet Normal to fibers
+   sigma_vec_solid[1] = sigma_solid/RF_ctx.aniso_ratio; // Sheet direction
+   sigma_vec_solid[2] = sigma_solid/RF_ctx.aniso_ratio; // Sheet Normal to fibers
    auto *Sigma_solid = new MatrixFunctionCoefficient(3, ConductivityMatrix(sigma_vec_solid, EulerAngles(zmax, zmin)));
 
    if (Mpi::Root())
@@ -333,9 +285,9 @@ int main(int argc, char *argv[])
 
    // Solvers
    bool solv_verbose = false;
-   heat::HeatSolver Heat_Solid(solid_submesh, order_heat, heat_bcs_solid, Kappa_solid, c_solid, rho_solid, ode_solver_type, solv_verbose);
+   heat::HeatSolver Heat_Solid(solid_submesh, Heat_ctx.order, heat_bcs_solid, Kappa_solid, c_solid, rho_solid, Heat_ctx.ode_solver_type, solv_verbose);
 
-   electrostatics::ElectrostaticsSolver RF_Solid(solid_submesh, order_rf, rf_bcs_solid, Sigma_solid, solv_verbose);
+   electrostatics::ElectrostaticsSolver RF_Solid(solid_submesh, RF_ctx.order, rf_bcs_solid, Sigma_solid, solv_verbose);
 
    // Grid functions in domain (inside solver)
    ParGridFunction *temperature_solid_gf = Heat_Solid.GetTemperatureGfPtr();
@@ -343,10 +295,10 @@ int main(int argc, char *argv[])
 
    // Cell Death solver (needs pointer to temperature grid function)
    celldeath::CellDeathSolver *CellDeath_Solid = nullptr;
-   if (celldeath_solver_type == 0)
-      CellDeath_Solid = new celldeath::CellDeathSolverEigen(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3);
-   else if (celldeath_solver_type == 1)
-      CellDeath_Solid = new celldeath::CellDeathSolverGotran(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3);
+   if (CellDeath_ctx.solver_type == 0)
+      CellDeath_Solid = new celldeath::CellDeathSolverEigen(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
+   else if (CellDeath_ctx.solver_type == 1)
+      CellDeath_Solid = new celldeath::CellDeathSolverGotran(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
    else
       MFEM_ABORT("Invalid cell death solver type.");
 
@@ -379,20 +331,20 @@ int main(int argc, char *argv[])
    fiber_s_gf->ProjectCoefficient(fiber_s_coeff);
    euler_angles_gf->ProjectCoefficient(euler_angles_coeff);
 
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
       ParaViewDataCollection* paraview_dc_fiber = new ParaViewDataCollection("Fiber", solid_submesh.get());
-      paraview_dc_fiber->SetPrefixPath(outfolder);
+      paraview_dc_fiber->SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_fiber->SetDataFormat(VTKFormat::BINARY);
       paraview_dc_fiber->SetCompressionLevel(9);
       paraview_dc_fiber->RegisterField("Fiber", fiber_f_gf);
       paraview_dc_fiber->RegisterField("Sheet", fiber_t_gf);
       paraview_dc_fiber->RegisterField("Sheet-normal", fiber_s_gf);
       paraview_dc_fiber->RegisterField("Euler Angles", euler_angles_gf);
-      if (order_heat > 1)
+      if (Heat_ctx.order > 1)
       {
          paraview_dc_fiber->SetHighOrderOutput(true);
-         paraview_dc_fiber->SetLevelsOfDetail(order_heat);
+         paraview_dc_fiber->SetLevelsOfDetail(Heat_ctx.order);
       }
       paraview_dc_fiber->SetTime(0.0);
       paraview_dc_fiber->SetCycle(0);
@@ -418,7 +370,7 @@ int main(int argc, char *argv[])
    Array<int> solid_lateral_attr;
    Array<int> solid_bottom_attr;
 
-   if (hex)
+   if (Mesh_ctx.hex)
    {
       // Extract boundary attributes
       fluid_solid_interface.SetSize(1);
@@ -463,8 +415,8 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[0m\nSetting up BCs for solid domain...\033[0m" << std::endl;
 
-   heat_bcs_solid->AddDirichletBC(T_solid, solid_lateral_attr[0]);
-   heat_bcs_solid->AddDirichletBC(T_solid, solid_bottom_attr[0]);
+   heat_bcs_solid->AddDirichletBC(Heat_ctx.T_solid, solid_lateral_attr[0]);
+   heat_bcs_solid->AddDirichletBC(Heat_ctx.T_solid, solid_bottom_attr[0]);
 
    Heat_Solid.AddVolumetricTerm(JouleHeating_coeff, solid_domain_attributes, false); // does not assume ownership of the coefficient
 
@@ -481,8 +433,8 @@ int main(int argc, char *argv[])
    // - Homogeneous Neumann lateral wall
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up RF BCs for solid domain...\033[0m" << std::endl;
-   rf_bcs_solid->AddDirichletBC(phi_gnd, solid_bottom_attr[0]);
-   rf_bcs_solid->AddDirichletBC(phi_applied, solid_cylinder_interface[0]);
+   rf_bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
+   rf_bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup solver and Assemble forms
@@ -496,8 +448,8 @@ int main(int argc, char *argv[])
 
    StopWatch chrono_assembly;
    chrono_assembly.Start();
-   Heat_Solid.EnablePA(pa_heat);
-   Heat_Solid.Setup(dt);
+   Heat_Solid.EnablePA(Heat_ctx.pa);
+   Heat_Solid.Setup(Sim_ctx.dt);
    chrono_assembly.Stop();
    if (Mpi::Root())
       mfem::out << "\033[0mdone, in " << chrono_assembly.RealTime() << "s.\033[0m" << std::endl;
@@ -507,7 +459,7 @@ int main(int argc, char *argv[])
 
    chrono_assembly.Clear();
    chrono_assembly.Start();
-   RF_Solid.EnablePA(pa_rf);
+   RF_Solid.EnablePA(&RF_ctx.pa);
    RF_Solid.Setup();
    chrono_assembly.Stop();
 
@@ -518,19 +470,19 @@ int main(int argc, char *argv[])
    ParaViewDataCollection paraview_dc_solid_heat("Heat-Solid", solid_submesh.get());
    ParaViewDataCollection paraview_dc_celldeath("CellDeath-Solid", solid_submesh.get());
    ParaViewDataCollection paraview_dc_solid_rf("RF-Solid", solid_submesh.get());
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
-      paraview_dc_solid_heat.SetPrefixPath(outfolder);
+      paraview_dc_solid_heat.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_solid_heat.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_solid_heat.SetCompressionLevel(9);
       Heat_Solid.RegisterParaviewFields(paraview_dc_solid_heat);
 
-      paraview_dc_celldeath.SetPrefixPath(outfolder);
+      paraview_dc_celldeath.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_celldeath.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_celldeath.SetCompressionLevel(9);
       CellDeath_Solid->RegisterParaviewFields(paraview_dc_celldeath);
 
-      paraview_dc_solid_rf.SetPrefixPath(outfolder);
+      paraview_dc_solid_rf.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_solid_rf.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_solid_rf.SetCompressionLevel(9);
       RF_Solid.RegisterParaviewFields(paraview_dc_solid_rf);
@@ -557,12 +509,12 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34m\nStarting time-integration... \033[0m" << std::endl;
 
    // Initial conditions
-   ConstantCoefficient T0solid(T_solid);
+   ConstantCoefficient T0solid(Heat_ctx.T_solid);
    temperature_solid_gf->ProjectCoefficient(T0solid);
    Heat_Solid.SetInitialTemperature(*temperature_solid_gf);
 
    // Write fields to disk for VisIt
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
       Heat_Solid.WriteFields(0, 0.0);
       CellDeath_Solid->WriteFields(0, 0.0);
@@ -575,14 +527,14 @@ int main(int argc, char *argv[])
    int rf_solid_dofs = RF_Solid.GetProblemSize();
 
    // Integration rule for the L2 error
-   int order_quad_heat = std::max(2, 2 * order_heat + 2);
+   int order_quad_heat = std::max(2, 2 * Heat_ctx.order + 2);
    const IntegrationRule *irs_heat[Geometry::NumGeom];
    for (int i = 0; i < Geometry::NumGeom; ++i)
    {
       irs_heat[i] = &(IntRules.Get(i, order_quad_heat));
    }
 
-   int order_quad_rf = std::max(2, 2 * order_rf + 2);
+   int order_quad_rf = std::max(2, 2 * RF_ctx.order + 2);
    const IntegrationRule *irs_rf[Geometry::NumGeom];
    for (int i = 0; i < Geometry::NumGeom; ++i)
    {
@@ -629,14 +581,14 @@ int main(int argc, char *argv[])
       // Export converged fields
       chrono.Clear();
       chrono.Start();
-      if (paraview)
+      if (Sim_ctx.paraview)
       {
          RF_Solid.WriteFields(0, 0.0);
       }
       chrono.Stop();
       t_paraview = chrono.RealTime();
 
-      if (Mpi::Root() && print_timing)
+      if (Mpi::Root() && Sim_ctx.print_timing)
       { // Print times
          out << "------------------------------------------------------------" << std::endl;
          out << "Solid Solve: " << t_solve_solid << " s" << std::endl;
@@ -658,7 +610,7 @@ int main(int argc, char *argv[])
    {
       out << "-----------------------------------------------"
           << std::endl;
-      out << std::left << std::setw(16) << "Step" << std::setw(16) << "Time" << std::setw(16) << "dt" << std::endl;
+      out << std::left << std::setw(16) << "Step" << std::setw(16) << "Time" << std::setw(16) << "Sim_ctx.dt" << std::endl;
       out << "-----------------------------------------------"
           << std::endl;                                      
    }
@@ -678,10 +630,10 @@ int main(int argc, char *argv[])
       chrono_total.Start();
       if (Mpi::Root())
       {
-         mfem::out << std::left << std::setw(16) << step << std::setw(16) << t << std::setw(16) << dt << std::setw(16) << std::endl;
+         mfem::out << std::left << std::setw(16) << step << std::setw(16) << t << std::setw(16) << Sim_ctx.dt << std::setw(16) << std::endl;
       }
 
-      if (t + dt >= t_final - dt / 2)
+      if (t + Sim_ctx.dt >= Sim_ctx.t_final - Sim_ctx.dt / 2)
       {
          last_step = true;
       }
@@ -701,8 +653,8 @@ int main(int argc, char *argv[])
       // Step in the solid domain
       chrono.Clear();
       chrono.Start();
-      Heat_Solid.Step(t, dt, step);
-      t -= dt;
+      Heat_Solid.Step(t, Sim_ctx.dt, step);
+      t -= Sim_ctx.dt;
       chrono.Stop();
       t_solve_solid = chrono.RealTime();
 
@@ -718,7 +670,7 @@ int main(int argc, char *argv[])
       if (Mpi::Root())
          mfem::out << "\033[32mSolving CellDeath problem on solid ... \033[0m";
 
-      CellDeath_Solid->Solve(t, dt);
+      CellDeath_Solid->Solve(t, Sim_ctx.dt);
 
       if (Mpi::Root())
          mfem::out << "\033[32mdone.\033[0m" << std::endl;
@@ -732,7 +684,7 @@ int main(int argc, char *argv[])
       // Output of time steps
       chrono.Clear();
       chrono.Start();
-      if (paraview && (step % save_freq == 0))
+      if (Sim_ctx.paraview && (step % Sim_ctx.save_freq == 0))
       {
          Heat_Solid.WriteFields(step, t);
          CellDeath_Solid->WriteFields(step, t);
@@ -742,7 +694,7 @@ int main(int argc, char *argv[])
 
       chrono_total.Stop();
 
-      if (Mpi::Root() && print_timing)
+      if (Mpi::Root() && Sim_ctx.print_timing)
       {
          out << "------------------------------------------------------------" << std::endl;
          out << "Solve Heat (Solid): " << t_solve_solid << " s" << std::endl;
@@ -753,7 +705,7 @@ int main(int argc, char *argv[])
       }
 
       // Update time
-      t += dt;
+      t += Sim_ctx.dt;
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -809,75 +761,6 @@ void print_matrix(const DenseMatrix &A)
 }
 
 
-std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d, std::function<void(const Vector &, Vector &)> EulerAngles)
-{
-
-   return [d, EulerAngles](const Vector &x, DenseMatrix &m)
-   {
-      // Define dimension of problem
-      const int dim = x.Size();
-
-      // Compute Euler angles
-      Vector e(3);
-      EulerAngles(x, e);
-      real_t e1 = e(0); // Roll
-      real_t e2 = e(1); // Pitch
-      real_t e3 = e(2); // Yaw
-
-      // Compute rotated matrix
-      if (dim == 3)
-      {
-         // Compute cosine and sine of the angles e1, e2, e3
-         const real_t c1 = cos(e1);
-         const real_t s1 = sin(e1);
-         const real_t c2 = cos(e2);
-         const real_t s2 = sin(e2);
-         const real_t c3 = cos(e3);
-         const real_t s3 = sin(e3);
-
-         // Fill the rotation matrix R with the Euler angles.
-         DenseMatrix R(3, 3);
-         R(0, 0) = c3 * c2;
-         R(1, 0) = s3 * c2;
-         R(2, 0) = -s2;         
-         R(0, 1) = s1 * s2 * c3 - c1 * s3;
-         R(1, 1) = s1 * s2 * s3 + c1 * c3;
-         R(2, 1) = s1 * c2;
-         R(0, 2) = c1 * s2 * c3 + s1 * s3;
-         R(1, 2) = c1 * s2 * s3 - s1 * c3;
-         R(2, 2) = c1 * c2;
-
-         // Multiply the rotation matrix R with the diffusivity vector.
-         Vector l(3);
-         l(0) = d[0];
-         l(1) = d[1];
-         l(2) = d[2];
-
-         // Compute m = R^t diag(l) R
-         R.Transpose();
-         MultADBt(R, l, R, m);
-      }
-      else if (dim == 2)
-      {  // R^t diag(l) R
-         const real_t c1 = cos(e1);
-         const real_t s1 = sin(e1);
-         DenseMatrix Rt(2, 2);
-         Rt(0, 0) = c1;
-         Rt(0, 1) = s1;
-         Rt(1, 0) = -s1;
-         Rt(1, 1) = c1;
-         Vector l(2);
-         l(0) = d[0];
-         l(1) = d[1];
-         MultADAt(Rt, l, m);
-      }
-      else
-      {
-         m(0, 0) = d[0];
-      }
-   };
-}
-
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmin, real_t zmax)
 {
    return [zmin, zmax](const Vector &x, Vector &e)
@@ -901,42 +784,3 @@ std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmin, real_t zm
    };
 }
 
-std::function<void(const Vector &, Vector &)> FiberDirection(std::function<void(const Vector &, Vector &)> EulerAngles, int component)
-{
-   return [EulerAngles, component](const Vector &x, Vector &e)
-   {
-      // Compute Euler angles
-      Vector angles(3);
-      EulerAngles(x, angles);
-      real_t e1 = angles(0); // Roll
-      real_t e2 = angles(1); // Pitch
-      real_t e3 = angles(2); // Yaw
-
-      // Compute cosine and sine of the angles e1, e2, e3
-      const real_t c1 = cos(e1);
-      const real_t s1 = sin(e1);
-      const real_t c2 = cos(e2);
-      const real_t s2 = sin(e2);
-      const real_t c3 = cos(e3);
-      const real_t s3 = sin(e3);
-
-      // Fill the rotation matrix R with the Euler angles.
-      DenseMatrix R(3, 3);
-      R(0, 0) = c3 * c2;
-      R(1, 0) = s3 * c2;
-      R(2, 0) = -s2;         
-      R(0, 1) = s1 * s2 * c3 - c1 * s3;
-      R(1, 1) = s1 * s2 * s3 + c1 * c3;
-      R(2, 1) = s1 * c2;
-      R(0, 2) = c1 * s2 * c3 + s1 * s3;
-      R(1, 2) = c1 * s2 * s3 - s1 * c3;
-      R(2, 2) = c1 * c2;
-
-      // Extract the desired column from the rotation matrix R
-      e.SetSize(3);
-      e(0) = R(0, component);
-      e(1) = R(1, component);
-      e(2) = R(2, component);
-   };
-
-}

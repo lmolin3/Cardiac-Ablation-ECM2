@@ -1,14 +1,3 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-//
 // Sample run: 
 //             mpirun -np 10 ./test-transfer-two-domains-overlapping-partition -o 1 -of ./Output/TransferOverlappingPartition
 
@@ -17,9 +6,9 @@
 
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h> // Include for mkdir
 #include <iostream>
 #include <memory>
+#include "FilesystemHelper.hpp"
 
 using namespace mfem;
 
@@ -66,8 +55,8 @@ int main(int argc, char *argv[])
    args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
    // Postprocessing
-   args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
-                  "Enable or disable VisIt visualization.");
+   args.AddOption(&paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+                  "Enable or disable Paraview visualization.");
    args.AddOption(&outfolder, "-of", "--out-folder",
                   "Output folder.");
 
@@ -247,7 +236,7 @@ int main(int argc, char *argv[])
    auto func = [](const Vector &x)
    {
        const int dim = x.Size();
-       double res = 0.0;
+       real_t res = 0.0;
        res = std::pow(x(0) - 2.5, 2) + std::pow(x(1) - 2.5, 2);
        return res;
    };

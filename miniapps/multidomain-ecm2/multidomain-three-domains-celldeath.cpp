@@ -1,23 +1,12 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
-// at the Lawrence Livermore National Laboratory. All Rights reserved. See files
-// LICENSE and NOTICE for details. LLNL-CODE-806117.
-//
-// This file is part of the MFEM library. For more information and source code
-// availability visit https://mfem.org.
-//
-// MFEM is free software; you can redistribute it and/or modify it under the
-// terms of the BSD-3 license. We welcome feedback and contributions, see file
-// CONTRIBUTING.md for details.
-//
 // Solve HeatTransfer problem with three domains (solid, fluid, cylinder).
-//                 rho c dT/dt = ∇•κ∇T         in  fluid, solid
-//                 rho c dT/dt = ∇•κ∇T + Q     in  cylinder
+//                 rho c dT/Sim_ctx.dt = ∇•κ∇T         in  fluid, solid
+//                 rho c dT/Sim_ctx.dt = ∇•κ∇T + Q     in  cylinder
 // The problem is solved using a segregated approach with two-way coupling (Neumann-Dirichlet)
 // until convergence is reached.
 // After the heat transfer problem is solved, a three-state cell death model is solved in the solid domain.
-//                  dN/dt = k2U - k1N
-//                  dU/dt = k1N - k2U - k3U
-//                  dD/dt = k3U  
+//                  dN/Sim_ctx.dt = k2U - k1N
+//                  dU/Sim_ctx.dt = k1N - k2U - k3U
+//                  dD/Sim_ctx.dt = k3U  
 // with initial conditions N(0) = 1, U(0) = 0, D(0) = 0.
 // The coefficients are defined as ki = Ai * exp(-ΔEi/RT) 
 //
@@ -34,21 +23,29 @@
 // 3. Hexahedral mesh with partial assembly
 //    mpirun -np 4 ./multidomain-three-domains-celldeath -hex -pa -o 2 -dt 0.01 -tf 0.05 -kc 1 -kb 1 --relaxation-parameter 0.8 
 
+// MFEM library
 #include "mfem.hpp"
+
+// Multiphysics modules
 #include "lib/heat_solver.hpp"
 #include "lib/celldeath_solver.hpp"
 
+// Utils
+
+// Physical and Domain-Decomposition parameters
+#include "contexts.hpp" 
+
+// Output
 #include <fstream>
 #include <sstream>
-#include <sys/stat.h> // Include for mkdir
 #include <iostream>
 #include <memory>
+#include "FilesystemHelper.hpp"
 
 using namespace mfem;
 
 using InterfaceTransfer = ecm2_utils::InterfaceTransfer;
 using TransferBackend = InterfaceTransfer::Backend;
-
 
 IdentityMatrixCoefficient *Id = NULL;
 
@@ -57,7 +54,7 @@ void print_matrix(const DenseMatrix &A);
 void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step);
 
 // Volumetric heat source in the sphere
-constexpr double Sphere_Radius = 0.2;
+constexpr real_t Sphere_Radius = 0.2;
 const Vector Sphere_Center = []()
 {
    Vector v(3);
@@ -67,18 +64,14 @@ const Vector Sphere_Center = []()
    return v;
 }();
 
-double Qval = 1e3; // W/m^3
-double HeatingSphere(const Vector &x, double t);
+real_t Qval = 1e3; // W/m^3
+real_t HeatingSphere(const Vector &x, real_t t);
 
 // Advection velocity profile
 void velocity_profile(const Vector &x, Vector &b);
-double viscosity = 1.0;
-double dPdx = 1.0;
-constexpr double R = 0.25; // cylinder mesh radius
-
-static real_t T_solid = 37.0;   // Body temperature
-static real_t T_fluid = 30.0;  // Fluid temperature
-static real_t T_cylinder = 20.0; // Cylinder temperature
+real_t viscosity = 1.0;
+real_t dPdx = 1.0;
+constexpr real_t R = 0.25; // cylinder mesh radius
 
 int main(int argc, char *argv[])
 {
@@ -96,78 +89,45 @@ int main(int argc, char *argv[])
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   // FE
-   int order = 1;
-   int order_celldeath = -1;
-   bool pa = false; // Enable partial assembly
-   int celldeath_solver_type = 0; // 0: Eigen, 1: GoTran
-   // Physics
-   double kval_cyl = 1.0;   // W/mK
-   double kval_solid = 1.0; // W/mK
-   double kval_fluid = 1.0; // W/mK
-   double alpha = 0.0;      // Advection coefficient
-   double reaction = 0.0;   // Reaction term
-   // Test selection
-   int test = 1; // 0 - Box heating, 1 - Cylinder heating
-   // Mesh
-   int serial_ref_levels = 0;
-   int parallel_ref_levels = 0;
-   bool hex = false;
-   // Time integrator
-   int ode_solver_type = 1;
-   real_t t_final = 1.0;
-   real_t dt = 1.0e-2;
-   // Domain decomposition
-   real_t omega = 0.5; // Relaxation parameter
-   real_t omega_fluid;
-   real_t omega_solid;
-   real_t omega_cyl;
-   // Postprocessing
-   bool print_timing = false;
-   bool visit = false;
-   bool paraview = true;
-   int save_freq = 1; // Save fields every 'save_freq' time steps
-   const char *outfolder = "./Output/Test";
-   bool save_convergence = false;
+   // Physics   
+   real_t alpha = 0.0;      // Advection coefficient
+   real_t reaction = 0.0;   // Reaction term
 
    OptionsParser args(argc, argv);
-   // Test
-   args.AddOption(&test, "-p", "--problem",
-                  "Test selection: 0 - Box heating, 1 - Cylinder heating.");
    // FE
-   args.AddOption(&order, "-o", "--order",
+   args.AddOption(&Heat_ctx.order, "-o", "--order",
                   "Finite element order (polynomial degree).");
-   args.AddOption(&order_celldeath, "-oc", "--order-celldeath",
+   args.AddOption(&CellDeath_ctx.order, "-oc", "--order-celldeath",
                   "Finite element order for cell death (polynomial degree).");
-   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
+   args.AddOption(&Heat_ctx.pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
                   "Enable or disable partial assembly.");
-   args.AddOption(&celldeath_solver_type, "-cdt", "--celldeath-solver-type",
+   args.AddOption(&CellDeath_ctx.solver_type, "-cdt", "--celldeath-solver-type",
                   "Cell-death solver type: 0 - Eigen, 1 - GoTran.");
    // Mesh
-   args.AddOption(&hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
+   args.AddOption(&Mesh_ctx.hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
                   "Use hexahedral mesh.");
-   args.AddOption(&serial_ref_levels, "-rs", "--serial-ref-levels",
+   args.AddOption(&Mesh_ctx.serial_ref_levels, "-rs", "--serial-ref-levels",
                   "Number of serial refinement levels.");
-   args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
+   args.AddOption(&Mesh_ctx.parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
    // Time integrator
-   args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
+   args.AddOption(&Heat_ctx.ode_solver_type, "-ode", "--ode-solver",
                   "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
                   "\t   4 - Implicit Midpoint, 5 - SDIRK23, 6 - SDIRK34,\n\t"
                   "\t   7 - Forward Euler, 8 - RK2, 9 - RK3 SSP, 10 - RK4.");
-   args.AddOption(&t_final, "-tf", "--t-final",
+   args.AddOption(&Sim_ctx.t_final, "-tf", "--t-final",
                   "Final time; start time is 0.");
-   args.AddOption(&dt, "-dt", "--time-step",
+   args.AddOption(&Sim_ctx.dt, "-dt", "--time-step",
                   "Time step.");
    // Domain decomposition
-   args.AddOption(&omega, "-omega", "--relaxation-parameter",
+   args.AddOption(&DD_ctx.omega_heat, "-omega", "--relaxation-parameter",
                   "Relaxation parameter.");
    // Physics
-   args.AddOption(&kval_cyl, "-kc", "--k-cylinder",
+   args.AddOption(&Heat_ctx.k_cylinder, "-kc", "--k-cylinder",
                   "Thermal conductivity of the cylinder (W/mK).");
-   args.AddOption(&kval_solid, "-kb", "--k-solid",
+   args.AddOption(&Heat_ctx.k_solid, "-kb", "--k-solid",
                   "Thermal conductivity of the solid (W/mK).");
-   args.AddOption(&kval_fluid, "-kf", "--k-fluid",
+   args.AddOption(&Heat_ctx.k_fluid, "-kf", "--k-fluid",
                   "Thermal conductivity of the fluid (W/mK).");
    args.AddOption(&dPdx, "-dPdx", "--pressure-drop",
                   "Pressure drop forvelocity profile.");
@@ -178,29 +138,29 @@ int main(int argc, char *argv[])
    args.AddOption(&Qval, "-Q", "--volumetric-heat-source",
                   "Volumetric heat source (W/m^3).");
    // Postprocessing
-   args.AddOption(&print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
+   args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
-                  "Enable or disable VisIt visualization.");
-   args.AddOption(&save_freq, "-sf", "--save-freq",
+   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+                  "Enable or disable Paraview visualization.");
+   args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
-   args.AddOption(&outfolder, "-of", "--out-folder",
+   args.AddOption(&Sim_ctx.outfolder, "-of", "--out-folder",
                   "Output folder.");
-   args.AddOption(&save_convergence, "-sc", "--save-convergence", "-no-sc", "--no-save-convergence",
+   args.AddOption(&Sim_ctx.save_convergence, "-sc", "--save-convergence", "-no-sc", "--no-save-convergence",
                   "Save convergence data.");
 
    args.ParseCheck();
 
    // Determine order for cell death problem
-   if (order_celldeath < 0)
+   if (CellDeath_ctx.order < 0)
    {
-      order_celldeath = order;
+      CellDeath_ctx.order = Heat_ctx.order;
    }
 
    // Convert temperature to kelvin
-   T_solid =  heat::CelsiusToKelvin(T_solid);
-   T_fluid =  heat::CelsiusToKelvin(T_fluid);
-   T_cylinder =  heat::CelsiusToKelvin(T_cylinder);
+   Heat_ctx.T_solid = heat::CelsiusToKelvin(Heat_ctx.T_solid);
+   Heat_ctx.T_fluid =  heat::CelsiusToKelvin(Heat_ctx.T_fluid);
+   Heat_ctx.T_cylinder =  heat::CelsiusToKelvin(Heat_ctx.T_cylinder);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -211,7 +171,7 @@ int main(int argc, char *argv[])
 
    // Load serial mesh
    Mesh *serial_mesh = nullptr;
-   if (hex)
+   if (Mesh_ctx.hex)
    { // Load Hex mesh (NETCDF required)
 #ifdef MFEM_USE_NETCDF
       serial_mesh = new Mesh("../../data/three-domains.e");
@@ -226,7 +186,7 @@ int main(int argc, char *argv[])
 
    int sdim = serial_mesh->SpaceDimension();
 
-   for (int l = 0; l < serial_ref_levels; l++)
+   for (int l = 0; l < Mesh_ctx.serial_ref_levels; l++)
    {
       serial_mesh->UniformRefinement();
    }
@@ -252,11 +212,11 @@ int main(int argc, char *argv[])
 
    // Create parallel mesh
    ParMesh parent_mesh = ParMesh(MPI_COMM_WORLD, *serial_mesh, partitioning, partition_type);
-   // ExportMeshwithPartitioning(outfolder, *serial_mesh, partitioning);
+   // ExportMeshwithPartitioning(Sim_ctx.outfolder, *serial_mesh, partitioning);
    delete[] partitioning;
    delete serial_mesh;
 
-   for (int l = 0; l < parallel_ref_levels; l++)
+   for (int l = 0; l < Mesh_ctx.parallel_ref_levels; l++)
    {
       parent_mesh.UniformRefinement();
    }
@@ -277,7 +237,7 @@ int main(int argc, char *argv[])
    Array<int> fluid_domain_attribute;
    Array<int> cylinder_domain_attribute;
 
-   if (hex)
+   if (Mesh_ctx.hex)
    {
       solid_domain_attribute.SetSize(1);
       fluid_domain_attribute.SetSize(1);
@@ -317,46 +277,33 @@ int main(int argc, char *argv[])
    Array<int> attr_solid(0), attr_fluid(0), attr_cyl(0);
    attr_solid.Append(1), attr_fluid.Append(2), attr_cyl.Append(3);
 
-   double cval_cyl, rhoval_cyl;
-   cval_cyl = 1.0;   // J/kgK
-   rhoval_cyl = 1.0; // kg/m^3
+   Heat_ctx.c_cylinder = 1.0;   // J/kgK
+   Heat_ctx.rho_cylinder = 1.0; // kg/m^3
 
-   double cval_solid, rhoval_solid;
-   cval_solid = 1.0;   // J/kgK
-   rhoval_solid = 1.0; // kg/m^3
+   Heat_ctx.c_solid = 1.0;   // J/kgK
+   Heat_ctx.rho_solid = 1.0; // kg/m^3
 
-   double cval_fluid, rhoval_fluid;
-   cval_fluid = 1.0;   // J/kgK
-   rhoval_fluid = 1.0; // kg/m^3
+   Heat_ctx.c_fluid = 1.0;   // J/kgK
+   Heat_ctx.rho_fluid = 1.0; // kg/m^3
 
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
-   auto *Kappa_cyl = new ScalarMatrixProductCoefficient(kval_cyl, *Id);
-   auto *Kappa_fluid = new ScalarMatrixProductCoefficient(kval_fluid, *Id);
-   auto *Kappa_solid = new ScalarMatrixProductCoefficient(kval_solid, *Id);
+   auto *Kappa_cyl = new ScalarMatrixProductCoefficient(Heat_ctx.k_cylinder, *Id);
+   auto *Kappa_fluid = new ScalarMatrixProductCoefficient(Heat_ctx.k_fluid, *Id);
+   auto *Kappa_solid = new ScalarMatrixProductCoefficient(Heat_ctx.k_solid, *Id);
 
    // Heat Capacity
-   auto *c_cyl = new ConstantCoefficient(cval_cyl);
-   auto *c_fluid = new ConstantCoefficient(cval_fluid);
-   auto *c_solid = new ConstantCoefficient(cval_solid);
+   auto *c_cyl = new ConstantCoefficient(Heat_ctx.c_cylinder);
+   auto *c_fluid = new ConstantCoefficient(Heat_ctx.c_fluid);
+   auto *c_solid = new ConstantCoefficient(Heat_ctx.c_solid);
 
    // Density
-   auto *rho_cyl = new ConstantCoefficient(rhoval_cyl);
-   auto *rho_fluid = new ConstantCoefficient(rhoval_fluid);
-   auto *rho_solid = new ConstantCoefficient(rhoval_solid);
+   auto *rho_cyl = new ConstantCoefficient(Heat_ctx.rho_cylinder);
+   auto *rho_fluid = new ConstantCoefficient(Heat_ctx.rho_fluid);
+   auto *rho_solid = new ConstantCoefficient(Heat_ctx.rho_solid);
 
    // Velocity profile for advectio term in cylinder α∇•(q T)
    VectorCoefficient *q = new VectorFunctionCoefficient(sdim, velocity_profile);
-
-   if (Mpi::Root())
-      mfem::out << "\033[34mSetting up coefficients for cell death problem... \033[0m" << std::endl;
-
-   real_t A1 = 1.0;
-   real_t A2 = 1.0;
-   real_t A3 = 1.0;
-   real_t deltaE1 = 1.0;
-   real_t deltaE2 = 1.0;
-   real_t deltaE3 = 1.0;
 
    if (Mpi::Root())
       mfem::out << "\033[34mdone." << std::endl;
@@ -381,9 +328,9 @@ int main(int argc, char *argv[])
 
    // Solvers
    bool solv_verbose = false;
-   heat::HeatSolver Heat_Cylinder(cylinder_submesh, order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, alpha, q, reaction, ode_solver_type, solv_verbose);
-   heat::HeatSolver Heat_Solid(solid_submesh, order, bcs_solid, Kappa_solid, c_solid, rho_solid, ode_solver_type, solv_verbose);
-   heat::HeatSolver Heat_Fluid(fluid_submesh, order, bcs_fluid, Kappa_fluid, c_fluid, rho_fluid, alpha, q, reaction, ode_solver_type, solv_verbose);
+   heat::HeatSolver Heat_Cylinder(cylinder_submesh, Heat_ctx.order, bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, alpha, q, reaction, Heat_ctx.ode_solver_type, solv_verbose);
+   heat::HeatSolver Heat_Solid(solid_submesh, Heat_ctx.order, bcs_solid, Kappa_solid, c_solid, rho_solid, Heat_ctx.ode_solver_type, solv_verbose);
+   heat::HeatSolver Heat_Fluid(fluid_submesh, Heat_ctx.order, bcs_fluid, Kappa_fluid, c_fluid, rho_fluid, alpha, q, reaction, Heat_ctx.ode_solver_type, solv_verbose);
 
    // Grid functions in domain (inside solver)
    ParGridFunction *temperature_cylinder_gf = Heat_Cylinder.GetTemperatureGfPtr();
@@ -391,10 +338,10 @@ int main(int argc, char *argv[])
    ParGridFunction *temperature_fluid_gf = Heat_Fluid.GetTemperatureGfPtr();
 
    celldeath::CellDeathSolver *CellDeath_Solid = nullptr;
-   if (celldeath_solver_type == 0)
-      CellDeath_Solid = new celldeath::CellDeathSolverEigen(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3);
-   else if (celldeath_solver_type == 1)
-      CellDeath_Solid = new celldeath::CellDeathSolverGotran(solid_submesh, order_celldeath, temperature_solid_gf, A1, A2, A3, deltaE1, deltaE2, deltaE3);
+   if (CellDeath_ctx.solver_type == 0)
+      CellDeath_Solid = new celldeath::CellDeathSolverEigen(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
+   else if (CellDeath_ctx.solver_type == 1)
+      CellDeath_Solid = new celldeath::CellDeathSolverGotran(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
    else
       MFEM_ABORT("Invalid cell death solver type.");
 
@@ -452,7 +399,7 @@ int main(int argc, char *argv[])
    Array<int> fluid_solid_interface_marker;
    Array<int> solid_cylinder_interface_marker;
 
-   if (hex)
+   if (Mesh_ctx.hex)
    {
       // Extract boundary attributes
       fluid_cylinder_interface.SetSize(1);
@@ -520,8 +467,8 @@ int main(int argc, char *argv[])
    GridFunctionCoefficient *temperature_fc_cylinder_coeff = new GridFunctionCoefficient(temperature_fc_fluid);
    bcs_fluid->AddDirichletBC(temperature_fs_solid_coeff, fluid_solid_interface[0]);
    bcs_fluid->AddDirichletBC(temperature_fc_cylinder_coeff, fluid_cylinder_interface[0]); // Don't own the coefficient, it'll be deleted already in the previous line
-   bcs_fluid->AddDirichletBC(T_fluid, fluid_lateral_attr[0]);
-   bcs_fluid->AddDirichletBC(T_fluid, fluid_top_attr[0]);
+   bcs_fluid->AddDirichletBC(Heat_ctx.T_fluid, fluid_lateral_attr[0]);
+   bcs_fluid->AddDirichletBC(Heat_ctx.T_fluid, fluid_top_attr[0]);
 
    // Solid:
    // - T = T_solid on bottom/lateral walls
@@ -535,8 +482,8 @@ int main(int argc, char *argv[])
 
    bcs_solid->AddNeumannVectorBC(heatFlux_fs_solid_coeff, fluid_solid_interface[0]);
    bcs_solid->AddNeumannVectorBC(heatFlux_sc_solid_coeff, solid_cylinder_interface[0]);
-   bcs_solid->AddDirichletBC(T_solid, solid_lateral_attr[0]);
-   bcs_solid->AddDirichletBC(T_solid, solid_bottom_attr[0]);
+   bcs_solid->AddDirichletBC(Heat_ctx.T_solid, solid_lateral_attr[0]);
+   bcs_solid->AddDirichletBC(Heat_ctx.T_solid, solid_bottom_attr[0]);
 
    // Cylinder:
    // - T = T_cylinder on top wall
@@ -551,7 +498,7 @@ int main(int argc, char *argv[])
 
    bcs_cyl->AddNeumannVectorBC(heatFlux_fc_cylinder_coeff, fluid_cylinder_interface[0]);
    bcs_cyl->AddDirichletBC(temperature_sc_cylinder_coeff, solid_cylinder_interface[0]);
-   bcs_cyl->AddDirichletBC(T_cylinder, cylinder_top_attr[0]);
+   bcs_cyl->AddDirichletBC(Heat_ctx.T_cylinder, cylinder_top_attr[0]);
 
    Heat_Cylinder.AddVolumetricTerm(HeatingSphere, cylinder_domain_attributes);
 
@@ -636,13 +583,13 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up solvers and assembling forms... \033[0m" << std::endl;
 
-   Heat_Solid.EnablePA(pa);
+   Heat_Solid.EnablePA(Heat_ctx.pa);
    Heat_Solid.Setup();
 
-   Heat_Cylinder.EnablePA(pa);
+   Heat_Cylinder.EnablePA(Heat_ctx.pa);
    Heat_Cylinder.Setup();
 
-   Heat_Fluid.EnablePA(pa);
+   Heat_Fluid.EnablePA(Heat_ctx.pa);
    Heat_Fluid.Setup();
 
    // Setup ouput
@@ -650,25 +597,25 @@ int main(int argc, char *argv[])
    ParaViewDataCollection paraview_dc_solid("Heat-Solid", solid_submesh.get());
    ParaViewDataCollection paraview_dc_fluid("Heat-Fluid", fluid_submesh.get());
    ParaViewDataCollection paraview_dc_celldeath("CellDeath-Solid", solid_submesh.get());  
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
-      paraview_dc_cylinder.SetPrefixPath(outfolder);
+      paraview_dc_cylinder.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_cylinder.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_cylinder.SetCompressionLevel(9);
       Heat_Cylinder.RegisterParaviewFields(paraview_dc_cylinder);
 
-      paraview_dc_solid.SetPrefixPath(outfolder);
+      paraview_dc_solid.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_solid.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_solid.SetCompressionLevel(9);
       Heat_Solid.RegisterParaviewFields(paraview_dc_solid);
 
-      paraview_dc_fluid.SetPrefixPath(outfolder);
+      paraview_dc_fluid.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_fluid.SetDataFormat(VTKFormat::ASCII);
       paraview_dc_fluid.SetCompressionLevel(9);
       Heat_Fluid.RegisterParaviewFields(paraview_dc_fluid);
       Heat_Fluid.AddParaviewField("velocity", velocity_gf);
 
-      paraview_dc_celldeath.SetPrefixPath(outfolder);
+      paraview_dc_celldeath.SetPrefixPath(Sim_ctx.outfolder);
       paraview_dc_celldeath.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_celldeath.SetCompressionLevel(9);
       CellDeath_Solid->RegisterParaviewFields(paraview_dc_celldeath);
@@ -679,21 +626,21 @@ int main(int argc, char *argv[])
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 9. Perform time-integration (looping over the time iterations, step, with a
-   //     time-step dt).
+   //     time-step Sim_ctx.dt).
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    if (Mpi::Root())
       mfem::out << "\033[34m\nStarting time-integration... \033[0m" << std::endl;
 
-   ConstantCoefficient T0solid(T_solid);
+   ConstantCoefficient T0solid(Heat_ctx.T_solid);
    temperature_solid_gf->ProjectCoefficient(T0solid);
    Heat_Solid.SetInitialTemperature(*temperature_solid_gf);
 
-   ConstantCoefficient T0cylinder(T_cylinder);
+   ConstantCoefficient T0cylinder(Heat_ctx.T_cylinder);
    temperature_cylinder_gf->ProjectCoefficient(T0cylinder);
    Heat_Cylinder.SetInitialTemperature(*temperature_cylinder_gf);
 
-   ConstantCoefficient T0fluid(T_fluid);
+   ConstantCoefficient T0fluid(Heat_ctx.T_fluid);
    temperature_fluid_gf->ProjectCoefficient(T0fluid);
    Heat_Fluid.SetInitialTemperature(*temperature_fluid_gf);
 
@@ -703,7 +650,7 @@ int main(int argc, char *argv[])
    bool last_step = false;
 
    // Write fields to disk for VisIt
-   if (paraview)
+   if (Sim_ctx.paraview)
    {
       Heat_Solid.WriteFields(0, t);
       Heat_Cylinder.WriteFields(0, t);
@@ -712,23 +659,23 @@ int main(int argc, char *argv[])
    }
 
    bool converged = false;
-   double tol = 1.0e-4;
+   real_t tol = 1.0e-4;
    int max_iter = 100;
 
    // Vectors for error computation and relaxation
-   Vector temperature_solid(temperature_solid_gf->Size());   temperature_solid = T_solid;
-   Vector temperature_cylinder(temperature_cylinder_gf->Size()); temperature_cylinder = T_cylinder;
-   Vector temperature_fluid(temperature_fluid_gf->Size()); temperature_fluid = T_fluid;
+   Vector temperature_solid(temperature_solid_gf->Size());   temperature_solid = Heat_ctx.T_solid;
+   Vector temperature_cylinder(temperature_cylinder_gf->Size()); temperature_cylinder = Heat_ctx.T_cylinder;
+   Vector temperature_fluid(temperature_fluid_gf->Size()); temperature_fluid = Heat_ctx.T_fluid;
 
    Vector temperature_solid_prev(temperature_solid_gf->Size());
-   temperature_solid_prev = T_solid;
+   temperature_solid_prev = Heat_ctx.T_solid;
    Vector temperature_cylinder_prev(temperature_cylinder_gf->Size());
-   temperature_cylinder_prev = T_cylinder;
-   Vector temperature_fluid_prev(temperature_fluid_gf->Size()); temperature_fluid_prev = T_fluid;
+   temperature_cylinder_prev = Heat_ctx.T_cylinder;
+   Vector temperature_fluid_prev(temperature_fluid_gf->Size()); temperature_fluid_prev = Heat_ctx.T_fluid;
 
-   Vector temperature_solid_tn(*temperature_solid_gf->GetTrueDofs()); temperature_solid_tn = T_solid;
-   Vector temperature_cylinder_tn(*temperature_cylinder_gf->GetTrueDofs()); temperature_cylinder_tn = T_cylinder;
-   Vector temperature_fluid_tn(*temperature_fluid_gf->GetTrueDofs()); temperature_fluid_tn = T_fluid;
+   Vector temperature_solid_tn(*temperature_solid_gf->GetTrueDofs()); temperature_solid_tn = Heat_ctx.T_solid;
+   Vector temperature_cylinder_tn(*temperature_cylinder_gf->GetTrueDofs()); temperature_cylinder_tn = Heat_ctx.T_cylinder;
+   Vector temperature_fluid_tn(*temperature_fluid_gf->GetTrueDofs()); temperature_fluid_tn = Heat_ctx.T_fluid;
 
    int cyl_dofs = Heat_Cylinder.GetProblemSize();
    int fluid_dofs = Heat_Fluid.GetProblemSize();
@@ -736,7 +683,7 @@ int main(int argc, char *argv[])
    int solid_celldeath_dofs = CellDeath_Solid->GetProblemSize();
 
    // Integration rule for the L2 error
-   int order_quad = std::max(2, order + 1);
+   int order_quad = std::max(2, Heat_ctx.order + 1);
    const IntegrationRule *irs[Geometry::NumGeom];
    for (int i = 0; i < Geometry::NumGeom; ++i)
    {
@@ -759,27 +706,27 @@ int main(int argc, char *argv[])
    {
       out << "-------------------------------------------------------------------------------------------------"
           << std::endl;
-      out << std::left << std::setw(16) << "Step" << std::setw(16) << "Time" << std::setw(16) << "dt" << std::setw(16) << "Sub-iterations (F-S-C)" << std::endl;
+      out << std::left << std::setw(16) << "Step" << std::setw(16) << "Time" << std::setw(16) << "Sim_ctx.dt" << std::setw(16) << "Sub-iterations (F-S-C)" << std::endl;
       out << "-------------------------------------------------------------------------------------------------"
           << std::endl;
    }
 
    // Outer loop for time integration
-   omega_fluid = omega; // TODO: Add different relaxation parameters for each domain
-   omega_solid = omega;
-   omega_cyl = omega;
+   DD_ctx.omega_heat_fluid = DD_ctx.omega_heat; // TODO: Add different relaxation parameters for each domain
+   DD_ctx.omega_heat_solid = DD_ctx.omega_heat;
+   DD_ctx.omega_heat_cyl = DD_ctx.omega_heat;
 
-   int num_steps = (int)(t_final / dt);
+   int num_steps = (int)(Sim_ctx.t_final / Sim_ctx.dt);
    Array2D<real_t> convergence(num_steps, 3);
    Array<real_t> convergence_subiter;
    for (int step = 1; !last_step; step++)
    {
       if (Mpi::Root())
       {
-         mfem::out << std::left << std::setw(16) << step << std::setw(16) << t << std::setw(16) << dt << std::setw(16);
+         mfem::out << std::left << std::setw(16) << step << std::setw(16) << t << std::setw(16) << Sim_ctx.dt << std::setw(16);
       }
 
-      if (t + dt >= t_final - dt / 2)
+      if (t + Sim_ctx.dt >= Sim_ctx.t_final - Sim_ctx.dt / 2)
       {
          last_step = true;
       }
@@ -793,10 +740,10 @@ int main(int argc, char *argv[])
       int iter_solid = 0;
       int iter_fluid = 0;
       int iter_cylinder = 0;
-      double norm_diff = 2 * tol;
-      double norm_diff_solid = 2 * tol;
-      double norm_diff_fluid = 2 * tol;
-      double norm_diff_cylinder = 2 * tol;
+      real_t norm_diff = 2 * tol;
+      real_t norm_diff_solid = 2 * tol;
+      real_t norm_diff_fluid = 2 * tol;
+      real_t norm_diff_cylinder = 2 * tol;
 
       bool converged_solid = false;
       bool converged_fluid = false;
@@ -833,9 +780,9 @@ int main(int argc, char *argv[])
             // Step in the fluid domain
             chrono.Clear(); chrono.Start();
             temperature_fluid_gf->SetFromTrueDofs(temperature_fluid_tn);
-            Heat_Fluid.Step(t, dt, step, false);
+            Heat_Fluid.Step(t, Sim_ctx.dt, step, false);
             temperature_fluid_gf->GetTrueDofs(temperature_fluid);
-            t -= dt; // Reset t to same time step, since t is incremented in the Step function
+            t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
             chrono.Stop();
             t_solve_fluid = chrono.RealTime();
 
@@ -844,8 +791,8 @@ int main(int argc, char *argv[])
             chrono.Clear(); chrono.Start();
             if (iter > 0)
             {
-               temperature_fluid *= omega_fluid;
-               temperature_fluid.Add(1 - omega_fluid, temperature_fluid_prev);
+               temperature_fluid *= DD_ctx.omega_heat_fluid;
+               temperature_fluid.Add(1 - DD_ctx.omega_heat_fluid, temperature_fluid_prev);
                temperature_fluid_gf->SetFromTrueDofs(temperature_fluid);
             }
             chrono.Stop();
@@ -871,9 +818,9 @@ int main(int argc, char *argv[])
             // Step in the solid domain
             chrono.Clear(); chrono.Start();
             temperature_solid_gf->SetFromTrueDofs(temperature_solid_tn);
-            Heat_Solid.Step(t, dt, step, false);
+            Heat_Solid.Step(t, Sim_ctx.dt, step, false);
             temperature_solid_gf->GetTrueDofs(temperature_solid);
-            t -= dt; // Reset t to same time step, since t is incremented in the Step function
+            t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
             chrono.Stop();
             t_solve_solid = chrono.RealTime();
 
@@ -882,8 +829,8 @@ int main(int argc, char *argv[])
             chrono.Clear(); chrono.Start();
             if (iter > 0)
             {
-               temperature_solid *= omega_solid;
-               temperature_solid.Add(1 - omega_solid, temperature_solid_prev);
+               temperature_solid *= DD_ctx.omega_heat_solid;
+               temperature_solid.Add(1 - DD_ctx.omega_heat_solid, temperature_solid_prev);
                temperature_solid_gf->SetFromTrueDofs(temperature_solid);
             }
             chrono.Stop();
@@ -909,9 +856,9 @@ int main(int argc, char *argv[])
             // Step in the cylinder domain
             chrono.Clear(); chrono.Start();
             temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder_tn);
-            Heat_Cylinder.Step(t, dt, step, false);
+            Heat_Cylinder.Step(t, Sim_ctx.dt, step, false);
             temperature_cylinder_gf->GetTrueDofs(temperature_cylinder);
-            t -= dt; // Reset t to same time step, since t is incremented in the Step function
+            t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
             chrono.Stop();
             t_solve_cylinder = chrono.RealTime();
 
@@ -920,8 +867,8 @@ int main(int argc, char *argv[])
             chrono.Clear(); chrono.Start();
             if (iter > 0)
             {
-               temperature_cylinder *= omega_cyl;
-               temperature_cylinder.Add(1 - omega_cyl, temperature_cylinder_prev);
+               temperature_cylinder *= DD_ctx.omega_heat_cyl;
+               temperature_cylinder.Add(1 - DD_ctx.omega_heat_cyl, temperature_cylinder_prev);
                temperature_cylinder_gf->SetFromTrueDofs(temperature_cylinder);
             }
             chrono.Stop();
@@ -962,12 +909,12 @@ int main(int argc, char *argv[])
          t_total_subiter = chrono_total_subiter.RealTime();
       }
 
-      if (Mpi::Root() && save_convergence)
+      if (Mpi::Root() && Sim_ctx.save_convergence)
       {
          convergence(step - 1, 0) = t;
          convergence(step - 1, 1) = iter;
          convergence(step - 1, 2) = norm_diff;
-         saveConvergenceSubiter(convergence_subiter, outfolder, step);
+         saveConvergenceSubiter(convergence_subiter, Sim_ctx.outfolder, step);
          convergence_subiter.DeleteAll();
       }
 
@@ -994,7 +941,7 @@ int main(int argc, char *argv[])
       if (Mpi::Root())
          mfem::out << "\033[32mSolving CellDeath problem on solid ... \033[0m";
       
-      CellDeath_Solid->Solve(t, dt);
+      CellDeath_Solid->Solve(t, Sim_ctx.dt);
       
       if (Mpi::Root())
          mfem::out << "\033[32mdone.\033[0m" << std::endl;
@@ -1014,12 +961,12 @@ int main(int argc, char *argv[])
       temperature_cylinder_tn = *temperature_cylinder_gf->GetTrueDofs();
       temperature_fluid_tn = *temperature_fluid_gf->GetTrueDofs();
 
-      t += dt;
+      t += Sim_ctx.dt;
       converged = false;
 
       // Output of time steps
       chrono.Clear(); chrono.Start();
-      if (paraview && (step % save_freq == 0))
+      if (Sim_ctx.paraview && (step % Sim_ctx.save_freq == 0))
       {
          Heat_Solid.WriteFields(step, t);
          Heat_Cylinder.WriteFields(step, t);
@@ -1031,7 +978,7 @@ int main(int argc, char *argv[])
 
       chrono_total.Stop();
 
-      if (Mpi::Root() && print_timing )
+      if (Mpi::Root() && Sim_ctx.print_timing )
       {
          out << "------------------------------------------------------------" << std::endl;
          out << "Transfer (Fluid): " << t_transfer_fluid << " s" << std::endl;
@@ -1053,9 +1000,9 @@ int main(int argc, char *argv[])
    }
 
    // Save convergence data
-   if (Mpi::Root() && save_convergence)
+   if (Mpi::Root() && Sim_ctx.save_convergence)
    {
-      std::string outputFilePath = std::string(outfolder) + "/convergence" + "/convergence.txt";
+      std::string outputFilePath = std::string(Sim_ctx.outfolder) + "/convergence" + "/convergence.txt";
       std::ofstream outFile(outputFilePath);
       if (outFile.is_open())
       {
@@ -1064,7 +1011,7 @@ int main(int argc, char *argv[])
       }
       else
       {
-         std::cerr << "Unable to open file: " << std::string(outfolder) + "/convergence.txt" << std::endl;
+         std::cerr << "Unable to open file: " << std::string(Sim_ctx.outfolder) + "/convergence.txt" << std::endl;
       }
    }
 
@@ -1154,10 +1101,8 @@ void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std:
    // Create the output folder path
    std::string outputFolder = outfolder + "/convergence";
 
-   // Ensure the directory exists
-   if ((mkdir(outputFolder.c_str(), 0777) == -1) && Mpi::Root())
-   {
-      // check error
+   if (!fs::is_directory(outputFolder.c_str()) || !fs::exists(outputFolder.c_str())) { // Check if folder exists
+      fs::create_directories(outputFolder); // create folder
    }
 
    // Construct the filename
@@ -1187,10 +1132,10 @@ void velocity_profile(const Vector &c, Vector &q)
    q(2) = 0.0;
 }
 
-double HeatingSphere(const Vector &x, double t)
+real_t HeatingSphere(const Vector &x, real_t t)
 {
-   double Q = 0.0;
-   double r = sqrt((x[0] - Sphere_Center[0]) * (x[0] - Sphere_Center[0]) +
+   real_t Q = 0.0;
+   real_t r = sqrt((x[0] - Sphere_Center[0]) * (x[0] - Sphere_Center[0]) +
                    (x[1] - Sphere_Center[1]) * (x[1] - Sphere_Center[1]) +
                    (x[2] - Sphere_Center[2]) * (x[2] - Sphere_Center[2]));
    Q = r < Sphere_Radius ? Qval : 0.0; // W/m^2
