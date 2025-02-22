@@ -86,6 +86,8 @@ int main(int argc, char *argv[])
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
+   real_t preload_ns = -1.0;
+
    OptionsParser args(argc, argv);
    // FE
    args.AddOption(&Heat_ctx.order, "-oh", "--order-heat",
@@ -114,23 +116,28 @@ int main(int argc, char *argv[])
                   "Anisotropy ratio for temperature problem."); 
    args.AddOption(&Navier_ctx.u_inflow, "-ui", "--u-inflow",
                   "Inflow velocity for Navier-Stokes problem.");
+   args.AddOption(&RF_ctx.phi_applied, "-phi", "--applied-potential",
+                  "Applied potential.");
    // Time integrator
    args.AddOption(&Heat_ctx.ode_solver_type, "-ode", "--ode-solver",
                   "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
                   "\t   4 - Implicit Midpoint, 5 - SDIRK23, 6 - SDIRK34,\n\t"
                   "\t   7 - Forward Euler, 8 - RK2, 9 - RK3 SSP, 10 - RK4.");
+   args.AddOption((int *)&Navier_ctx.time_adaptivity_type, 
+                  "-ta",
+                  "--time-adaptivity",
+                  "Time adaptivity type (0: None, 1: CFL, 2: HOPC)");
    args.AddOption(&Sim_ctx.t_final, "-tf", "--t-final",
                   "Final time; start time is 0.");
    args.AddOption(&Sim_ctx.dt, "-dt", "--time-step",
                   "Time step.");
+   args.AddOption(&preload_ns, "-preload-ns", "--preload-ns",
+                  "Preload time for Navier-Stokes problem.");
    // Domain decomposition
    args.AddOption(&DD_ctx.omega_heat, "-omegat", "--relaxation-parameter-heat",
                   "Relaxation parameter.");
    args.AddOption(&DD_ctx.omega_rf, "-omegarf", "--relaxation-parameter-rf",
                   "Relaxation parameter for RF problem.");
-   // Physics
-   args.AddOption(&RF_ctx.phi_applied, "-phi", "--applied-potential",
-                  "Applied potential.");
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
@@ -1006,6 +1013,39 @@ int main(int argc, char *argv[])
 
 
    ///////////////////////////////////////////////////
+   //            Preload of Navier Stokes
+   ///////////////////////////////////////////////////
+
+
+   if (preload_ns > 0)
+   {
+      if (Mpi::Root())
+         mfem::out << "\033[31m\nPreloading Navier Stokes... \033[0m" << std::endl;
+      
+         real_t t = 0.0;
+      real_t dt = Sim_ctx.dt;
+      bool last_step = false;
+      bool accept_step = false;
+   
+      real_t CFL = 0.0;
+      
+      Navier_Fluid.SetVerbose(true);
+
+      for (int step = 1; !last_step; ++step)
+      {
+         if (t + dt >= preload_ns - dt / 2)
+         {
+            last_step = true;
+         }
+   
+         accept_step = Navier_Fluid.Step(t, dt, step);
+      }
+
+      Navier_Fluid.SetVerbose(solv_verbose);
+   }
+
+   
+   ///////////////////////////////////////////////////
    // Solve RF before time integration
    ///////////////////////////////////////////////////
 
@@ -1214,6 +1254,9 @@ int main(int argc, char *argv[])
    // Outer loop for time integration
    ///////////////////////////////////////////////////
    
+   // Reset the Navier-Stokes time adaptivity
+   Navier_Fluid.SetTimeAdaptivityType(navier::TimeAdaptivityType::NONE);
+
    // Timing
    StopWatch chrono_total;
 
