@@ -130,6 +130,8 @@ namespace mfem
               bcs(bcs_), has_diffusion(false), has_advection(false), has_reaction(false),
               prec_type(prec_type_)
         {
+            comm = fes->GetComm();
+
             // Check contributions
             has_reaction = Beta ? true : false;
             has_diffusion = Kappa ? true : false;
@@ -163,6 +165,14 @@ namespace mfem
             T->SetAssemblyLevel(AssemblyLevel::PARTIAL);
             T->Assemble();
             T->FormSystemMatrix(ess_tdof_list, opT);
+
+            if ( has_advection && prec_type == 0 )
+            {
+                // Can't use Jacobi preconditioner with advection, because ConvectionIntegrator::AssembleDiagonalPA is not implemented
+                if ( fes->GetMyRank() == 0 )
+                    MFEM_WARNING("OperatorJacobiSmoother doesn't work for ConvectionIntegrator, using LOR instead.");
+                prec_type = 1;
+            }
 
             // Preconditioner
             switch (prec_type)

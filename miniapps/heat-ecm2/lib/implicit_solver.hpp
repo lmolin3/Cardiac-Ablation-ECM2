@@ -63,6 +63,7 @@ namespace heat
     class ImplicitSolverPA : public ImplicitSolverBase
     {
     private:
+        MPI_Comm comm;
         OperatorHandle opT;
         ParFiniteElementSpace *fes;
         ParBilinearForm *T;

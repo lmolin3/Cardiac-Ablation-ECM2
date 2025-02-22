@@ -78,7 +78,7 @@ struct s_NavierContext // Navier Stokes params
    int uorder = 2;
    int porder = 1;
    real_t kinvis = 1.0;
-   real_t U =  0.1;
+   real_t u_inflow =  0.1;
    bool verbose = true;
    int bdf = 3;
    // int splitting_type = 0;  // 0 = Chorin-Temam, 1 = Yosida, 2 = High-Order Yosida 
@@ -87,7 +87,15 @@ struct s_NavierContext // Navier Stokes params
    navier::SchurPreconditionerType schur_pc_type = navier::SchurPreconditionerType::APPROXIMATE_DISCRETE_LAPLACIAN; // 0: Pressure Mass, 1: Pressure Laplacian, 2: PCD, 3: Cahouet-Chabard, 4: LSC, 5: Approximate Inverse   
    navier::TimeAdaptivityType time_adaptivity_type = navier::TimeAdaptivityType::NONE; // Time adaptivity type (NONE, CFL, HOPC)
    int pressure_correction_order = 2; // Order of the pressure correction
-} NS_ctx;
+   bool mass_lumping = false; // Mass lumping
+   bool stiff_strain = false; // Stiff strain
+
+   static void NoSlip(const Vector &x, double t, Vector &u)
+   {
+      u = 0.0;
+   }
+
+} Navier_ctx;
 #endif
 
 struct s_DomainDecompositionContext
