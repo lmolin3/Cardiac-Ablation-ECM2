@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34mLoading serial mesh... \033[0m";
 
-   Mesh *serial_mesh = new Mesh("../../data/three-domains.msh");
+   Mesh *serial_mesh = new Mesh("../../../data/three-domains.msh");
    int sdim = serial_mesh->SpaceDimension();
 
    for (int l = 0; l < serial_ref_levels[color]; l++)

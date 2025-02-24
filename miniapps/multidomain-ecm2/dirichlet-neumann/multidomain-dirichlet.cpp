@@ -36,7 +36,7 @@
 #include "lib/heat_solver.hpp"
 
 // Physical and Domain-Decomposition parameters
-#include "contexts.hpp"
+#include "../contexts.hpp"
 
 // Utils
 

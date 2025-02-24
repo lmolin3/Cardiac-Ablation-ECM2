@@ -70,7 +70,7 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34m\nLoading mesh... \033[0m";
 
    // Load serial mesh
-   Mesh *serial_mesh = new Mesh("../../data/three-domains.msh");
+   Mesh *serial_mesh = new Mesh("../../../data/three-domains.msh");
    int sdim = serial_mesh->SpaceDimension();
 
    for (int l = 0; l < serial_ref_levels; l++)

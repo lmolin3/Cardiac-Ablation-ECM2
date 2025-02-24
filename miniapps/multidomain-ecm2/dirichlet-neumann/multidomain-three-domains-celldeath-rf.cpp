@@ -1,7 +1,6 @@
-// Solve RFA (Electrostatics+HeatTransfer+NavierStokes) problem with three domains (solid, fluid, cylinder).
-//                 rho c dT/Sim_ctx.dt = ∇•κ∇T - α•∇T        in  fluid
-//                 rho c dT/Sim_ctx.dt = ∇•κ∇T               in  solid
-//                 rho c dT/Sim_ctx.dt = ∇•κ∇T + Q           in  cylinder
+// Solve RFA (Electrostatics+HeatTransfer) problem with three domains (solid, fluid, cylinder).
+//                 rho c dT/Sim_ctx.dt = ∇•κ∇T         in  fluid, solid
+//                 rho c dT/Sim_ctx.dt = ∇•κ∇T + Q     in  cylinder
 // Q is a Joule heating term (W/m^3) and is defined as Q = J • E, where J is the current density and E is the electric field.
 // The Electrostatic problem is solved on the solid and fluid domains, before the temporal loop. 
 // The heat transfer problem is solved using a segregated approach with two-way coupling (Neumann-Dirichlet)
@@ -20,15 +19,15 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -tet -oh 2 -or 4 -dt 0.01 -tf 0.05
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -tet -oh 2 -or 4 -dt 0.01 -tf 0.05
 // 2. Hexahedral mesh  
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 
 // 3. Hexahedral mesh with partial assembly for RF
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05  
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa -oh 2 -or 4 -dt 0.01 -tf 0.05  
 // 4. Hexahedral mesh with partial assembly for RF and Heat
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa -oh 2 -or 4 -dt 0.01 -tf 0.05
 // 5. Hexahedral mesh with partial assembly for RF and Heat, and anisotropic conductivity
-//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5
+//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5
 
 // MFEM library
 #include "mfem.hpp"
@@ -37,10 +36,9 @@
 #include "lib/heat_solver.hpp"
 #include "lib/celldeath_solver.hpp"
 #include "lib/electrostatics_solver.hpp"
-#include "lib/navier_solver.hpp"
 
 // Physical and Domain-Decomposition parameters
-#include "contexts.hpp" 
+#include "../contexts.hpp" 
 
 // Utils
 #include "anisotropy_utils.hpp"
@@ -52,8 +50,8 @@
 #include <memory>
 #include "FilesystemHelper.hpp"
 
-
 using namespace mfem;
+
 using TransferBackend = InterfaceTransfer::Backend;
 
 IdentityMatrixCoefficient *Id = NULL;
@@ -63,12 +61,6 @@ std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zm
 void print_matrix(const DenseMatrix &A);
 void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step);
 void saveSubiterationCount(const Array<int> &data, const std::string &outfolder, const std::string &name);
-
-void inflow(const Vector &x, double t, Vector &u)
-{
-   u = 0.0;
-   u(1) = Navier_ctx.u_inflow;
-}
 
 int main(int argc, char *argv[])
 {
@@ -86,8 +78,6 @@ int main(int argc, char *argv[])
    /// 2. Parse command-line options.
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   real_t preload_ns = -1.0;
-
    OptionsParser args(argc, argv);
    // FE
    args.AddOption(&Heat_ctx.order, "-oh", "--order-heat",
@@ -96,9 +86,9 @@ int main(int argc, char *argv[])
                   "Finite element order for RF problem (polynomial degree).");
    args.AddOption(&CellDeath_ctx.order, "-oc", "--order-celldeath",
                   "Finite element order for cell death (polynomial degree).");
-   args.AddOption(&Heat_ctx.pa, "-pa-heat", "--partial-assembly-heat", "-no-pa-heat", "--no-partial-assembly-heat",
+   args.AddOption(&Heat_ctx.pa, "-pa", "--partial-assembly-heat", "-no-pa", "--no-partial-assembly-heat",
                   "Enable or disable partial assembly.");
-   args.AddOption(&RF_ctx.pa, "-pa-rf", "--partial-assembly-rf", "-no-pa-rf", "--no-partial-assembly-rf",
+   args.AddOption(&RF_ctx.pa, "-pa_rf", "--partial-assembly-rf", "-no-pa_rf", "--no-partial-assembly-rf",
                   "Enable or disable partial assembly for RF problem.");   
    args.AddOption(&CellDeath_ctx.solver_type, "-cdt", "--celldeath-solver-type",
                   "Cell-death solver type: 0 - Eigen, 1 - GoTran.");
@@ -114,34 +104,27 @@ int main(int argc, char *argv[])
                   "Anisotropy ratio for RF problem.");
    args.AddOption(&Heat_ctx.aniso_ratio, "-at", "--aniso-ratio-heat",
                   "Anisotropy ratio for temperature problem."); 
-   args.AddOption(&Navier_ctx.u_inflow, "-ui", "--u-inflow",
-                  "Inflow velocity for Navier-Stokes problem.");
-   args.AddOption(&RF_ctx.phi_applied, "-phi", "--applied-potential",
-                  "Applied potential.");
    // Time integrator
    args.AddOption(&Heat_ctx.ode_solver_type, "-ode", "--ode-solver",
                   "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
                   "\t   4 - Implicit Midpoint, 5 - SDIRK23, 6 - SDIRK34,\n\t"
                   "\t   7 - Forward Euler, 8 - RK2, 9 - RK3 SSP, 10 - RK4.");
-   args.AddOption((int *)&Navier_ctx.time_adaptivity_type, 
-                  "-ta",
-                  "--time-adaptivity",
-                  "Time adaptivity type (0: None, 1: CFL, 2: HOPC)");
    args.AddOption(&Sim_ctx.t_final, "-tf", "--t-final",
                   "Final time; start time is 0.");
    args.AddOption(&Sim_ctx.dt, "-dt", "--time-step",
                   "Time step.");
-   args.AddOption(&preload_ns, "-preload-ns", "--preload-ns",
-                  "Preload time for Navier-Stokes problem.");
    // Domain decomposition
    args.AddOption(&DD_ctx.omega_heat, "-omegat", "--relaxation-parameter-heat",
                   "Relaxation parameter.");
    args.AddOption(&DD_ctx.omega_rf, "-omegarf", "--relaxation-parameter-rf",
                   "Relaxation parameter for RF problem.");
+   // Physics
+   args.AddOption(&RF_ctx.phi_applied, "-phi", "--applied-potential",
+                  "Applied potential.");
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&Sim_ctx.paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
+   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
@@ -192,14 +175,14 @@ int main(int argc, char *argv[])
    if (Mesh_ctx.hex)
    { // Load Hex mesh (NETCDF required)
 #ifdef MFEM_USE_NETCDF
-      serial_mesh = new Mesh("../../data/three-domains-navier.e");
+      serial_mesh = new Mesh("../../../data/three-domains.e");
 #else
       MFEM_ABORT("MFEM is not built with NetCDF support!");
 #endif
    }
    else
    {
-      serial_mesh = new Mesh("../../data/three-domains-navier.msh");
+      serial_mesh = new Mesh("../../../data/three-domains.msh");
    }
 
    int sdim = serial_mesh->SpaceDimension();
@@ -303,8 +286,10 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[0mHeat transfer problem... \033[0m";
 
+   real_t alpha = 0.0;      // Advection coefficient
    real_t reaction = 0.0;   // Reaction term
 
+   
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
    auto *Kappa_cyl = new ScalarMatrixProductCoefficient(Heat_ctx.k_cylinder, *Id);
@@ -328,6 +313,7 @@ int main(int argc, char *argv[])
 
    if (Mpi::Root())
       mfem::out << "\033[0mdone." << std::endl;
+
 
    // RF Problem
    if (Mpi::Root())
@@ -368,28 +354,15 @@ int main(int argc, char *argv[])
    electrostatics::BCHandler *rf_bcs_fluid = new electrostatics::BCHandler(fluid_submesh, bc_verbose); // Boundary conditions handler for fluid
    electrostatics::BCHandler *rf_bcs_solid = new electrostatics::BCHandler(solid_submesh, bc_verbose); // Boundary conditions handler for solid
 
-   // Navier Stokes
-   navier::BCHandler *bcs = new navier::BCHandler(fluid_submesh, bc_verbose); // Boundary conditions handler
-
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Create the Solvers
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   SolverParams sParams(1e-6, 1e-8, 1000, 0); // rtol, atol, maxiter, print-level
-
    // Solvers
    bool solv_verbose = false;
-
-   navier::MonolithicNavierSolver Navier_Fluid(fluid_submesh, bcs, Navier_ctx.kinvis, Navier_ctx.uorder, Navier_ctx.porder, solv_verbose);
-   Navier_Fluid.SetSolver(sParams);
-   Navier_Fluid.SetMaxBDFOrder(Navier_ctx.bdf);
-
-   ParGridFunction *velocity_fluid_gf = Navier_Fluid.GetVelocity();
-   VectorGridFunctionCoefficient *wind_coeff = new VectorGridFunctionCoefficient(velocity_fluid_gf);
-
-   heat::HeatSolver Heat_Cylinder(cylinder_submesh, Heat_ctx.order, heat_bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, Heat_ctx.ode_solver_type, solv_verbose);    // Diffuson
-   heat::HeatSolver Heat_Solid(solid_submesh, Heat_ctx.order, heat_bcs_solid, Kappa_solid, c_solid, rho_solid, Heat_ctx.ode_solver_type, solv_verbose);  // Diffusion + Joule heating
-   heat::HeatSolver Heat_Fluid(fluid_submesh, Heat_ctx.order, heat_bcs_fluid, Kappa_fluid, c_fluid, rho_fluid, 1.0, wind_coeff, 0.0, Heat_ctx.ode_solver_type, solv_verbose); // Advection + Diffusion
+   heat::HeatSolver Heat_Cylinder(cylinder_submesh, Heat_ctx.order, heat_bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, Heat_ctx.ode_solver_type, solv_verbose);
+   heat::HeatSolver Heat_Solid(solid_submesh, Heat_ctx.order, heat_bcs_solid, Kappa_solid, c_solid, rho_solid, Heat_ctx.ode_solver_type, solv_verbose);
+   heat::HeatSolver Heat_Fluid(fluid_submesh, Heat_ctx.order, heat_bcs_fluid, Kappa_fluid, c_fluid, rho_fluid, Heat_ctx.ode_solver_type, solv_verbose);
 
    electrostatics::ElectrostaticsSolver RF_Solid(solid_submesh, RF_ctx.order, rf_bcs_solid, Sigma_solid, solv_verbose);
    electrostatics::ElectrostaticsSolver RF_Fluid(fluid_submesh, RF_ctx.order, rf_bcs_fluid, Sigma_fluid, solv_verbose);
@@ -401,7 +374,6 @@ int main(int argc, char *argv[])
 
    ParGridFunction *phi_solid_gf = RF_Solid.GetPotentialGfPtr();
    ParGridFunction *phi_fluid_gf = RF_Fluid.GetPotentialGfPtr();
-
 
    // Cell Death solver (needs pointer to temperature grid function)
    celldeath::CellDeathSolver *CellDeath_Solid = nullptr;
@@ -515,10 +487,6 @@ int main(int argc, char *argv[])
    Array<int> solid_cylinder_interface;
 
    Array<int> fluid_lateral_attr;
-   Array<int> fluid_lateral_1_attr;
-   Array<int> fluid_lateral_2_attr;
-   Array<int> fluid_lateral_3_attr;
-   Array<int> fluid_lateral_4_attr;
    Array<int> fluid_top_attr;
    Array<int> solid_lateral_attr;
    Array<int> solid_bottom_attr;
@@ -532,29 +500,22 @@ int main(int argc, char *argv[])
    {
       // Extract boundary attributes
       fluid_cylinder_interface.SetSize(1);
-      fluid_cylinder_interface = 7;
+      fluid_cylinder_interface = 8;
       fluid_solid_interface.SetSize(1);
       fluid_solid_interface = 3;
       solid_cylinder_interface.SetSize(1);
       solid_cylinder_interface = 4;
 
-      fluid_lateral_1_attr.SetSize(1);
-      fluid_lateral_1_attr = 8;
-      fluid_lateral_2_attr.SetSize(1);
-      fluid_lateral_2_attr = 9;
-      fluid_lateral_3_attr.SetSize(1);
-      fluid_lateral_3_attr = 10;
-      fluid_lateral_4_attr.SetSize(1);
-      fluid_lateral_4_attr = 11;
-
+      fluid_lateral_attr.SetSize(1);
+      fluid_lateral_attr = 5;
       fluid_top_attr.SetSize(1);
-      fluid_top_attr = 5;
+      fluid_top_attr = 6;
       solid_lateral_attr.SetSize(1);
       solid_lateral_attr = 2;
       solid_bottom_attr.SetSize(1);
       solid_bottom_attr = 1;
       cylinder_top_attr.SetSize(1);
-      cylinder_top_attr = 6;
+      cylinder_top_attr = 7;
 
       // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
       fluid_cylinder_interface_marker = AttributeSets::AttrToMarker(parent_mesh.bdr_attributes.Max(), fluid_cylinder_interface);
@@ -568,11 +529,7 @@ int main(int argc, char *argv[])
       fluid_solid_interface = bdr_attr_sets.GetAttributeSet("Solid-Fluid");
       solid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Solid");
 
-      fluid_lateral_1_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral 1");
-      fluid_lateral_2_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral 2");
-      fluid_lateral_3_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral 3");
-      fluid_lateral_4_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral 4");
-
+      fluid_lateral_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral");
       fluid_top_attr = bdr_attr_sets.GetAttributeSet("Fluid Top");
       solid_lateral_attr = bdr_attr_sets.GetAttributeSet("Solid Lateral");
       solid_bottom_attr = bdr_attr_sets.GetAttributeSet("Solid Bottom");
@@ -584,11 +541,6 @@ int main(int argc, char *argv[])
       solid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Solid");
    }
 
-   fluid_lateral_attr.Append(fluid_lateral_1_attr);
-   fluid_lateral_attr.Append(fluid_lateral_2_attr);
-   fluid_lateral_attr.Append(fluid_lateral_3_attr);
-   fluid_lateral_attr.Append(fluid_lateral_4_attr);
-
    Array<int> solid_domain_attributes = AttributeSets::AttrToMarker(solid_submesh->attributes.Max(), solid_domain_attribute);
    Array<int> fluid_domain_attributes = AttributeSets::AttrToMarker(fluid_submesh->attributes.Max(), fluid_domain_attribute);
    Array<int> cylinder_domain_attributes = AttributeSets::AttrToMarker(cylinder_submesh->attributes.Max(), cylinder_domain_attribute);
@@ -599,27 +551,6 @@ int main(int argc, char *argv[])
    // Array<int> fluid_cylinder_interface_c = AttributeSets::AttrToMarker(cylinder_submesh->bdr_attributes.Max(), fluid_cylinder_interface);
    // Array<int> fluid_cylinder_interface_f = AttributeSets::AttrToMarker(fluid_submesh->bdr_attributes.Max(), fluid_cylinder_interface);
 
-
-   /////////////////////////////////////
-   //          Navier Stokes         //
-   /////////////////////////////////////
-
-   // Fluid:
-   // - No-slip   on  Γfs, Γfc, Γ fluid,top, Γ fluid,lateral,2-3
-   // - Inflow    on  Γ fluid,lateral,1
-   // - Outflow   on  Γ fluid,lateral,4
-   // TODO: modify geometry to separate fluid lateral into 4 boundaries
-   if (Mpi::Root())
-      mfem::out << "\033[34m\nSetting up BCs for Navier Stokes ...\033[0m";
-   
-   bcs->AddVelDirichletBC(Navier_ctx.NoSlip, fluid_lateral_2_attr[0]);
-   bcs->AddVelDirichletBC(Navier_ctx.NoSlip, fluid_lateral_4_attr[0]);
-   bcs->AddVelDirichletBC(Navier_ctx.NoSlip, fluid_solid_interface[0]);
-   bcs->AddVelDirichletBC(Navier_ctx.NoSlip, fluid_cylinder_interface[0]);
-   bcs->AddVelDirichletBC(Navier_ctx.NoSlip, fluid_top_attr[0]);
-   bcs->AddVelDirichletBC(inflow, fluid_lateral_1_attr[0]);
-   // fluid_lateral_3 is outflow
-   
 
    /////////////////////////////////////
    //           Heat Transfer         //
@@ -851,21 +782,6 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[0mdone, in " << chrono_assembly.RealTime() << "s.\033[0m" << std::endl;
 
-   if (Mpi::Root())
-      mfem::out << "\033[0mNavier Stokes problem... \033[0m";
-
-   chrono_assembly.Clear();
-   chrono_assembly.Start();
-   Navier_Fluid.Setup(Sim_ctx.dt, Navier_ctx.pc_type, Navier_ctx.schur_pc_type, Navier_ctx.time_adaptivity_type, Navier_ctx.mass_lumping, Navier_ctx.stiff_strain);
-   if (Navier_ctx.pc_type == navier::BlockPreconditionerType::YOSIDA_HIGH_ORDER_PRESSURE_CORRECTED)
-   {
-      Navier_Fluid.SetPressureCorrectionOrder(Navier_ctx.pressure_correction_order);
-   }
-   chrono_assembly.Stop();
-
-   if (Mpi::Root())
-      mfem::out << "\033[0mdone, in " << chrono_assembly.RealTime() << "s.\033[0m" << std::endl;
-
    // Setup ouput
    ParaViewDataCollection paraview_dc_cylinder_heat("Heat-Cylinder", cylinder_submesh.get());
    ParaViewDataCollection paraview_dc_solid_heat("Heat-Solid", solid_submesh.get());
@@ -873,7 +789,6 @@ int main(int argc, char *argv[])
    ParaViewDataCollection paraview_dc_celldeath("CellDeath-Solid", solid_submesh.get());  
    ParaViewDataCollection paraview_dc_solid_rf("RF-Solid", solid_submesh.get());
    ParaViewDataCollection paraview_dc_fluid_rf("RF-Fluid", fluid_submesh.get());
-   ParaViewDataCollection paraview_dc_navier("Navier-Stokes", fluid_submesh.get());
    if (Sim_ctx.paraview)
    {
       paraview_dc_cylinder_heat.SetPrefixPath(Sim_ctx.outfolder);
@@ -906,11 +821,6 @@ int main(int argc, char *argv[])
       paraview_dc_fluid_rf.SetDataFormat(VTKFormat::BINARY);
       paraview_dc_fluid_rf.SetCompressionLevel(9);
       RF_Fluid.RegisterParaviewFields(paraview_dc_fluid_rf);
-
-      paraview_dc_navier.SetPrefixPath(Sim_ctx.outfolder);
-      paraview_dc_navier.SetDataFormat(VTKFormat::BINARY);
-      paraview_dc_navier.SetCompressionLevel(9);
-      Navier_Fluid.RegisterParaviewFields(paraview_dc_navier);
    }
 
    if (Mpi::Root())
@@ -1012,39 +922,6 @@ int main(int argc, char *argv[])
    }
 
 
-   ///////////////////////////////////////////////////
-   //            Preload of Navier Stokes
-   ///////////////////////////////////////////////////
-
-
-   if (preload_ns > 0)
-   {
-      if (Mpi::Root())
-         mfem::out << "\033[31m\nPreloading Navier Stokes... \033[0m" << std::endl;
-      
-         real_t t = 0.0;
-      real_t dt = Sim_ctx.dt;
-      bool last_step = false;
-      bool accept_step = false;
-   
-      real_t CFL = 0.0;
-      
-      Navier_Fluid.SetVerbose(true);
-
-      for (int step = 1; !last_step; ++step)
-      {
-         if (t + dt >= preload_ns - dt / 2)
-         {
-            last_step = true;
-         }
-   
-         accept_step = Navier_Fluid.Step(t, dt, step);
-      }
-
-      Navier_Fluid.SetVerbose(solv_verbose);
-   }
-
-   
    ///////////////////////////////////////////////////
    // Solve RF before time integration
    ///////////////////////////////////////////////////
@@ -1254,9 +1131,6 @@ int main(int argc, char *argv[])
    // Outer loop for time integration
    ///////////////////////////////////////////////////
    
-   // Reset the Navier-Stokes time adaptivity
-   Navier_Fluid.SetTimeAdaptivityType(navier::TimeAdaptivityType::NONE);
-
    // Timing
    StopWatch chrono_total;
 
@@ -1281,7 +1155,7 @@ int main(int argc, char *argv[])
 
    // Timing
    StopWatch chrono, chrono_total_subiter;
-   real_t t_total_subiter, t_transfer_fluid, t_transfer_solid, t_transfer_cylinder, t_solve_navier, t_solve_fluid, t_solve_solid, t_solve_cylinder, t_solve_celldeath, t_relax_fluid, t_relax_solid, t_relax_cylinder, t_error_bdry, t_paraview;
+   real_t t_total_subiter, t_transfer_fluid, t_transfer_solid, t_transfer_cylinder, t_solve_fluid, t_solve_solid, t_solve_cylinder, t_solve_celldeath, t_relax_fluid, t_relax_solid, t_relax_cylinder, t_error_bdry, t_paraview;
 
    for (int step = 1; !last_step; step++)
    {
@@ -1299,32 +1173,6 @@ int main(int argc, char *argv[])
       //              Solve RF               //
       /////////////////////////////////////////
       {
-      }
-
-      /////////////////////////////////////////
-      //          Solver Navier-Stokes       //
-      /////////////////////////////////////////
-      {
-         chrono.Clear();
-         chrono.Start();
-
-         if (Mpi::Root())
-            mfem::out << "\033[31mSolving Navier-Stokes problem on fluid ... \033[0m";
-
-         bool accept_step = Navier_Fluid.Step(t, Sim_ctx.dt, step);
-         t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
-
-         if (Mpi::Root())
-                  mfem::out << "\033[31mdone.\033[0m" << std::endl;
-
-         t_solve_navier = chrono.RealTime();
-
-         if( Sim_ctx.paraview && accept_step)
-         {
-            Navier_Fluid.WriteFields(step, t);
-         }
-
-         wind_coeff->SetGridFunction(velocity_fluid_gf);  // NOTE: do we need this since wind_coeff gets a pointer to velocity_fluid_gf?
       }
 
       /////////////////////////////////////////
@@ -1414,7 +1262,7 @@ int main(int argc, char *argv[])
             MPI_Barrier(parent_mesh.GetComm());
 
             // if (!converged_solid)
-            { // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
+            { // F->S: Transfer k ∇Heat_ctx.T_wall, C->S: Transfer k ∇Heat_ctx.T_wall
                chrono.Clear();
                chrono.Start();
                finder_fluid_to_solid_heat.InterpolateQoIForward(heatFlux_fluid, *heatFlux_fs_solid);
@@ -1433,7 +1281,7 @@ int main(int argc, char *argv[])
                t_solve_solid = chrono.RealTime();
 
                // Relaxation
-               // T_wall(j+1) = ω * Heat_ctx.T_solid,j+1 + (1 - ω) * Heat_ctx.T_solid,j
+               // Heat_ctx.T_wall(j+1) = ω * Heat_ctx.T_solid,j+1 + (1 - ω) * Heat_ctx.T_solid,j
                chrono.Clear();
                chrono.Start();
                if (iter > 0)
@@ -1455,7 +1303,7 @@ int main(int argc, char *argv[])
             MPI_Barrier(parent_mesh.GetComm());
 
             // if (!converged_cylinder)
-            { // F->C: Transfer k ∇T_wall, S->C: Transfer T
+            { // F->C: Transfer k ∇Heat_ctx.T_wall, S->C: Transfer T
                chrono.Clear();
                chrono.Start();
                finder_fluid_to_cylinder_heat.InterpolateQoIForward(heatFlux_fluid, *heatFlux_fc_cylinder);
@@ -1584,7 +1432,6 @@ int main(int argc, char *argv[])
          t_solve_celldeath = chrono.RealTime();
       }
 
-
       ///////////////////////////////////////////////
       //         Update for next time step         //
       ///////////////////////////////////////////////
@@ -1618,7 +1465,6 @@ int main(int argc, char *argv[])
       if (Mpi::Root() && Sim_ctx.print_timing )
       {
          out << "------------------------------------------------------------" << std::endl;
-         out << "Solve Navier Stokes: " << t_solve_navier << " s" << std::endl;
          out << "Solve CellDeath (Solid): " << t_solve_celldeath << " s" << std::endl;
          out << "Paraview: " << t_paraview << " s" << std::endl;
          out << "Total: " << chrono_total.RealTime() << " s" << std::endl;
@@ -1765,7 +1611,6 @@ void saveSubiterationCount(const Array<int> &data, const std::string &outfolder,
       std::cerr << "Unable to open file: " << filename.str() << std::endl;
    }
 }
-
 
 
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmin, real_t zmax)

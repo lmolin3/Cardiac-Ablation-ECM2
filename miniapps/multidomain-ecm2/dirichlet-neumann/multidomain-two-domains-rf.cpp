@@ -25,7 +25,7 @@
 #include "anisotropy_utils.hpp"
 
 // Physical and Domain-Decomposition parameters
-#include "contexts.hpp" 
+#include "../contexts.hpp" 
 
 // Output
 #include <fstream>
@@ -106,14 +106,14 @@ int main(int argc, char *argv[])
    if (Mesh_ctx.hex)
    { // Load Hex mesh (NETCDF required)
 #ifdef MFEM_USE_NETCDF
-      serial_mesh = new Mesh("../../data/three-domains.e");
+      serial_mesh = new Mesh("../../../data/three-domains.e");
 #else
       MFEM_ABORT("MFEM is not built with NetCDF support!");
 #endif
    }
    else
    {
-      serial_mesh = new Mesh("../../data/three-domains.msh");
+      serial_mesh = new Mesh("../../../data/three-domains.msh");
    }
 
    int sdim = serial_mesh->SpaceDimension();
