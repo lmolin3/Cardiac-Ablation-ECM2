@@ -132,6 +132,7 @@ namespace mfem
          delete HCurlFESpace;
          delete L2FESpace;
 
+         delete solver;
          delete prec;
 
          delete w_coeff;
@@ -212,7 +213,7 @@ namespace mfem
          if (ess_tdof_list.Size() == 0) // Check if any essential BCs were applied (fix at least one point since solution is not unique)
          {
             // If not, use the first DoF on processor zero by default
-            if (pmesh->GetMyRank() == 0 && verbose)
+            if (pmesh->GetMyRank() == 0)
             {
                ess_tdof_list.SetSize(1);
                ess_tdof_list[0] = 0;
@@ -227,6 +228,15 @@ namespace mfem
          else
             divEpsGrad->AddDomainIntegrator(new DiffusionIntegrator(*SigmaMQ));
          
+         // Add contribution to bilinear form from Robin BCs
+         // NOTE: here we assume that the coefficient is constant, otherwise we'll need to re-assemble the operator
+         if (bcs->GetRobinBcs().size() > 0)
+         {
+            for (auto &robin_bc : bcs->GetRobinBcs())
+            {
+               divEpsGrad->AddBoundaryIntegrator(new MassIntegrator(*robin_bc.alpha1), robin_bc.attr);
+            }
+         }
 
          SigmaMass = new ParBilinearForm(HCurlFESpace);
          if (SigmaQ)
@@ -269,6 +279,18 @@ namespace mfem
                rhs_form->AddBoundaryIntegrator(new BoundaryNormalLFIntegrator(*(neumann_bc.coeff)), neumann_bc.attr);
             }
          }
+         
+         // Add Robin boundary conditions
+         if (bcs->GetRobinBcs().size() > 0)
+         {
+            symmetric = false;
+
+            for (auto &robin_bc : bcs->GetRobinBcs())
+            {
+               rhs_form->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(robin_bc.alpha2_u2)), robin_bc.attr);         // alpha2 * u
+               rhs_form->AddBoundaryIntegrator(new BoundaryNormalLFIntegrator(*(robin_bc.mu2_grad_u2)), robin_bc.attr); // mu2 * grad(u2)
+            }
+         }
 
          sw_setup.Stop();
 
@@ -307,14 +329,17 @@ namespace mfem
          }
 
          const double rel_tol = 1e-8;
-         solver = CGSolver(H1FESpace->GetComm());
-         solver.iterative_mode = false;
-         solver.SetRelTol(rel_tol);
-         solver.SetAbsTol(0.0);
-         solver.SetMaxIter(1000);
-         solver.SetPrintLevel(pl);
-         solver.SetOperator(*opA);
-         solver.SetPreconditioner(*prec);
+         if (symmetric)
+            solver = new CGSolver(H1FESpace->GetComm());
+         else
+            solver = new GMRESSolver(H1FESpace->GetComm());
+         solver->iterative_mode = false;
+         solver->SetRelTol(rel_tol);
+         solver->SetAbsTol(0.0);
+         solver->SetMaxIter(1000);
+         solver->SetPrintLevel(pl);
+         solver->SetOperator(*opA);
+         solver->SetPreconditioner(*prec);
       }
 
       void ElectrostaticsSolver::Assemble()
@@ -412,7 +437,7 @@ namespace mfem
          Assemble();
 
          // Setup solver
-         solver.SetOperator(*opA);
+         solver->SetOperator(*opA);
 
          delete prec;
          prec = nullptr;
@@ -481,7 +506,7 @@ namespace mfem
          }
 
          /// 3. Solve the system
-         solver.Mult(B, Phi);
+         solver->Mult(B, Phi);
 
          /// 4. Update the solution gf with the new values
          phi->SetFromTrueDofs(Phi);

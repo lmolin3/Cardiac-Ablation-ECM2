@@ -155,9 +155,10 @@ namespace mfem
          OperatorHandle opA, opM;
          Vector Phi, B;
 
-         CGSolver solver;
+         IterativeSolver *solver;
          Solver *prec;
          int prec_type;
+         bool symmetric = true;
 
          bool pa; // Enable partial assembly
 

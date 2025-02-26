@@ -10,7 +10,7 @@
 #include "lib/electrostatics_solver.hpp"
 
 // Physical and Domain-Decomposition parameters
-#include "../contexts.hpp" 
+#include "contexts.hpp" 
 
 // Utils
 #include "anisotropy_utils.hpp"

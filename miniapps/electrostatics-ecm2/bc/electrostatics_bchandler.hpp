@@ -224,6 +224,41 @@ namespace mfem
 
 
             /**
+             * \brief Add Robin BC using Coefficient and list of essential boundaries.
+             *
+             * μ1 ∇φ⋅n + α1 φ =  μ2 ∇φ2⋅n + α2 φ2
+             * 
+             * Add a Robin boundary condition to internal list of Robin bcs,
+             * using Coefficient, and list of active mesh boundaries (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
+             * \param alpha_1 Pointer to Coefficient
+             * \param alpha_2 Pointer to Coefficient
+             * \param phi_2 Pointer to Coefficient
+             * \param gradPhi_2 Pointer to Coefficient
+             * \param mu2 Pointer to Coefficient
+             *
+             * Note: If μ2 is not provided, we assume gradPhi_2 = μ2 ∇φ2 
+             */ 
+            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, Array<int> &attr, bool own = true); 
+
+
+            /**
+             * \brief Add Robin BC using Coefficient and specific mesh attribute.
+             */
+            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, int &attr, bool own = true);
+
+
+            /** \brief Add Robin BC using Coefficient and list of essential boundaries.
+             * This version assumes gradPhi_2 = μ2 ∇φ2, since μ2 is not provided.
+             */
+            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, Array<int> &attr, bool own = true);
+
+            /** \brief Add Robin BC using Coefficient and specific mesh attribute.
+             * This version assumes gradPhi_2 = μ2 ∇φ2, since μ2 is not provided.
+             */
+            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, int &attr, bool own = true);
+
+
+            /**
              * \brief Update the time in the velocity BCs coefficients.
              *
              * Update the time in the velocity BCs coefficients.
@@ -253,6 +288,16 @@ namespace mfem
              */
             void UpdateTimeNeumannVectorBCs(double new_time);
 
+            /**
+             * \brief Update the time in the Robin BCs coefficients.
+             *
+             * Update the time in the Robin BCs coefficients.
+             *
+             * \param new_time New time value.
+             *
+             */
+            void UpdateTimeRobinBCs(double new_time);
+
             // Getters
 
             // Getter for electric potential bcs
@@ -277,6 +322,12 @@ namespace mfem
             std::vector<VecCoeffContainer> &GetNeumannVectorBcs()
             {
                 return neumann_vec_bcs;
+            }
+
+            // Getter for General Robin bcs
+            std::vector<GeneralRobinContainer> &GetRobinBcs()
+            {
+                return robin_bcs;
             }
 
             // Getter for electric potential bcs
@@ -304,6 +355,12 @@ namespace mfem
                 return neumann_vec_attr;
             }
 
+            // Getter for General Robin attr
+            Array<int> &GetRobinAttr()
+            {
+                return robin_attr;
+            }
+
         private:
             // Shared pointer to Mesh
             std::shared_ptr<ParMesh> pmesh;
@@ -323,13 +380,19 @@ namespace mfem
             // Bookkeeping for Neumann vector bcs.
             std::vector<VecCoeffContainer> neumann_vec_bcs;
 
+            // Bookkeeping for general Robin bcs.
+            std::vector<GeneralRobinContainer> robin_bcs;
+
             /// Array of attributes for bcs
             Array<int> dirichlet_attr;         // Essential mesh attributes.
             Array<int> dirichlet_EField_attr;  // Essential mesh attributes.
             Array<int> neumann_attr;           // Neumann mesh attributes.
             Array<int> neumann_vec_attr;       // Neumann mesh attributes.
+            Array<int> robin_attr;             // General Robin mesh attributes.
+
             Array<int> dirichlet_attr_tmp;     // Essential mesh attributes (temporary).
             Array<int> neumann_attr_tmp;       // Neumann mesh attributes (temporary).
+            Array<int> robin_attr_tmp;         // Robin mesh attributes (temporary).
 
             // Verbosity
             bool verbose;

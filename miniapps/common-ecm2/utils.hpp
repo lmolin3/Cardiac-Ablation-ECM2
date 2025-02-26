@@ -225,14 +225,15 @@ namespace mfem
 
             ~RobinCoeffContainer()
             {
+                delete hT0_coeff; // Deleted regardless since it is created by RobinCoeffContainer
+                hT0_coeff = nullptr;
+
                 if (own)
                 {
                     delete h_coeff;
                     delete T0_coeff;
-                    delete hT0_coeff;
                     h_coeff = nullptr;
                     T0_coeff = nullptr;
-                    hT0_coeff = nullptr;
                 }
             }
 
@@ -242,6 +243,85 @@ namespace mfem
             ProductCoefficient *hT0_coeff;
             bool own;
         };
+
+
+        /// Container for coefficient used for General Robin bcs:
+        //
+        // μ1 ∇u⋅n + α1 u =  μ2 ∇u2⋅n + α2 u2 
+        //
+        // holding: alpha1, alpha2, mu2, grad_u2, u2
+        //
+        // TODO: we can add code to handle case where alpha1, alpha2, mu2 are not provided (i.e. this becomes classical Robin, or even Neumann)
+        // We can set these are nullptr and check for nullptr in the specific Solver class.
+        //
+        class GeneralRobinContainer
+        {
+        public:
+            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1, Coefficient *alpha2, Coefficient *u2, VectorCoefficient *grad_u2, Coefficient *mu2, bool own = true)
+                : attr(attr), alpha1(alpha1), alpha2(alpha2), mu2(mu2), grad_u2(grad_u2), u2(u2), own(own)
+            {
+                alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
+                mu2_grad_u2 = new ScalarVectorProductCoefficient(*mu2, *grad_u2);
+            }
+
+            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1, Coefficient *alpha2, VectorCoefficient *mu2_grad_u2, Coefficient *mu2, bool own = true)
+                : attr(attr), alpha1(alpha1), alpha2(alpha2), grad_u2(mu2_grad_u2), mu2(nullptr), u2(u2), own(own)
+            {
+                alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
+                mu2_grad_u2 = new ScalarVectorProductCoefficient(1.0, *grad_u2);
+            }       
+
+            GeneralRobinContainer(GeneralRobinContainer &&obj)
+            {
+                // Deep copy the attribute and direction
+                this->attr = obj.attr;
+                this->own = obj.own;
+
+                // Move the coefficient pointer
+                this->alpha1 = obj.alpha1;
+                this->alpha2 = obj.alpha2;
+                this->mu2 = obj.mu2;
+                this->grad_u2 = obj.grad_u2;
+                this->u2 = obj.u2;
+                this->alpha2_u2 = obj.alpha2_u2;
+                this->mu2_grad_u2 = obj.mu2_grad_u2;
+                obj.alpha1 = nullptr;
+                obj.alpha2 = nullptr;
+                obj.mu2 = nullptr;
+                obj.grad_u2 = nullptr;
+                obj.u2 = nullptr;
+                obj.alpha2_u2 = nullptr;
+                obj.mu2_grad_u2 = nullptr;
+            }
+
+            ~GeneralRobinContainer()
+            {
+                if (own)
+                {
+                    delete alpha1;
+                    delete alpha2;
+                    delete grad_u2;
+                    delete mu2;
+                    delete u2;
+                    alpha1 = nullptr;
+                    alpha2 = nullptr;
+                    mu2 = nullptr;
+                    grad_u2 = nullptr;
+                    u2 = nullptr;
+                }
+            }
+
+            Array<int> attr;
+            Coefficient *alpha1;   // May be OWNED
+            Coefficient *alpha2;   // May be OWNED
+            Coefficient *mu2;      // May be OWNED
+            VectorCoefficient *grad_u2;  // May be OWNED
+            Coefficient *u2;       // May be OWNED
+            ScalarVectorProductCoefficient *mu2_grad_u2 = nullptr; // OWNED
+            Coefficient *alpha2_u2 = nullptr;  // OWNED
+            bool own;
+        };
+         
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                          Linalg utils                                                ///

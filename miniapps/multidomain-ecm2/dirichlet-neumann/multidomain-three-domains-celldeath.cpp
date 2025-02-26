@@ -33,7 +33,7 @@
 // Utils
 
 // Physical and Domain-Decomposition parameters
-#include "../contexts.hpp" 
+#include "contexts.hpp" 
 
 // Output
 #include <fstream>

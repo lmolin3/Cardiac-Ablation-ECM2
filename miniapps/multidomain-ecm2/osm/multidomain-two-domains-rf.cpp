@@ -1,17 +1,17 @@
 // Solve quasi-static electrostatics problem with two domains (fluid and solid).
 //                            ∇•σ∇Φ = 0
-// The problem is solved using a segregated approach with two-way coupling (Neumann-Dirichlet)
+// The problem is solved using a segregated approach with two-way coupling (Robin-Robin)
 // until convergence is reached.
 // Works on both hexahedral and tetrahedral meshes, with optional partial assembly (hexahedral only). 
 // The conductivity tensor σ can be anisotropic (Change EulerAngles function).
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf -o 3 -tet --relaxation-parameter 0.8
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 0.8 -alpha 1
 // 2. Hexahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf -o 3 -hex --relaxation-parameter 0.8 
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 0.8 -alpha 1 
 // 3. Hexahedral mesh with partial assembly
-//    mpirun -np 4 ./multidomain-two-domains-rf -o 3 -hex -pa --relaxation-parameter 0.8
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 0.8 -alpha 1
 
 
 // MFEM library
@@ -79,13 +79,15 @@ int main(int argc, char *argv[])
    // Domain decomposition
    args.AddOption(&DD_ctx.omega_rf, "-omega", "--relaxation-parameter",
                   "Relaxation parameter.");
+   args.AddOption(&DD_ctx.alpha, "-alpha", "--alpha-robin",
+                  "Robin-Robin coupling parameter.");
    // Physics
    args.AddOption(&RF_ctx.aniso_ratio, "-ar", "--aniso-ratio-rf",
                   "Anisotropy ratio for RF problem.");
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+   args.AddOption(&Sim_ctx.paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
@@ -267,6 +269,8 @@ int main(int argc, char *argv[])
 
    ParGridFunction *phi_fs_fluid = new ParGridFunction(fes_fluid);
    *phi_fs_fluid = 0.0;
+   ParGridFunction *phi_fs_solid = new ParGridFunction(fes_solid);
+   *phi_fs_solid = 0.0;
    ParGridFunction *E_fs_solid = new ParGridFunction(fes_grad_solid);
    *E_fs_solid = 0.0;
    ParGridFunction *E_fs_fluid = new ParGridFunction(fes_grad_fluid);
@@ -407,27 +411,33 @@ int main(int argc, char *argv[])
    // Fluid:
    // - Homogeneous Neumann on top/lateral walls
    // - Homogeneous Neumann on  Γfc
-   // - Dirichlet   on  Γfs
+   // - Robin-Robin on  Γfs
 
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for fluid domain... \033[0m" << std::endl;
 
+   ConstantCoefficient alpha_coeff1(DD_ctx.alpha);
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
-   bcs_fluid->AddDirichletBC(phi_fs_fluid_coeff, fluid_solid_interface[0]);
+   VectorGridFunctionCoefficient *E_fs_fluid_coeff = new VectorGridFunctionCoefficient(E_fs_fluid);
+   //bcs_fluid->AddDirichletBC(RF_ctx.phi_gnd, fluid_top_attr[0]);
+   bcs_fluid->AddRobinBC(&alpha_coeff1, &alpha_coeff1, phi_fs_fluid_coeff, E_fs_fluid_coeff, fluid_solid_interface[0], false); 
+
 
    // Solid:
    // - Phi = 0 on bottom wall
    // - Dirichlet   on  Γsc
-   // - Neumann   on  Γfs
+   // - Robin-Robin on  Γfs
    // - Homogeneous Neumann lateral wall
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for solid domain...\033[0m" << std::endl;
    RF_ctx.phi_gnd = 0.0;
    RF_ctx.phi_applied = 1.0;
+   ConstantCoefficient alpha_coeff2(1/DD_ctx.alpha);
+   GridFunctionCoefficient *phi_fs_solid_coeff = new GridFunctionCoefficient(phi_fs_solid);
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
    bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
    bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
-   bcs_solid->AddNeumannVectorBC(E_fs_solid_coeff, fluid_solid_interface[0]);
+   bcs_solid->AddRobinBC(&alpha_coeff2, &alpha_coeff2, phi_fs_solid_coeff, E_fs_solid_coeff, fluid_solid_interface[0], false); 
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup interface transfer
@@ -607,8 +617,9 @@ int main(int argc, char *argv[])
 
       chrono.Clear(); chrono.Start();
       //if (!converged_fluid)
-      { // S->F: Φ
+      { // S->F: Φ, J
          finder_fluid_to_solid.InterpolateBackward(*phi_solid_gf, *phi_fs_fluid);
+         finder_fluid_to_solid.InterpolateQoIBackward(currentDensity_solid, *E_fs_fluid);
       }
       chrono.Stop();
       t_transfer = chrono.RealTime();
@@ -637,7 +648,8 @@ int main(int argc, char *argv[])
 
       chrono.Clear(); chrono.Start();
       // if (!converged_solid)
-      { // F->S: grad Φ
+      { // F->S: Φ, J
+         finder_fluid_to_solid.InterpolateForward(*phi_fluid_gf, *phi_fs_solid);
          finder_fluid_to_solid.InterpolateQoIForward(currentDensity_fluid, *E_fs_solid);
       }
       chrono.Stop();
@@ -770,6 +782,11 @@ int main(int argc, char *argv[])
    delete phi_fluid_prev_gf;
    delete JouleHeating_gf;
 
+   delete phi_fs_fluid_coeff;
+   delete E_fs_fluid_coeff;
+   delete phi_fs_solid_coeff;
+   delete E_fs_solid_coeff;
+   
    return 0;
 }
 
