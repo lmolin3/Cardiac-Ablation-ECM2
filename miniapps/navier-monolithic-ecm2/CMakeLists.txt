@@ -76,6 +76,16 @@ if (MFEM_USE_MPI)
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common navier_monolithic_ecm2)
       
+  add_mfem_miniapp(navier-stented-channel-monolithic
+    MAIN tests/navier_stented_channel.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common navier-monolithic-ecm2)
+
+  add_mfem_miniapp(test_mpi
+    MAIN tests/test_mpi.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem)
+
   add_custom_command(TARGET navier-poiseulle-monolithic POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_CURRENT_SOURCE_DIR}/Mesh Mesh

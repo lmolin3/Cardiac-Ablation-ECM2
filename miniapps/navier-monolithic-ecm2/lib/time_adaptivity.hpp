@@ -23,12 +23,12 @@ namespace mfem
       struct DefaultTimeAdaptivityParameters_CFL
       {
          static constexpr real_t chi_min = 0.1;
-         static constexpr real_t chi_max = 5;
+         static constexpr real_t chi_max = 2;
          static constexpr real_t chi_reject = 0.25;
          static constexpr real_t chi_tol = 1e-3;
          static constexpr real_t chi_safety = 1.5; // >= 1.0
          static constexpr real_t dt_min = 1e-6;
-         static constexpr real_t dt_max = 1e-1;
+         static constexpr real_t dt_max = 5e-1;
       
          static constexpr real_t cfl_max = 0.8;
          static constexpr real_t cfl_min = 0.1;
