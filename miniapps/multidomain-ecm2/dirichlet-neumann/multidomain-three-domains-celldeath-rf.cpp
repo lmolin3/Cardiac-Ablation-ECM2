@@ -23,11 +23,11 @@
 // 2. Hexahedral mesh  
 //    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 
 // 3. Hexahedral mesh with partial assembly for RF
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa -oh 2 -or 4 -dt 0.01 -tf 0.05  
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa-rf -pa-heat -oh 2 -or 4 -dt 0.01 -tf 0.05  
 // 4. Hexahedral mesh with partial assembly for RF and Heat
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa -oh 2 -or 4 -dt 0.01 -tf 0.05
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf -hex -pa-rf -pa-heat -oh 2 -or 4 -dt 0.01 -tf 0.05
 // 5. Hexahedral mesh with partial assembly for RF and Heat, and anisotropic conductivity
-//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf -hex -pa_rf -pa -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5
+//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf -hex -pa-rf -pa-heat -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5
 
 // MFEM library
 #include "mfem.hpp"
@@ -86,9 +86,9 @@ int main(int argc, char *argv[])
                   "Finite element order for RF problem (polynomial degree).");
    args.AddOption(&CellDeath_ctx.order, "-oc", "--order-celldeath",
                   "Finite element order for cell death (polynomial degree).");
-   args.AddOption(&Heat_ctx.pa, "-pa", "--partial-assembly-heat", "-no-pa", "--no-partial-assembly-heat",
+   args.AddOption(&Heat_ctx.pa, "-pa-heat", "--partial-assembly-heat", "-no-pa", "--no-partial-assembly-heat",
                   "Enable or disable partial assembly.");
-   args.AddOption(&RF_ctx.pa, "-pa_rf", "--partial-assembly-rf", "-no-pa_rf", "--no-partial-assembly-rf",
+   args.AddOption(&RF_ctx.pa, "-pa-rf", "--partial-assembly-rf", "-no-pa-rf", "--no-partial-assembly-rf",
                   "Enable or disable partial assembly for RF problem.");   
    args.AddOption(&CellDeath_ctx.solver_type, "-cdt", "--celldeath-solver-type",
                   "Cell-death solver type: 0 - Eigen, 1 - GoTran.");
@@ -772,10 +772,10 @@ int main(int argc, char *argv[])
 
    chrono_assembly.Clear();
    chrono_assembly.Start();
-   RF_Solid.EnablePA(&RF_ctx.pa);
+   RF_Solid.EnablePA(RF_ctx.pa);
    RF_Solid.Setup();
 
-   RF_Fluid.EnablePA(&RF_ctx.pa);
+   RF_Fluid.EnablePA(RF_ctx.pa);
    RF_Fluid.Setup();
    chrono_assembly.Stop();
 

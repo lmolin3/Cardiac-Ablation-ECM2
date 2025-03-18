@@ -111,9 +111,12 @@ struct s_DomainDecompositionContext
    real_t omega_rf_cyl = 0.8; 
 
    // Robin-Robin coupling parameters
-   real_t alpha = 1.0;
-   real_t alpha1 = 1.0;
-   real_t alpha2 = 1.0;
+   real_t alpha_rf = 1.0;
+   real_t alpha1_rf = 1.0;
+   real_t alpha2_rf = 1.0;
+   real_t alpha_heat = 1.0;
+   real_t alpha1_heat = 1.0;
+   real_t alpha2_heat = 1.0;
 } DD_ctx;
 
 

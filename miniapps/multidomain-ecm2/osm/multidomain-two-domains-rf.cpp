@@ -7,11 +7,11 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 0.8 -alpha 1
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 1.0 -alpha 1
 // 2. Hexahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 0.8 -alpha 1 
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 1.0 -alpha 1 
 // 3. Hexahedral mesh with partial assembly
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 0.8 -alpha 1
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 1.0 -alpha 1
 
 
 // MFEM library
@@ -45,7 +45,7 @@ std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zm
 
 // Forward declaration
 void print_matrix(const DenseMatrix &A);
-void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step);
+void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step);
 
 int main(int argc, char *argv[])
 {
@@ -79,7 +79,7 @@ int main(int argc, char *argv[])
    // Domain decomposition
    args.AddOption(&DD_ctx.omega_rf, "-omega", "--relaxation-parameter",
                   "Relaxation parameter.");
-   args.AddOption(&DD_ctx.alpha, "-alpha", "--alpha-robin",
+   args.AddOption(&DD_ctx.alpha_rf, "-alpha", "--alpha-robin",
                   "Robin-Robin coupling parameter.");
    // Physics
    args.AddOption(&RF_ctx.aniso_ratio, "-ar", "--aniso-ratio-rf",
@@ -93,6 +93,8 @@ int main(int argc, char *argv[])
                   "Save fields every 'save_freq' time steps.");
    args.AddOption(&Sim_ctx.outfolder, "-of", "--out-folder",
                   "Output folder.");
+   args.AddOption(&Sim_ctx.save_convergence, "-sc", "--save-convergence", "-no-sc", "--no-save-convergence",
+                  "Save convergence data.");
 
    args.ParseCheck();                  
 
@@ -416,7 +418,7 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for fluid domain... \033[0m" << std::endl;
 
-   ConstantCoefficient alpha_coeff1(DD_ctx.alpha);
+   ConstantCoefficient alpha_coeff1(DD_ctx.alpha_rf);
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
    VectorGridFunctionCoefficient *E_fs_fluid_coeff = new VectorGridFunctionCoefficient(E_fs_fluid);
    //bcs_fluid->AddDirichletBC(RF_ctx.phi_gnd, fluid_top_attr[0]);
@@ -432,7 +434,7 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34m\nSetting up BCs for solid domain...\033[0m" << std::endl;
    RF_ctx.phi_gnd = 0.0;
    RF_ctx.phi_applied = 1.0;
-   ConstantCoefficient alpha_coeff2(1/DD_ctx.alpha);
+   ConstantCoefficient alpha_coeff2(1/DD_ctx.alpha_rf);
    GridFunctionCoefficient *phi_fs_solid_coeff = new GridFunctionCoefficient(phi_fs_solid);
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
    bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
@@ -565,7 +567,7 @@ int main(int argc, char *argv[])
    DD_ctx.omega_rf_fluid = DD_ctx.omega_rf; // TODO: Add different relaxation parameters for each domain
    DD_ctx.omega_rf_solid = DD_ctx.omega_rf;
 
-   Array<real_t> convergence_subiter;
+   Array2D<real_t> convergence_rf(max_iter, 3); convergence_rf = 0.0;
    // Inner loop for the segregated solve
    int iter = 0;
    int iter_solid = 0;
@@ -698,9 +700,11 @@ int main(int argc, char *argv[])
       
       iter++;
 
-      if (Mpi::Root())
+      if (Mpi::Root() && Sim_ctx.save_convergence)
       {
-         convergence_subiter.Append(norm_diff);
+         convergence_rf(iter, 0) = iter;
+         convergence_rf(iter, 1) = global_norm_diff_fluid;
+         convergence_rf(iter, 2) = global_norm_diff_solid;
       }
 
       if (Mpi::Root())
@@ -755,6 +759,14 @@ int main(int argc, char *argv[])
       out << "Joule: " << t_joule << " s" << std::endl;
       out << "Paraview: " << t_paraview << " s" << std::endl;
       out << "------------------------------------------------------------" << std::endl;
+   }
+
+   // Save convergence
+   if (Mpi::Root() && Sim_ctx.save_convergence)
+   {
+      std::string name_rf = "RF-pre";
+      saveConvergenceArray(convergence_rf, Sim_ctx.outfolder, name_rf, 0);
+      convergence_rf.DeleteAll();
    }
 
    //////////////////////////////////////////////////////////////////////
@@ -820,10 +832,10 @@ void print_matrix(const DenseMatrix &A)
              << std::flush; // Debugging print
 }
 
-void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std::string &outfolder, int step)
+void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step)
 {
-   // Create the output folder path
-   std::string outputFolder = outfolder + "/convergence";
+   // Create the output folder path + name
+   std::string outputFolder = outfolder + "/convergence/" + name;
 
    if (!fs::is_directory(outputFolder.c_str()) || !fs::exists(outputFolder.c_str())) { // Check if folder exists
       fs::create_directories(outputFolder); // create folder
@@ -837,7 +849,7 @@ void saveConvergenceSubiter(const Array<real_t> &convergence_subiter, const std:
    std::ofstream outFile(filename.str());
    if (outFile.is_open())
    {
-      convergence_subiter.Save(outFile);
+      data.Save(outFile);
       outFile.close();
    }
    else

@@ -514,6 +514,7 @@ int main(int argc, char *argv[])
    Array<int> fluid_solid_interface;
    Array<int> solid_cylinder_interface;
 
+   Array<int> fluid_lateral_attr_tmp;
    Array<int> fluid_lateral_attr;
    Array<int> fluid_lateral_1_attr;
    Array<int> fluid_lateral_2_attr;
@@ -584,11 +585,14 @@ int main(int argc, char *argv[])
       solid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Solid");
    }
 
-   fluid_lateral_attr.Append(fluid_lateral_1_attr);
-   fluid_lateral_attr.Append(fluid_lateral_2_attr);
-   fluid_lateral_attr.Append(fluid_lateral_3_attr);
-   fluid_lateral_attr.Append(fluid_lateral_4_attr);
+   fluid_lateral_attr_tmp.Append(fluid_lateral_1_attr);
+   fluid_lateral_attr_tmp.Append(fluid_lateral_2_attr);
+   fluid_lateral_attr_tmp.Append(fluid_lateral_3_attr);
+   fluid_lateral_attr_tmp.Append(fluid_lateral_4_attr);
+   fluid_lateral_attr = AttributeSets::AttrToMarker(fluid_submesh->bdr_attributes.Max(), fluid_lateral_attr_tmp);
+   fluid_lateral_attr_tmp.DeleteAll();
 
+   // Convert attributes to markers
    Array<int> solid_domain_attributes = AttributeSets::AttrToMarker(solid_submesh->attributes.Max(), solid_domain_attribute);
    Array<int> fluid_domain_attributes = AttributeSets::AttrToMarker(fluid_submesh->attributes.Max(), fluid_domain_attribute);
    Array<int> cylinder_domain_attributes = AttributeSets::AttrToMarker(cylinder_submesh->attributes.Max(), cylinder_domain_attribute);
@@ -640,7 +644,7 @@ int main(int argc, char *argv[])
    GridFunctionCoefficient *temperature_fc_cylinder_coeff = new GridFunctionCoefficient(temperature_fc_fluid);
    heat_bcs_fluid->AddDirichletBC(temperature_fs_solid_coeff, fluid_solid_interface[0]);
    heat_bcs_fluid->AddDirichletBC(temperature_fc_cylinder_coeff, fluid_cylinder_interface[0]); // Don't own the coefficient, it'll be deleted already in the previous line
-   heat_bcs_fluid->AddDirichletBC(Heat_ctx.T_fluid, fluid_lateral_attr[0]);
+   heat_bcs_fluid->AddDirichletBC(Heat_ctx.T_fluid, fluid_lateral_attr);
    heat_bcs_fluid->AddDirichletBC(Heat_ctx.T_fluid, fluid_top_attr[0]);
 
    // Solid:
@@ -841,10 +845,10 @@ int main(int argc, char *argv[])
 
    chrono_assembly.Clear();
    chrono_assembly.Start();
-   RF_Solid.EnablePA(&RF_ctx.pa);
+   RF_Solid.EnablePA(RF_ctx.pa);
    RF_Solid.Setup();
 
-   RF_Fluid.EnablePA(&RF_ctx.pa);
+   RF_Fluid.EnablePA(RF_ctx.pa);
    RF_Fluid.Setup();
    chrono_assembly.Stop();
 
@@ -1314,6 +1318,7 @@ int main(int argc, char *argv[])
          bool accept_step = Navier_Fluid.Step(t, Sim_ctx.dt, step);
          t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
 
+
          if (Mpi::Root())
                   mfem::out << "\033[31mdone.\033[0m" << std::endl;
 
@@ -1327,11 +1332,20 @@ int main(int argc, char *argv[])
          wind_coeff->SetGridFunction(velocity_fluid_gf);  // NOTE: do we need this since wind_coeff gets a pointer to velocity_fluid_gf?
       }
 
+      MPI_Barrier(parent_mesh.GetComm());
+
       /////////////////////////////////////////
       //         Solve HEAT TRANSFER         //
       /////////////////////////////////////////
       Array2D<real_t> convergence_heat(max_iter, 3); convergence_heat = 0.0;
       {
+
+         // Reset the convergence flag and time for the next iteration
+         if (Mpi::Root())
+         {
+            mfem::out << "\033[34mSolving HeatTransfer problem... ";
+         }
+
          temperature_solid_tn = *temperature_solid_gf->GetTrueDofs();
          temperature_cylinder_tn = *temperature_cylinder_gf->GetTrueDofs();
          temperature_fluid_tn = *temperature_fluid_gf->GetTrueDofs();
@@ -1539,13 +1553,12 @@ int main(int argc, char *argv[])
 
          // Reset the convergence flag and time for the next iteration
          if (Mpi::Root())
-         { 
+         {
             // Print the message and iterations on the same line
-            mfem::out << "\033[34mSolving HeatTransfer problem... "
-                     << std::setw(20) << " " // Adjust the width to align with "Sub-iterations (F-S-C)"
-                     << std::setw(2) << iter_fluid << std::setw(2) << "-"
-                     << std::setw(2) << iter_solid << std::setw(2) << "-"
-                     << std::setw(2) << iter_cylinder << "\033[0m" << std::endl;
+            mfem::out << std::setw(20) << " " // Adjust the width to align with "Sub-iterations (F-S-C)"
+            << std::setw(2) << iter_fluid << std::setw(2) << "-"
+            << std::setw(2) << iter_solid << std::setw(2) << "-"
+            << std::setw(2) << iter_cylinder << "\033[0m" << std::endl;
          }
 
          if (Mpi::Root() && Sim_ctx.print_timing)

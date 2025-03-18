@@ -459,7 +459,7 @@ int main(int argc, char *argv[])
 
    chrono_assembly.Clear();
    chrono_assembly.Start();
-   RF_Solid.EnablePA(&RF_ctx.pa);
+   RF_Solid.EnablePA(RF_ctx.pa);
    RF_Solid.Setup();
    chrono_assembly.Stop();
 
