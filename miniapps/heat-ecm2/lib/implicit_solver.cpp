@@ -65,9 +65,6 @@ namespace mfem
 
             current_dt = dt_;
 
-            delete T;
-            delete Te;
-
             BuildOperator();
         }
 
@@ -130,6 +127,8 @@ namespace mfem
               bcs(bcs_), has_diffusion(false), has_advection(false), has_reaction(false),
               prec_type(prec_type_)
         {
+            current_dt = dt_;
+
             comm = fes->GetComm();
 
             // Check contributions
@@ -145,6 +144,8 @@ namespace mfem
             if (has_reaction)
                 dtBeta = new ProductCoefficient(current_dt, *Beta);
 
+            mfem::out << "Adding integrators on rank " << fes->GetMyRank() << std::endl;
+
             // Create bilinear form for operator T = M + dt*K + dt*RobinMass
             T = new ParBilinearForm(fes);
             T->AddDomainIntegrator(new MassIntegrator(*rhoC));
@@ -155,16 +156,38 @@ namespace mfem
             if (has_reaction)
                 T->AddDomainIntegrator(new MassIntegrator(*dtBeta));
 
+            robin_coeffs.SetSize(0);
+            robin_markers.SetSize(0);
             for (auto &robin_bc : bcs->GetRobinBcs())
             {
                 // Add a Mass integrator on the Robin boundary
-                ProductCoefficient dtH(current_dt, *robin_bc.h_coeff);
-                T->AddBoundaryIntegrator(new MassIntegrator(dtH), robin_bc.attr);
+                auto dtH = new ProductCoefficient(current_dt, *robin_bc.h_coeff);
+                robin_coeffs.Append(dtH);
+                robin_markers.Append(&robin_bc.attr);                
+                T->AddBoundaryIntegrator(new MassIntegrator(*dtH), robin_bc.attr);
             }
+
+            general_robin_coeffs.SetSize(0);
+            general_robin_markers.SetSize(0);
+            for (auto &robin_bc : bcs->GetGeneralRobinBcs())
+            {
+                // Add a Mass integrator on the Robin boundary
+                auto dtH = new ProductCoefficient(current_dt, *robin_bc.alpha1);
+                general_robin_coeffs.Append(dtH);
+                general_robin_markers.Append(&robin_bc.attr);
+                T->AddBoundaryIntegrator(new MassIntegrator(*dtH), robin_bc.attr);
+            }
+
+            mfem::out << "Assembling on rank " << fes->GetMyRank() << std::endl;
 
             T->SetAssemblyLevel(AssemblyLevel::PARTIAL);
             T->Assemble();
             T->FormSystemMatrix(ess_tdof_list, opT);
+
+            MPI_Barrier(comm);
+
+            mfem::out << "Creating preconditioner on rank... " << fes->GetMyRank() << std::endl;
+
 
             if ( has_advection && prec_type == 0 )
             {
@@ -208,7 +231,7 @@ namespace mfem
             linear_solver->SetPreconditioner(*prec);
         };
 
-        void ImplicitSolverPA::SetTimeStep(double dt_)
+        void ImplicitSolverPA::SetTimeStep(real_t dt_)
         {
             // If the timestep has not changed, do nothing
             if (dt_ == current_dt)
@@ -243,12 +266,19 @@ namespace mfem
             if (has_reaction)
                 T->AddDomainIntegrator(new MassIntegrator(*dtBeta));
 
-            for (auto &robin_bc : bcs->GetRobinBcs())
+
+            for (int i = 0; i < robin_coeffs.Size(); i++)
             {
                 // Add a Mass integrator on the Robin boundary
-                ProductCoefficient dtH(current_dt, *robin_bc.h_coeff);
-                T->AddBoundaryIntegrator(new MassIntegrator(dtH), robin_bc.attr);
+                T->AddBoundaryIntegrator(new MassIntegrator(*robin_coeffs[i]), *robin_markers[i]);
             }
+
+            for (int i = 0; i < general_robin_coeffs.Size(); i++)
+            {
+                // Add a Mass integrator on the Robin boundary
+                T->AddBoundaryIntegrator(new MassIntegrator(*general_robin_coeffs[i]), *general_robin_markers[i]);
+            }
+
 
             T->SetAssemblyLevel(AssemblyLevel::PARTIAL);
             T->Assemble();
@@ -307,6 +337,16 @@ namespace mfem
             delete dtKappa;
             delete dtBeta;
             delete lor;
+
+            for (int i = 0; i < robin_coeffs.Size(); i++)
+            {
+                delete robin_coeffs[i];
+            }
+
+            for (int i = 0; i < general_robin_coeffs.Size(); i++)
+            {
+                delete general_robin_coeffs[i];
+            }
         }
 
     } // namespace heat

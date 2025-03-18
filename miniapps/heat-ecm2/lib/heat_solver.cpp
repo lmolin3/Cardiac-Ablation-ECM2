@@ -383,25 +383,25 @@ namespace mfem
          //   5   | 137/60 | -5 | 5   | -10/3| 5/4 | -1/5       |
          //   6   | 147/60 | -6 | 15/2| -20/3| 15/4| -6/5 | 1/6 |
 
-         if (step == 1 && bdf_order == 1)
+         if (step == 1 && bdf_order <= 1)
          {
             alpha = 1.0;
             beta[0] = -1.0;
          }
-         else if (step >= 2 && bdf_order == 2)
+         else if (step > 2 && bdf_order == 2)
          {
             alpha = 1.5;
             beta[0] = -2.0;
             beta[1] = 0.5;
          }
-         else if (step >= 3 && bdf_order == 3)
+         else if (step > 3 && bdf_order == 3)
          {
             alpha = 11.0 / 6.0;
             beta[0] = -3.0;
             beta[1] = 1.5;
             beta[2] = -1.0 / 3.0;
          }
-         else if (step >= 4 && bdf_order == 4)
+         else if (step > 4 && bdf_order == 4)
          {
             alpha = 25.0 / 12.0;
             beta[0] = -4.0;
@@ -409,7 +409,7 @@ namespace mfem
             beta[2] = -4.0 / 3.0;
             beta[3] = 1.0 / 4.0;
          }
-         else if (step >= 5 && bdf_order == 5)
+         else if (step > 5 && bdf_order == 5)
          {
             alpha = 137.0 / 60.0;
             beta[0] = -5.0;
@@ -418,7 +418,7 @@ namespace mfem
             beta[3] = 5.0 / 4.0;
             beta[4] = -1.0 / 5.0;
          }
-         else if (step >= 6 && bdf_order == 6)
+         else if (step > 6 && bdf_order == 6)
          {
             alpha = 147.0 / 60.0;
             beta[0] = -6.0;

@@ -19,14 +19,14 @@ namespace heat
         IterativeSolver *linear_solver;
         Solver *prec;
         Array<int> ess_tdof_list;
-        double current_dt;
+        real_t current_dt;
 
     public:
         ImplicitSolverBase(Array<int> &ess_tdof_list_)
             : ess_tdof_list(ess_tdof_list_), current_dt(0.0) {}
 
         virtual void SetOperator(const Operator &op);
-        virtual void SetTimeStep(double dt_) = 0;
+        virtual void SetTimeStep(real_t dt_) = 0;
         virtual void EliminateBC(const Vector &x, Vector &b) const = 0;
         virtual void Mult(const Vector &x, Vector &y) const = 0;
 
@@ -76,6 +76,10 @@ namespace heat
         MatrixCoefficient *Kappa;
         real_t alpha;
         BCHandler *bcs;
+        Array<ProductCoefficient *> robin_coeffs; // Required so that ProductCoefficients don't do out of scope and Coefficient::Project fails
+        Array<Array<int> *> robin_markers;
+        Array<ProductCoefficient *> general_robin_coeffs;
+        Array<Array<int> *> general_robin_markers;
         bool has_diffusion, has_advection, has_reaction;
         int prec_type;
 

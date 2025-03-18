@@ -120,6 +120,12 @@ namespace mfem
                                              robin_bc.attr);
          }
 
+         for (auto &robin_bc : bcs->GetGeneralRobinBcs())
+         {
+            // Add a Mass integrator on the Robin boundary
+            RobinMass->AddBoundaryIntegrator(new MassIntegrator(*robin_bc.alpha1), robin_bc.attr);
+         }
+
          // cout << "\033[31mCheckpoint 2, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
 
          // Finalize (based on assembly level)
@@ -151,6 +157,8 @@ namespace mfem
 
          // cout << "\033[31mCheckpoint 3, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
 
+         MPI_Barrier(H1FESpace.GetComm());
+
          /// 4. Solvers
          // Solver for mass matrix
          if (pa)
@@ -169,7 +177,7 @@ namespace mfem
             static_cast<ImplicitSolverFA *>(T_solver)->SetTimeStep(current_dt);
          }
 
-         const double rel_tol = 1e-8;
+         const real_t rel_tol = 1e-8;
          M_solver = CGSolver(H1FESpace.GetComm());
          M_solver.iterative_mode = false;
          M_solver.SetRelTol(rel_tol);
@@ -211,6 +219,12 @@ namespace mfem
                 new BoundaryLFIntegrator(*(robin_bc.hT0_coeff)), robin_bc.attr);
          }
 
+         for (auto &robin_bc : bcs->GetGeneralRobinBcs())
+         {
+            fform->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(robin_bc.alpha2_u2)), robin_bc.attr);         // alpha2 * u
+            fform->AddBoundaryIntegrator(new BoundaryNormalLFIntegrator(*(robin_bc.mu2_grad_u2)), robin_bc.attr); // mu2 * grad(u2)
+         }
+
          // Will be assembled in AdvectionReactionDiffusionOperator::UpdateBcsRhs
       }
 
@@ -236,7 +250,7 @@ namespace mfem
          K->Assemble(0);
          K->FormSystemMatrix(empty, opK);
 
-         if (bcs->GetRobinBcs().size() > 0)
+         if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0)
          {
             RobinMass->Update();
          }
@@ -246,7 +260,7 @@ namespace mfem
       }
 
       // NOTE: this can be optimized by  assembling only if required (e.g. any parameter is time dependent)
-      void AdvectionReactionDiffusionOperator::SetTime(const double time)
+      void AdvectionReactionDiffusionOperator::SetTime(const real_t time)
       {
          TimeDependentOperator::SetTime(time);
 
@@ -270,12 +284,12 @@ namespace mfem
          }
 
          // Assemble matrix for robin bcs
-         if (bcs->GetRobinBcs().size() > 0)
+         if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0)
          {
             Array<int> empty;
             RobinMass->Update();
             RobinMass->Assemble(0);
-            RobinMass->FormSystemMatrix(empty, opRobinMass);
+            RobinMass->FormSystemMatrix(empty, opRobinMass);  // CHECK: do we need to pass opRobinMass to the implicit solver?
          }
 
          // Assemble rhs
@@ -285,7 +299,7 @@ namespace mfem
          fvec = fform->ParallelAssemble();
       }
 
-      void AdvectionReactionDiffusionOperator::ProjectDirichletBCS(const double &time,
+      void AdvectionReactionDiffusionOperator::ProjectDirichletBCS(const real_t &time,
                                                                    ParGridFunction &gf)
       {
          // Projection of coeffs for dirichlet bcs
@@ -310,10 +324,10 @@ namespace mfem
             z.Add(1.0, *fvec); // z = -K(u) + f
          }
 
-         if (bcs->GetRobinBcs().size() > 0) // Mass matrix for Robin bc
-         {
-            opRobinMass->AddMult(u, z, -1.0);
-         }
+         //if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0) // Mass matrix for Robin bc
+         //{
+         //   opRobinMass->AddMult(u, z, -1.0);
+         //}
 
          // Set bcs (set du_dt on dofs with approximation)
          du_dt = *dT_approx;
@@ -339,7 +353,7 @@ namespace mfem
          }
       }
 
-      void AdvectionReactionDiffusionOperator::ImplicitSolve(const double dt, const Vector &u,
+      void AdvectionReactionDiffusionOperator::ImplicitSolve(const real_t dt, const Vector &u,
                                                              Vector &du_dt)
       {
          //MFEM_VERIFY(!pa,
@@ -358,7 +372,7 @@ namespace mfem
             z.Add(1.0, *fvec); // z = -K(u) + f
          }
 
-         if (bcs->GetRobinBcs().size() > 0) // Mass matrix for Robin bc
+         if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0) // Mass matrix for Robin bc
          {
             opRobinMass->AddMult(u, z, -1.0);
          }
@@ -380,12 +394,17 @@ namespace mfem
          }
       }
 
-      void AdvectionReactionDiffusionOperator::SetTimeStep(double dt)
+      void AdvectionReactionDiffusionOperator::SetTimeStep(real_t dt)
       {
          if (dt == current_dt)
             return;
 
          current_dt = dt;
+        
+         if (!pa)
+         {
+            static_cast<ImplicitSolverFA *>(T_solver)->SetOperators(Mfull, opK.As<HypreParMatrix>(), opRobinMass.As<HypreParMatrix>());
+         }
 
          T_solver->SetTimeStep(dt); // This also resets the solver internally to recompute the operator
       }

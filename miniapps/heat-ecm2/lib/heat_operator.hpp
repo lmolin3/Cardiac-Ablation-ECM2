@@ -95,7 +95,7 @@ namespace mfem
       OperatorHandle opRobinMass; // Mass matrix with Robin BCs
       HypreParMatrix *Mfull = nullptr;
 
-      double current_dt = 0.0;
+      real_t current_dt = 0.0;
       int current_step = 0;
 
       CGSolver M_solver; // Krylov solver for inverting the mass matrix M
@@ -153,13 +153,13 @@ namespace mfem
 
       /** Solve the Backward-Euler equation: k = f(u + dt*k, t), for the unknown k.
           This is the only requirement for high-order SDIRK implicit integration.*/
-      virtual void ImplicitSolve(const double dt, const Vector &u, Vector &k);
+      virtual void ImplicitSolve(const real_t dt, const Vector &u, Vector &k);
 
       /** Update bcs and rhs*/
-      virtual void SetTime(const double time);
+      virtual void SetTime(const real_t time);
 
       /** Set the time step */
-      void SetTimeStep(double dt);
+      void SetTimeStep(real_t dt);
 
       /** Set the starting temperature for the current step */
       void SetStartingTemperature(const Vector *Tn);
@@ -170,7 +170,7 @@ namespace mfem
                              bool own = true);                   // Using scalar coefficient
       void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr, bool own = true); // Using function
 
-      void ProjectDirichletBCS(const double &time, ParGridFunction &gf);
+      void ProjectDirichletBCS(const real_t &time, ParGridFunction &gf);
 
       /// Getter
       // Get derivative approximation vector
