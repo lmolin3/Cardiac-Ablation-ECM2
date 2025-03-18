@@ -366,7 +366,7 @@ void inflow(const Vector &x, real_t t, Vector &u)
    else
    {
       real_t r = yi;
-      u(0) = 1.0 / (4.0 * NS_ctx.kinvis ) * NS_ctx.dpdx * ( NS_ctx.R*NS_ctx.R - r*r);   // 1/ 4kinvis dpdx (R^2 - r^2)
+      u(0) = 1.0 / (2.0 * NS_ctx.kinvis ) * NS_ctx.dpdx * ( NS_ctx.R*NS_ctx.R - r*r);   // 1/ 4kinvis dpdx (R^2 - r^2)
    }
 
 }
