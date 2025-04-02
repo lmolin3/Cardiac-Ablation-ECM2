@@ -188,8 +188,8 @@ int main(int argc, char *argv[])
    {
       MFEM_ASSERT(sigma_attr[i] <= pmesh->attributes.Max(), "Attribute value out of range");
 
-      double sigma_val = pw_sigma[i];
-      double sigma_ratio = aniso_ratio[i];
+      real_t sigma_val = pw_sigma[i];
+      real_t sigma_ratio = aniso_ratio[i];
       // Create vector of conductivity values
       Vector sigma_vec(d);
       sigma_vec(0) = sigma_val;
@@ -225,7 +225,7 @@ int main(int argc, char *argv[])
          for (int j = 0; j < s; j++)
          {
             k = k + j;
-            e_tmp(j) = (k) < nval ? static_cast<double>(dbce_val(k)) : 0.0;
+            e_tmp(j) = (k) < nval ? static_cast<real_t>(dbce_val(k)) : 0.0;
          }
          e_uniform.push_back(e_tmp);
 
@@ -295,7 +295,7 @@ Volta.display_banner(std::cout);
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
@@ -384,20 +384,20 @@ std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix( const Vec
       // Compute Euler angles
       Vector e(3);
       EulerAngles(x,e);
-      double e1 = e(0);
-      double e2 = e(1);
-      double e3 = e(2);
+      real_t e1 = e(0);
+      real_t e2 = e(1);
+      real_t e3 = e(2);
 
       // Compute rotated matrix
       if (dim == 3)
       {
          // Compute cosine and sine of the angles e1, e2, e3
-         const double c1 = cos(e1);
-         const double s1 = sin(e1);
-         const double c2 = cos(e2);
-         const double s2 = sin(e2);
-         const double c3 = cos(e3);
-         const double s3 = sin(e3);
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         const real_t c2 = cos(e2);
+         const real_t s2 = sin(e2);
+         const real_t c3 = cos(e3);
+         const real_t s3 = sin(e3);
 
          // Fill the rotation matrix R with the Euler angles.
          DenseMatrix R(3, 3);
@@ -423,8 +423,8 @@ std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix( const Vec
       }
       else if (dim == 2)
       {
-         const double c1 = cos(e1);
-         const double s1 = sin(e1);
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
          DenseMatrix Rt(2, 2);
          Rt(0, 0) =  c1;
          Rt(0, 1) =  s1;

@@ -214,7 +214,7 @@ int main(int argc, char *argv[])
          for (int j = 0; j < s; j++)
          {
             k = k + j;
-            e_tmp(j) = (k) < nval ? static_cast<double>(dbce_val(k)) : 0.0;
+            e_tmp(j) = (k) < nval ? static_cast<real_t>(dbce_val(k)) : 0.0;
          }
          e_uniform.push_back(e_tmp);
 
@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 

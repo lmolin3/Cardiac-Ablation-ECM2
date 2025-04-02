@@ -157,7 +157,7 @@ namespace mfem
                visit_dc->RegisterField(field_name, gf);
             }
 
-            void CellDeathSolver::WriteFields(const int &it, const double &time)
+            void CellDeathSolver::WriteFields(const int &it, const real_t &time)
             {
                if (visit_dc)
                {
@@ -450,12 +450,12 @@ namespace mfem
                 : CellDeathSolver(pmesh_, order_, T_, A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_, verbose)
             {
                // Initialize ODE model parameters
-               parameters_nodes = new double[fes_truevsize][num_param];
+               parameters_nodes = new real_t[fes_truevsize][num_param];
                // init_parameters_values(parameters);
                init_state_values(init_states);
 
                // Initialize state and parameters
-               states = new double[fes_truevsize][num_states];
+               states = new real_t[fes_truevsize][num_states];
                N_gf.GetTrueDofs(N);
                U_gf.GetTrueDofs(U);
                D_gf.GetTrueDofs(D);

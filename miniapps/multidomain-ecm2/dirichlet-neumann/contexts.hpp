@@ -90,7 +90,7 @@ struct s_NavierContext // Navier Stokes params
    bool mass_lumping = false; // Mass lumping
    bool stiff_strain = false; // Stiff strain
 
-   static void NoSlip(const Vector &x, double t, Vector &u)
+   static void NoSlip(const Vector &x, real_t t, Vector &u)
    {
       u = 0.0;
    }

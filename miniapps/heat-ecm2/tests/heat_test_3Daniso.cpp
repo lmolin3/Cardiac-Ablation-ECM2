@@ -58,16 +58,16 @@ int left_bdry = 1;
 int right_bdry = 2;
 int side_bdry = 3;
 
-double HeatingSphere(const Vector &x, double t);
-double T_fun(const Vector &x, double t);
+real_t HeatingSphere(const Vector &x, real_t t);
+real_t T_fun(const Vector &x, real_t t);
 
 // Conductivity Matrix
 void EulerAngles(const Vector &x, Vector &e);
 std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vector &d);
 
 // Volumetric heat
-constexpr double Sphere_Radius = 0.5;
-double Qval = 1.0e6; // Volumetric heat source (W/m^3)
+constexpr real_t Sphere_Radius = 0.5;
+real_t Qval = 1.0e6; // Volumetric heat source (W/m^3)
 
 int main(int argc, char *argv[])
 {
@@ -84,9 +84,9 @@ int main(int argc, char *argv[])
 
    // Problem
    int problem = 1;
-   double h = 100.0;         // W/m^2K Heat transfer coefficient (problem 3/5)
-   double T_amb_c = 100.0;   // Ambient temperature (°C) (problem 3/5)
-   double aniso_ratio = 2.0; // Anisotropic ratio
+   real_t h = 100.0;         // W/m^2K Heat transfer coefficient (problem 3/5)
+   real_t T_amb_c = 100.0;   // Ambient temperature (°C) (problem 3/5)
+   real_t aniso_ratio = 2.0; // Anisotropic ratio
    // Mesh
    int elem_type = 0; // 0 tet, 1 hex
    int order = 1;
@@ -95,8 +95,8 @@ int main(int argc, char *argv[])
    bool pa = false; // Enable partial assembly
    // Time integrator
    int ode_solver_type = -1;
-   double t_final = 100;
-   double dt = 1.0e-2;
+   real_t t_final = 100;
+   real_t dt = 1.0e-2;
    // Postprocessing
    bool visit = false;
    bool paraview = true;
@@ -156,7 +156,7 @@ int main(int argc, char *argv[])
    }
 
    // Convert ambient temperature to Kelvin
-   double T_amb = CelsiusToKelvin(T_amb_c);
+   real_t T_amb = CelsiusToKelvin(T_amb_c);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -239,7 +239,7 @@ int main(int argc, char *argv[])
    attr.Append(1);
    attr.Append(2);
 
-   double kval, cval, rhoval;
+   real_t kval, cval, rhoval;
 
    switch (problem)
    {
@@ -279,9 +279,9 @@ int main(int argc, char *argv[])
       {
          s.SetSize(3);
          s = 0.0;
-         double sx = aniso_ratio * kval;
-         double sy = kval;
-         double sz = kval;
+         real_t sx = aniso_ratio * kval;
+         real_t sy = kval;
+         real_t sz = kval;
          s(0, 0) = sx;
          s(1, 1) = sy;
          s(2, 2) = sz;
@@ -306,8 +306,8 @@ int main(int argc, char *argv[])
    case 1: // 2D conduction in rectangular plate (bottom = 1, right = 2, top = 3, left = 4)
    {
 
-      // double Tside = CelsiusToKelvin(20.0); // Bottom, Right, Left sides
-      double Tend = CelsiusToKelvin(20.0); // Bottom, Right, Left sides
+      // real_t Tside = CelsiusToKelvin(20.0); // Bottom, Right, Left sides
+      real_t Tend = CelsiusToKelvin(20.0); // Bottom, Right, Left sides
 
       bcs->AddDirichletBC(Tend, right_bdry);
       // bcs->AddDirichletBC(T_fun, left_bdry);
@@ -399,7 +399,7 @@ int main(int argc, char *argv[])
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
@@ -425,14 +425,14 @@ int main(int argc, char *argv[])
       cout << "\n Time integration... " << endl;
    }
 
-   double t = 0.0;
+   real_t t = 0.0;
 
    // Get reference to the temperature vector and gridfunction internal to Heat
    Vector &T = Heat.GetTemperature();
    ParGridFunction &T_gf = Heat.GetTemperatureGf();
 
    // Set the initial temperature
-   double T0val;
+   real_t T0val;
    switch (problem)
    {
    case 1: // 2D conduction in rectangular plate
@@ -460,7 +460,7 @@ int main(int argc, char *argv[])
    StopWatch sw_solve;
    sw_solve.Start();
 
-   double total_solve_time = 0.0;
+   real_t total_solve_time = 0.0;
    int iterations = 0;
 
    bool last_step = false;
@@ -491,11 +491,11 @@ int main(int argc, char *argv[])
    my_rt[0] = sw_solve.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
-   std::vector<double> timing_data = Heat.GetTimingData();
+   std::vector<real_t> timing_data = Heat.GetTimingData();
 
    if (Mpi::Root())
    {
-      double average_solve_time = my_rt[0] / iterations;
+      real_t average_solve_time = my_rt[0] / iterations;
 
       mfem::out << "Timing (s): " << std::setw(11) << "Init" << std::setw(13) << "Setup" << std::setw(18) << "Solve (tot)"
                 << std::setw(18) << "Solve (avg)"
@@ -537,9 +537,9 @@ int main(int argc, char *argv[])
    return 0;
 }
 
-double T_fun(const Vector &x, double t)
+real_t T_fun(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 3)
    {
       // T = sin(kappa x) sin(kappa y) + beta t
@@ -551,17 +551,17 @@ double T_fun(const Vector &x, double t)
    return T > 373.15 ? 373.15 : T;
 }
 
-double HeatingSphere(const Vector &x, double t)
+real_t HeatingSphere(const Vector &x, real_t t)
 {
-   double Q = 0.0;
+   real_t Q = 0.0;
    if (x.Size() == 3)
    {
-      double r = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+      real_t r = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
       Q = r < Sphere_Radius / 4.0 ? Qval : 0.0; // W/m^2
    }
    else if (x.Size() == 2)
    {
-      double r = sqrt(x[0] * x[0] + x[1] * x[1]);
+      real_t r = sqrt(x[0] * x[0] + x[1] * x[1]);
       Q = r < Sphere_Radius / 4.0 ? Qval : 0.0; // W/m^2
    }
 
@@ -578,20 +578,20 @@ std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vect
       // Compute Euler angles
       Vector e(3);
       EulerAngles(x, e);
-      double e1 = e(0);
-      double e2 = e(1);
-      double e3 = e(2);
+      real_t e1 = e(0);
+      real_t e2 = e(1);
+      real_t e3 = e(2);
 
       // Compute rotated matrix
       if (dim == 3)
       {
          // Compute cosine and sine of the angles e1, e2, e3
-         const double c1 = cos(e1);
-         const double s1 = sin(e1);
-         const double c2 = cos(e2);
-         const double s2 = sin(e2);
-         const double c3 = cos(e3);
-         const double s3 = sin(e3);
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         const real_t c2 = cos(e2);
+         const real_t s2 = sin(e2);
+         const real_t c3 = cos(e3);
+         const real_t s3 = sin(e3);
 
          // Fill the rotation matrix R with the Euler angles.
          DenseMatrix R(3, 3);
@@ -617,8 +617,8 @@ std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix(const Vect
       }
       else if (dim == 2)
       {
-         const double c1 = cos(e1);
-         const double s1 = sin(e1);
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
          DenseMatrix Rt(2, 2);
          Rt(0, 0) = c1;
          Rt(0, 1) = s1;

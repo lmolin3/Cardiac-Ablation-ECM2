@@ -659,7 +659,7 @@ int main(int argc, char *argv[])
    }
 
    bool converged = false;
-   real_t tol = 1.0e-4;
+   real_t tol = 1.0e-10;
    int max_iter = 100;
 
    // Vectors for error computation and relaxation

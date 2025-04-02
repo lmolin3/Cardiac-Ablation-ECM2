@@ -90,7 +90,7 @@ struct s_NavierContext // Navier Stokes params
    bool mass_lumping = false; // Mass lumping
    bool stiff_strain = false; // Stiff strain
 
-   static void NoSlip(const Vector &x, double t, Vector &u)
+   static void NoSlip(const Vector &x, real_t t, Vector &u)
    {
       u = 0.0;
    }
@@ -111,12 +111,8 @@ struct s_DomainDecompositionContext
    real_t omega_rf_cyl = 0.8; 
 
    // Robin-Robin coupling parameters
-   real_t alpha_rf = 1.0;
-   real_t alpha1_rf = 1.0;
-   real_t alpha2_rf = 1.0;
-   real_t alpha_heat = 1.0;
-   real_t alpha1_heat = 1.0;
-   real_t alpha2_heat = 1.0;
+   Vector alpha_rf; // Robin-Robin coupling parameters for RF problem (FS_fluid, FS_solid)
+   Vector alpha_heat; // Robin-Robin coupling parameters for heat transfer problem (FS_fluid, FC_fluid, FS_solid, SC_solid, FC_cylinder, SC_cylinder)
 } DD_ctx;
 
 

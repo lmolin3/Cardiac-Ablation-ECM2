@@ -523,7 +523,7 @@ int main(int argc, char *argv[])
 
    // Write fields to disk for VisIt
    bool converged = false;
-   real_t tol = 1.0e-4;
+   real_t tol = 1.0e-10;
    int max_iter = 100;
    int step = 0;
 

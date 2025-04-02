@@ -69,16 +69,16 @@ namespace mfem
             void AddDirichletBC(ScalarFuncT *func, int &attr);
 
             /**
-             * \brief Add Dirichlet BC for electric potential using double and specific mesh attribute.
+             * \brief Add Dirichlet BC for electric potential using real_t and specific mesh attribute.
              *
-             * Add a Dirichlet boundary condition for electric potential to internal list of essential bcs passing double,
+             * Add a Dirichlet boundary condition for electric potential to internal list of essential bcs passing real_t,
              * and integer for specific mesh attribute (they will be applied at setup time).
              *
              * \param coeff_val Value of the Dirichlet BC
              * \param attr Boundary attribute
              *
              */
-            void AddDirichletBC(double coeff_val, int &attr);
+            void AddDirichletBC(real_t coeff_val, int &attr);
 
             /**
              * \brief Add Dirichlet BC for electric potential using Coefficient and list of essential mesh attributes.
@@ -154,16 +154,16 @@ namespace mfem
             void AddNeumannBC(ScalarFuncT *func, int &attr);
 
             /**
-             * \brief Add Neumann BC using double and specific mesh attribute.
+             * \brief Add Neumann BC using real_t and specific mesh attribute.
              *
              * Add a Neumann boundary condition to internal list of Neumann bcs,
-             * using double and specific mesh attribute(they will be applied at setup time by adding BoundaryIntegrators to the rhs).
+             * using real_t and specific mesh attribute(they will be applied at setup time by adding BoundaryIntegrators to the rhs).
              *
              * \param val Neumann value
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannBC(double val, int &attr);
+            void AddNeumannBC(real_t val, int &attr);
 
 
             /**
@@ -266,7 +266,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeDirichletBCs(double new_time);
+            void UpdateTimeDirichletBCs(real_t new_time);
 
             /**
              * \brief Update the time in the pressure BCs coefficients.
@@ -276,7 +276,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeNeumannBCs(double new_time);
+            void UpdateTimeNeumannBCs(real_t new_time);
 
             /**
              * \brief Update the time in the Vector Neumann BCs coefficients.
@@ -286,7 +286,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeNeumannVectorBCs(double new_time);
+            void UpdateTimeNeumannVectorBCs(real_t new_time);
 
             /**
              * \brief Update the time in the Robin BCs coefficients.
@@ -296,7 +296,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeRobinBCs(double new_time);
+            void UpdateTimeRobinBCs(real_t new_time);
 
             // Getters
 

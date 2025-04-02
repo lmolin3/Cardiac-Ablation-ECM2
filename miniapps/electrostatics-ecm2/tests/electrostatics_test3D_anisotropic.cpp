@@ -184,14 +184,14 @@ int main(int argc, char *argv[])
    {
       MFEM_ASSERT(sigma_attr[i] <= pmesh->attributes.Max(), "Attribute value out of range");
 
-      double sigma_val = pw_sigma[i];
-      double sigma_ratio = aniso_ratio[i];
+      real_t sigma_val = pw_sigma[i];
+      real_t sigma_ratio = aniso_ratio[i];
       auto sigmaFunc = [sigma_val,sigma_ratio](const Vector &x, DenseMatrix &s) {
          s.SetSize(3);
          s = 0.0;
-         double sx = sigma_val;
-         double sy = sigma_val/sigma_ratio;
-         double sz = sigma_val/sigma_ratio;
+         real_t sx = sigma_val;
+         real_t sy = sigma_val/sigma_ratio;
+         real_t sz = sigma_val/sigma_ratio;
          s(0,0) = sx;
          s(1,1) = sy;
          s(2,2) = sz;
@@ -226,7 +226,7 @@ int main(int argc, char *argv[])
          for (int j = 0; j < s; j++)
          {
             k = k + j;
-            e_tmp(j) = (k) < nval ? static_cast<double>(dbce_val(k)) : 0.0;
+            e_tmp(j) = (k) < nval ? static_cast<real_t>(dbce_val(k)) : 0.0;
          }
          e_uniform.push_back(e_tmp);
 
@@ -297,7 +297,7 @@ int main(int argc, char *argv[])
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 

@@ -83,7 +83,7 @@ void BCHandler::AddDirichletBC(ScalarFuncT func, int &attr)
     AddDirichletBC(new FunctionCoefficient(func), attr);
 }
 
-void BCHandler::AddDirichletBC(double coeff_val, int &attr)
+void BCHandler::AddDirichletBC(real_t coeff_val, int &attr)
 {
     auto coeff = new ConstantCoefficient(coeff_val);
     AddDirichletBC(coeff, attr);
@@ -97,7 +97,7 @@ void BCHandler::AddDirichletEFieldBC(Vector &EField, Array<int> &attr)
 
     auto func = [EField](const Vector &x)
     {
-        double phi_val = 0.0;
+        real_t phi_val = 0.0;
 
         for (int i = 0; i < x.Size(); i++)
         {
@@ -195,7 +195,7 @@ void BCHandler::AddNeumannBC(Coefficient *coeff, int &attr)
     AddNeumannBC(coeff, neumann_attr_tmp);
 }
 
-void BCHandler::AddNeumannBC(double val, int &attr)
+void BCHandler::AddNeumannBC(real_t val, int &attr)
 {
     auto coeff = new ConstantCoefficient(val);
     AddNeumannBC(coeff, attr);
@@ -346,7 +346,7 @@ void BCHandler::AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficie
 }
 
 
-void BCHandler::UpdateTimeDirichletBCs(double new_time)
+void BCHandler::UpdateTimeDirichletBCs(real_t new_time)
 {
     for (auto &dirichlet_dbc : dirichlet_dbcs)
     {
@@ -359,7 +359,7 @@ void BCHandler::UpdateTimeDirichletBCs(double new_time)
     }
 }
 
-void BCHandler::UpdateTimeNeumannBCs(double new_time)
+void BCHandler::UpdateTimeNeumannBCs(real_t new_time)
 {
     for (auto &neumann_bc : neumann_bcs)
     {
@@ -367,7 +367,7 @@ void BCHandler::UpdateTimeNeumannBCs(double new_time)
     }
 }
 
-void BCHandler::UpdateTimeNeumannVectorBCs(double new_time)
+void BCHandler::UpdateTimeNeumannVectorBCs(real_t new_time)
 {
     for (auto &neumann_vec_bc : neumann_vec_bcs)
     {
@@ -375,7 +375,7 @@ void BCHandler::UpdateTimeNeumannVectorBCs(double new_time)
     }
 }
 
-void BCHandler::UpdateTimeRobinBCs(double new_time)
+void BCHandler::UpdateTimeRobinBCs(real_t new_time)
 {
     for (auto &robin_bc : robin_bcs)
     {

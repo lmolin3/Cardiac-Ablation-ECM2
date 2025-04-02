@@ -45,7 +45,7 @@ namespace mfem
 
             virtual void AddVisItField(const std::string &field_name, ParGridFunction *gf);
 
-            virtual void WriteFields(const int &it = 0, const double &time = 0);
+            virtual void WriteFields(const int &it = 0, const real_t &time = 0);
 
             ParaViewDataCollection &GetParaViewDc() { return *paraview_dc; }
             VisItDataCollection &GetVisItDc() { return *visit_dc; }

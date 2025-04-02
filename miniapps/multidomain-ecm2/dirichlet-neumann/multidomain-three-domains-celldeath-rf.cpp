@@ -932,7 +932,7 @@ int main(int argc, char *argv[])
 
    {
       bool converged = false;
-      real_t tol = 1.0e-4;
+      real_t tol = 1.0e-10;
       int max_iter = 100;
 
       int iter = 0;
@@ -1147,7 +1147,7 @@ int main(int argc, char *argv[])
    real_t t = 0.0;
    bool last_step = false;
    bool converged = false;
-   real_t tol = 1.0e-4;
+   real_t tol = 1.0e-10;
    int max_iter = 100;
    int num_steps = (int)(Sim_ctx.t_final / Sim_ctx.dt);
 

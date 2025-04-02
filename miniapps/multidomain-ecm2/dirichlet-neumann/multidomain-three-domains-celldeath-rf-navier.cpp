@@ -64,7 +64,7 @@ void print_matrix(const DenseMatrix &A);
 void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step);
 void saveSubiterationCount(const Array<int> &data, const std::string &outfolder, const std::string &name);
 
-void inflow(const Vector &x, double t, Vector &u)
+void inflow(const Vector &x, real_t t, Vector &u)
 {
    u = 0.0;
    u(1) = Navier_ctx.u_inflow;
@@ -1059,7 +1059,7 @@ int main(int argc, char *argv[])
 
    {
       bool converged = false;
-      real_t tol = 1.0e-4;
+      real_t tol = 1.0e-10;
       int max_iter = 100;
 
       int iter = 0;
@@ -1277,7 +1277,7 @@ int main(int argc, char *argv[])
    real_t t = 0.0;
    bool last_step = false;
    bool converged = false;
-   real_t tol = 1.0e-4;
+   real_t tol = 1.0e-10;
    int max_iter = 100;
    int num_steps = (int)(Sim_ctx.t_final / Sim_ctx.dt);
 

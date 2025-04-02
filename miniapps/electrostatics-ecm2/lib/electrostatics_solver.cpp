@@ -328,7 +328,7 @@ namespace mfem
             }
          }
 
-         const double rel_tol = 1e-8;
+         const real_t rel_tol = 1e-8;
          if (symmetric)
             solver = new CGSolver(H1FESpace->GetComm());
          else
@@ -408,7 +408,7 @@ namespace mfem
       }
 
       void
-      ElectrostaticsSolver::Update() // TODO: maybe for transient simulations we can add Update(double time) and update coeffs and bcs
+      ElectrostaticsSolver::Update() // TODO: maybe for transient simulations we can add Update(real_t time) and update coeffs and bcs
       {
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -585,10 +585,10 @@ namespace mfem
          AddVolumetricTerm(func, tmp_domain_attr);
       }
 
-      double ElectrostaticsSolver::ElectricLosses(ParGridFunction &E_gf) const
+      real_t ElectrostaticsSolver::ElectricLosses(ParGridFunction &E_gf) const
       {
          // Compute E^T M1 E, where M1 is the HCurl mass matrix with conductivity
-         double el = 0.0;
+         real_t el = 0.0;
 
          int true_vsize =  HCurlFESpace->GetTrueVSize(); 
 
@@ -792,7 +792,7 @@ namespace mfem
 
       void ElectrostaticsSolver::PrintTimingData()
       {
-         double my_rt[3], rt_max[3];
+         real_t my_rt[3], rt_max[3];
 
          my_rt[0] = sw_setup.RealTime();
          my_rt[1] = sw_assemble.RealTime();

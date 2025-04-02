@@ -45,23 +45,23 @@ using namespace mfem;
 using namespace mfem::heat;
 
 // Exact smooth analytic solution for convergence study
-double T_exact1(const Vector &x, double t);
+real_t T_exact1(const Vector &x, real_t t);
 void T_grad_exact1(const Vector &x, Vector &gradT);
-double f_exact1(const Vector &x);
+real_t f_exact1(const Vector &x);
 
-double T_exact2(const Vector &x, double t);
+real_t T_exact2(const Vector &x, real_t t);
 void T_grad_exact2(const Vector &x, Vector &gradT);
-double f_exact2(const Vector &x);
+real_t f_exact2(const Vector &x);
 
-double T_exact3(const Vector &x, double t);
+real_t T_exact3(const Vector &x, real_t t);
 void T_grad_exact3(const Vector &x, Vector &gradT);
-double f_exact3(const Vector &x, double t);
+real_t f_exact3(const Vector &x, real_t t);
 
 // Setting the frequency for the exact solution
-double alpha = 3.0;
-double beta = 1.2;
-double freq = 1.0;
-double kappa;
+real_t alpha = 3.0;
+real_t beta = 1.2;
+real_t freq = 1.0;
+real_t kappa;
 
 static Vector pw_k(0);     // Piecewise conductivity values
 static Vector k_attr(0);   // Domain attributes associated to piecewise Conductivity
@@ -143,22 +143,15 @@ int main(int argc, char *argv[])
    args.AddOption(&fun, "-fun", "--function",
                   "Function to use for the exact solution: 1 - 2nd ord Polynomial, 2 - Trigonometric");
 
-   args.Parse();
-   if (!args.Good())
-   {
-      if (Mpi::Root())
-      {
-         args.PrintUsage(cout);
-      }
-      return 1;
-   }
+   args.ParseCheck();
+
 
    kappa = freq * M_PI;
 
    // Determine final time
-   double t_initial = 0.0;
-   double t_final = 2.0;
-   double dt = (t_final - t_initial) / num_steps;
+   real_t t_initial = 0.0;
+   real_t t_final = 2.0;
+   real_t dt = (t_final - t_initial) / num_steps;
 
    // Set output options and print header
    cout.precision(4);
@@ -173,9 +166,9 @@ int main(int argc, char *argv[])
            << endl;
    }
 
-   double l2_err_prev = 0.0;
-   double h1_err_prev = 0.0;
-   double h_prev = 0.0;
+   real_t l2_err_prev = 0.0;
+   real_t h1_err_prev = 0.0;
+   real_t h_prev = 0.0;
 
    // Refinement loop
    for (int serial_ref_levels = 0; serial_ref_levels < total_refinements; serial_ref_levels++)
@@ -418,7 +411,7 @@ int main(int argc, char *argv[])
       Heat.SetInitialTemperature(T_gf);
 
       // Time-stepping loop
-      double t = 0.0;
+      real_t t = 0.0;
       bool last_step = false;
       for (int step = 1; !last_step; step++)
       {
@@ -442,17 +435,17 @@ int main(int argc, char *argv[])
       /// 9. Compute and print the L^2 and H^1 norms of the error.
       ///////////////////////////////////////////////////////////////////////////////////////////////
 
-      double l2_err = 0.0;
-      double h1_err = 0.0;
-      double l2_rate = 0.0;
-      double h1_rate = 0.0;
+      real_t l2_err = 0.0;
+      real_t h1_err = 0.0;
+      real_t l2_rate = 0.0;
+      real_t h1_rate = 0.0;
       l2_err = T_gf.ComputeL2Error(*Tex_coeff);
       h1_err = T_gf.ComputeH1Error(Tex_coeff, gradTex_coeff);
 
-      double h_min = 0.0;
-      double h_max = 0.0;
-      double kappa_min = 0.0;
-      double kappa_max = 0.0;
+      real_t h_min = 0.0;
+      real_t h_max = 0.0;
+      real_t kappa_min = 0.0;
+      real_t kappa_max = 0.0;
       pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
 
       if (serial_ref_levels != 0)
@@ -508,9 +501,9 @@ int main(int argc, char *argv[])
    }
 }
 
-double T_exact1(const Vector &x, double t)
+real_t T_exact1(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 2)
    {
       // T = 1 + x^2 + alpha y^2 + beta t
@@ -550,9 +543,9 @@ void T_grad_exact1(const Vector &x, Vector &gradT)
    }
 }
 
-double f_exact1(const Vector &x)
+real_t f_exact1(const Vector &x)
 {
-   double f = 0.0;
+   real_t f = 0.0;
    if (x.Size() == 2)
    {
       // beta - 2 - 2 alpha
@@ -571,9 +564,9 @@ double f_exact1(const Vector &x)
    return f;
 }
 
-double T_exact2(const Vector &x, double t)
+real_t T_exact2(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 2)
    {
       // T = sin(kappa x) sin(kappa y) + beta t
@@ -613,9 +606,9 @@ void T_grad_exact2(const Vector &x, Vector &gradT)
    }
 }
 
-double f_exact2(const Vector &x)
+real_t f_exact2(const Vector &x)
 {
-   double f = 0.0;
+   real_t f = 0.0;
    if (x.Size() == 2)
    {
       // beta + 2 kappa^2 sin(kappa x) sin(kappa y)
@@ -634,9 +627,9 @@ double f_exact2(const Vector &x)
    return f;
 }
 
-double T_exact3(const Vector &x, double t)
+real_t T_exact3(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 2)
    {
       // T = sin(kappa x) sin(kappa y) + beta t^2
@@ -676,9 +669,9 @@ void T_grad_exact3(const Vector &x, Vector &gradT)
    }
 }
 
-double f_exact3(const Vector &x, double t)
+real_t f_exact3(const Vector &x, real_t t)
 {
-   double f = 0.0;
+   real_t f = 0.0;
    if (x.Size() == 2)
    {
       // beta + 2 kappa^2 sin(kappa x) sin(kappa y)

@@ -64,11 +64,11 @@ using namespace mfem::heat;
 
 IdentityMatrixCoefficient *Id = NULL;
 
-constexpr double Sphere_Radius = 0.1;
-double Qval = 1.0e6; // W/m^3
+constexpr real_t Sphere_Radius = 0.1;
+real_t Qval = 1.0e6; // W/m^3
 
-double HeatingSphere(const Vector &x, double t);
-double T_side(const Vector &x, double t);
+real_t HeatingSphere(const Vector &x, real_t t);
+real_t T_side(const Vector &x, real_t t);
 
 int main(int argc, char *argv[])
 {
@@ -85,8 +85,8 @@ int main(int argc, char *argv[])
 
    // Problem
    int problem = 1;
-   double h = 100.0;       // W/m^2K Heat transfer coefficient (problem 3/5)
-   double T_amb_c = 100.0; // Ambient temperature (°C) (problem 3/5)
+   real_t h = 100.0;       // W/m^2K Heat transfer coefficient (problem 3/5)
+   real_t T_amb_c = 100.0; // Ambient temperature (°C) (problem 3/5)
    // Mesh
    int element_type = 0; // 0 - Tri, 1 - Quad
    int order = 1;
@@ -95,8 +95,8 @@ int main(int argc, char *argv[])
    bool pa = false; // Enable partial assembly
    // Time integrator
    int ode_solver_type = -1;
-   double t_final = 100;
-   double dt = 1.0e-2;
+   real_t t_final = 100;
+   real_t dt = 1.0e-2;
    // Postprocessing
    bool visit = false;
    bool paraview = true;
@@ -139,22 +139,11 @@ int main(int argc, char *argv[])
    args.AddOption(&outfolder, "-of", "--out-folder",
                   "Output folder.");
 
-   args.Parse();
-   if (!args.Good())
-   {
-      if (Mpi::Root())
-      {
-         args.PrintUsage(cout);
-      }
-      return 1;
-   }
-   if (Mpi::Root())
-   {
-      args.PrintOptions(cout);
-   }
+
+   args.ParseCheck();
 
    // Convert ambient temperature to Kelvin
-   double T_amb = CelsiusToKelvin(T_amb_c);
+   real_t T_amb = CelsiusToKelvin(T_amb_c);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -239,7 +228,7 @@ int main(int argc, char *argv[])
    Array<int> attr(0);
    attr.Append(1);
 
-   double kval, cval, rhoval;
+   real_t kval, cval, rhoval;
 
    switch (problem)
    {
@@ -298,8 +287,8 @@ int main(int argc, char *argv[])
       dbcs = 1;
       dbcs[top - 1] = 0;
 
-      double T2 = CelsiusToKelvin(20.0);  // Top side
-      double T1 = CelsiusToKelvin(100.0); // Bottom, Right, Left sides
+      real_t T2 = CelsiusToKelvin(20.0);  // Top side
+      real_t T1 = CelsiusToKelvin(100.0); // Bottom, Right, Left sides
 
       bcs->AddDirichletBC(T2, top);
       bcs->AddDirichletBC(T1, dbcs);
@@ -312,7 +301,7 @@ int main(int argc, char *argv[])
       dbcs = 1;
       dbcs[top - 1] = 0;
 
-      double T2 = CelsiusToKelvin(20.0); // Top side
+      real_t T2 = CelsiusToKelvin(20.0); // Top side
 
       bcs->AddDirichletBC(T2, top);
       bcs->AddDirichletBC(T_side, dbcs);
@@ -430,7 +419,7 @@ int main(int argc, char *argv[])
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
@@ -456,14 +445,14 @@ int main(int argc, char *argv[])
       cout << "\n Time integration... " << endl;
    }
 
-   double t = 0.0;
+   real_t t = 0.0;
 
    // Get reference to the temperature vector and gridfunction internal to Heat
    Vector &T = Heat.GetTemperature();
    ParGridFunction &T_gf = Heat.GetTemperatureGf();
 
    // Set the initial temperature
-   double T0val;
+   real_t T0val;
    switch (problem)
    {
    case 1: // 2D conduction in rectangular plate
@@ -494,7 +483,7 @@ int main(int argc, char *argv[])
       Heat.WriteFields(0, t);
    }
 
-   double total_solve_time = 0.0;
+   real_t total_solve_time = 0.0;
    int iterations = 0;
 
    bool last_step = false;
@@ -519,7 +508,7 @@ int main(int argc, char *argv[])
       }
 
       // Compute the total solve time
-      std::vector<double> timing_data = Heat.GetTimingData();
+      std::vector<real_t> timing_data = Heat.GetTimingData();
       if (Mpi::Root())
       {
          total_solve_time += timing_data[2]; // Add the solve time to the total
@@ -527,11 +516,11 @@ int main(int argc, char *argv[])
       }
    }
 
-   std::vector<double> timing_data = Heat.GetTimingData();
+   std::vector<real_t> timing_data = Heat.GetTimingData();
 
    if (Mpi::Root())
    {
-      double average_solve_time = total_solve_time / iterations;
+      real_t average_solve_time = total_solve_time / iterations;
 
       mfem::out << "Timing (s): " << std::setw(11) << "Init" << std::setw(13) << "Setup" << std::setw(18) << "Solve (tot)"
                 << std::setw(18) << "Solve (avg)"
@@ -573,9 +562,9 @@ int main(int argc, char *argv[])
    return 0;
 }
 
-double T_side(const Vector &x, double t)
+real_t T_side(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 2)
    {
       // T = sin(kappa x) sin(kappa y) + beta t
@@ -587,17 +576,17 @@ double T_side(const Vector &x, double t)
    return T > 373.15 ? 373.15 : T;
 }
 
-double HeatingSphere(const Vector &x, double t)
+real_t HeatingSphere(const Vector &x, real_t t)
 {
-   double Q = 0.0;
+   real_t Q = 0.0;
    if (x.Size() == 3)
    {
-      double r = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+      real_t r = sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
       Q = r < Sphere_Radius / 4.0 ? Qval : 0.0; // W/m^2
    }
    else if (x.Size() == 2)
    {
-      double r = sqrt(x[0] * x[0] + x[1] * x[1]);
+      real_t r = sqrt(x[0] * x[0] + x[1] * x[1]);
       Q = r < Sphere_Radius / 4.0 ? Qval : 0.0; // W/m^2
    }
 

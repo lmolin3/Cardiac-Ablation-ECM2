@@ -88,7 +88,7 @@ namespace mfem
 
          // Compute E^T M1 E, where M1 is the H1 mass matrix with conductivity
          // coefficient.
-         double ElectricLosses(ParGridFunction &E_gf) const;
+         real_t ElectricLosses(ParGridFunction &E_gf) const;
 
          // w is the output which is L2 heating. This just projects the Joule heating coefficient which is already setup internally with the electric field and conductivity.
          void GetJouleHeating(ParGridFunction &w_gf) const;
