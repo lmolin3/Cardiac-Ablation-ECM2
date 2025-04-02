@@ -7,11 +7,11 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 1.0 -alpha 1
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 1.0 -alpha '1e3 1e-3'
 // 2. Hexahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 1.0 -alpha 1 
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 1.0 -alpha '1e3 1e-3'
 // 3. Hexahedral mesh with partial assembly
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 1.0 -alpha 1
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 1.0 -alpha '1e3 1e-3'
 
 
 // MFEM library
@@ -64,6 +64,11 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
    OptionsParser args(argc, argv);
+
+   DD_ctx.alpha_rf.SetSize(2);
+   DD_ctx.alpha_rf[0] = 1e3; // Fluid
+   DD_ctx.alpha_rf[1] = 1e-3; // Solid
+
    // FE
    args.AddOption(&RF_ctx.order, "-o", "--order",
                   "Finite element order (polynomial degree).");
@@ -80,7 +85,7 @@ int main(int argc, char *argv[])
    args.AddOption(&DD_ctx.omega_rf, "-omega", "--relaxation-parameter",
                   "Relaxation parameter.");
    args.AddOption(&DD_ctx.alpha_rf, "-alpha", "--alpha-robin",
-                  "Robin-Robin coupling parameter.");
+                  "Robin-Robin coupling parameters (Fluid, Solid).");
    // Physics
    args.AddOption(&RF_ctx.aniso_ratio, "-ar", "--aniso-ratio-rf",
                   "Anisotropy ratio for RF problem.");
@@ -97,6 +102,13 @@ int main(int argc, char *argv[])
                   "Save convergence data.");
 
    args.ParseCheck();                  
+
+
+   // Check on provided alpha values
+   if (DD_ctx.alpha_rf.Size() != 2)
+   {
+      MFEM_ABORT("2 coupling parameters must be provided (fluid, solid), but " << DD_ctx.alpha_rf.Size() << " were provided.");
+   }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -418,7 +430,7 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for fluid domain... \033[0m" << std::endl;
 
-   ConstantCoefficient alpha_coeff1(DD_ctx.alpha_rf);
+   ConstantCoefficient alpha_coeff1(DD_ctx.alpha_rf[0]);
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
    VectorGridFunctionCoefficient *E_fs_fluid_coeff = new VectorGridFunctionCoefficient(E_fs_fluid);
    //bcs_fluid->AddDirichletBC(RF_ctx.phi_gnd, fluid_top_attr[0]);
@@ -434,7 +446,7 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34m\nSetting up BCs for solid domain...\033[0m" << std::endl;
    RF_ctx.phi_gnd = 0.0;
    RF_ctx.phi_applied = 1.0;
-   ConstantCoefficient alpha_coeff2(1/DD_ctx.alpha_rf);
+   ConstantCoefficient alpha_coeff2(DD_ctx.alpha_rf[1]);
    GridFunctionCoefficient *phi_fs_solid_coeff = new GridFunctionCoefficient(phi_fs_solid);
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
    bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
@@ -535,7 +547,7 @@ int main(int argc, char *argv[])
 
    // Write fields to disk for VisIt
    bool converged = false;
-   real_t tol = 1.0e-4;
+   real_t tol = 1.0e-10;
    int max_iter = 100;
    int step = 0;
 

@@ -64,18 +64,16 @@ namespace mfem
 
       void AdvectionReactionDiffusionOperator::EnablePA(bool pa_) { pa = pa_; }
 
-      void AdvectionReactionDiffusionOperator::Setup(real_t dt, int prec_type)
+      void AdvectionReactionDiffusionOperator::Setup(real_t dt, bool implicit_time_integration_, int prec_type)
       {
-         // cout << "\033[31mCheckpoint 0, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
+         implicit_time_integration = implicit_time_integration_;
+
          current_dt = dt;
 
          /// 1. Check partial assembly
          // bool tensor = false;
          bool tensor = UsesTensorBasis(H1FESpace);
-         if (pa)
-            MFEM_ASSERT(tensor, "Only tensor basis is supported with  partial assembly");
-
-         // cout << "\033[31mCheckpoint 1, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
+         MFEM_VERIFY(!(pa && !tensor), "Partial assembly is only supported for tensor elements.");
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -89,15 +87,11 @@ namespace mfem
             }
          }
 
-         // cout << "\033[31mCheckpoint 2, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
-
          /// 2. Extract the list of essential BC degrees of freedom
          if ((bcs->GetDirichletDbcs()).size() > 0) // Applied temperature
          {
             H1FESpace.GetEssentialTrueDofs(bcs->GetDirichletAttr(), ess_tdof_list);
          }
-
-         // cout << "\033[31mCheckpoint 3, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
 
          /// 3. Setup bilinear forms
          // Mass matrix
@@ -116,8 +110,7 @@ namespace mfem
          for (auto &robin_bc : bcs->GetRobinBcs())
          {
             // Add a Mass integrator on the Robin boundary
-            RobinMass->AddBoundaryIntegrator(new MassIntegrator(*robin_bc.h_coeff),
-                                             robin_bc.attr);
+            RobinMass->AddBoundaryIntegrator(new MassIntegrator(*robin_bc.h_coeff), robin_bc.attr);
          }
 
          for (auto &robin_bc : bcs->GetGeneralRobinBcs())
@@ -125,8 +118,6 @@ namespace mfem
             // Add a Mass integrator on the Robin boundary
             RobinMass->AddBoundaryIntegrator(new MassIntegrator(*robin_bc.alpha1), robin_bc.attr);
          }
-
-         // cout << "\033[31mCheckpoint 2, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
 
          // Finalize (based on assembly level)
          if (pa)
@@ -140,10 +131,10 @@ namespace mfem
          int skip_zeros = 0;
          M->Assemble(skip_zeros); // keep sparsity pattern of M and K the same
          K->Assemble(skip_zeros); // keep sparsity pattern of M and K the same
-         // RobinMass->Assemble(skip_zeros); // Done in SetTime
+         RobinMass->Assemble(skip_zeros); // Done in SetTime
 
          K->FormSystemMatrix(empty, opK);
-         // RobinMass->FormSystemMatrix(empty, opRobinMass); // Done in SetTime
+         RobinMass->FormSystemMatrix(empty, opRobinMass); // Done in SetTime
          if (pa)
          {
             M->FormSystemMatrix(ess_tdof_list, opM);
@@ -155,26 +146,19 @@ namespace mfem
             opMe.EliminateRowsCols(opM, ess_tdof_list);
          }
 
-         // cout << "\033[31mCheckpoint 3, MPI rank: \033[0m" << pmesh->GetMyRank() << endl;
-
          MPI_Barrier(H1FESpace.GetComm());
 
          /// 4. Solvers
+
          // Solver for mass matrix
          if (pa)
          {
             M_prec = new OperatorJacobiSmoother(*M, ess_tdof_list);
-            T_solver = new ImplicitSolverPA(&H1FESpace, current_dt, bcs, ess_tdof_list, Kappa, rhoC, alpha, u, beta, prec_type);
          }
          else
          {
             M_prec = new HypreSmoother();
             static_cast<HypreSmoother *>(M_prec)->SetType(HypreSmoother::Jacobi); // See hypre.hpp for more options
-
-            // Solver for implicit solve (T_prec will be set in ImplicitSolve)
-            T_solver = new ImplicitSolverFA(Mfull, opK.As<HypreParMatrix>(), ess_tdof_list, pmesh->Dimension(), has_advection);
-            static_cast<ImplicitSolverFA *>(T_solver)->SetOperators(Mfull, opK.As<HypreParMatrix>(), opRobinMass.As<HypreParMatrix>());
-            static_cast<ImplicitSolverFA *>(T_solver)->SetTimeStep(current_dt);
          }
 
          const real_t rel_tol = 1e-8;
@@ -187,36 +171,46 @@ namespace mfem
          M_solver.SetPreconditioner(*M_prec);
          M_solver.SetOperator(*opM);
 
+         // Solver for implicit operator 
+         if (implicit_time_integration)
+         {
+            if (pa)
+            {
+               T_solver = new ImplicitSolverPA(&H1FESpace, current_dt, bcs, ess_tdof_list, Kappa, rhoC, alpha, u, beta, prec_type);
+            }
+            else
+            {
+               // Solver for implicit solve (T_prec will be set in ImplicitSolve)
+               T_solver = new ImplicitSolverFA(ess_tdof_list, pmesh->Dimension(), has_advection, current_dt, Mfull, opK.As<HypreParMatrix>(), opRobinMass.As<HypreParMatrix>());
+            }
+         }
+
          /// 5. Assemble linear form for rhs
          fform = new ParLinearForm(&H1FESpace);
 
          // Adding Volumetric heat terms
          for (auto &volumetric_term : volumetric_terms)
          {
-            fform->AddDomainIntegrator(new DomainLFIntegrator(*(volumetric_term.coeff)),
-                                       volumetric_term.attr);
+            fform->AddDomainIntegrator(new DomainLFIntegrator(*(volumetric_term.coeff)),volumetric_term.attr);
          }
 
          // Adding neuman bcs
          for (auto &neumann_bc : bcs->GetNeumannBcs())
          {
-            fform->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(neumann_bc.coeff)),
-                                         neumann_bc.attr);
+            fform->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(neumann_bc.coeff)),neumann_bc.attr);
          }
 
          // Adding neuman vector bcs
          for (auto &neumann_vec_bc : bcs->GetNeumannVectorBcs())
          {
             fform->AddBoundaryIntegrator(
-                new BoundaryNormalLFIntegrator(*(neumann_vec_bc.coeff)),
-                neumann_vec_bc.attr);
+                new BoundaryNormalLFIntegrator(*(neumann_vec_bc.coeff)),neumann_vec_bc.attr);
          }
 
          // Adding robin bcs
          for (auto &robin_bc : bcs->GetRobinBcs())
          {
-            fform->AddBoundaryIntegrator(
-                new BoundaryLFIntegrator(*(robin_bc.hT0_coeff)), robin_bc.attr);
+            fform->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(robin_bc.hT0_coeff)), robin_bc.attr);
          }
 
          for (auto &robin_bc : bcs->GetGeneralRobinBcs())
@@ -230,10 +224,11 @@ namespace mfem
 
       void AdvectionReactionDiffusionOperator::Update()
       {
+         int skip_zeros = 0;
          Array<int> empty;
          // Inform the bilinear forms that the space has changed and reassemble.
          M->Update();
-         M->Assemble(0);
+         M->Assemble(skip_zeros);
 
          if (pa)
          {
@@ -247,12 +242,12 @@ namespace mfem
          }
 
          K->Update();
-         K->Assemble(0);
+         K->Assemble(skip_zeros);
          K->FormSystemMatrix(empty, opK);
 
          if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0)
          {
-            RobinMass->Update();
+            RobinMass->Update(); // TODO: Should i also re-assemble it?
          }
 
          // Inform the linear forms that the space has changed.
@@ -264,32 +259,44 @@ namespace mfem
       {
          TimeDependentOperator::SetTime(time);
 
-         // Update the advection coefficient and re-assemble the stiffness matrix
-         if (has_advection)
-         {
-            u->SetTime(time);
-            K->Update();
-            K->Assemble(0);
-            Array<int> empty;
-            K->FormSystemMatrix(empty, opK);
-         }
-
-         // Update the time dependent boundary conditions
+         // Update time for parameters, volumetric terms and bcs
+         SetCoefficientsTime(time);
          bcs->SetTime(time);
-
-         // Volumetric heat terms
+         
          for (auto &volumetric_term : volumetric_terms)
          {
             volumetric_term.coeff->SetTime(time);
          }
 
+         // Return if reassembling is not enabled (e.g. constant coefficients and bcs)
+         if (!enable_reassembling)
+            return;
+
+         // Re-assemble operators if needed
+         int skip_zeros = 0;
+         Array<int> empty;
+
+         K->Update();
+         K->Assemble(skip_zeros);
+         K->FormSystemMatrix(empty, opK);
+
          // Assemble matrix for robin bcs
-         if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0)
+         if ( bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0)
          {
-            Array<int> empty;
             RobinMass->Update();
-            RobinMass->Assemble(0);
-            RobinMass->FormSystemMatrix(empty, opRobinMass);  // CHECK: do we need to pass opRobinMass to the implicit solver?
+            RobinMass->Assemble(skip_zeros);
+            RobinMass->FormSystemMatrix(empty, opRobinMass); 
+         }
+
+         // Reset the operator T if: 1. we are using implicit time integration, 2. we are enabling reassembling (assumed that parameters/bcs are changing)
+         if (implicit_time_integration)
+         {
+            // NOTE: we can make assumption on what parameters are changing and if we need to reassemble, to avoid reassembling.
+            // SetOperators triggers deletion of the operator T inside the solver
+            if (pa)
+               static_cast<ImplicitSolverPA *>(T_solver)->Reset();
+            else
+               static_cast<ImplicitSolverFA *>(T_solver)->SetOperators(Mfull, opK.As<HypreParMatrix>(), opRobinMass.As<HypreParMatrix>());
          }
 
          // Assemble rhs
@@ -324,10 +331,10 @@ namespace mfem
             z.Add(1.0, *fvec); // z = -K(u) + f
          }
 
-         //if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0) // Mass matrix for Robin bc
-         //{
-         //   opRobinMass->AddMult(u, z, -1.0);
-         //}
+         if (bcs->GetRobinBcs().size() > 0 || bcs->GetGeneralRobinBcs().size() > 0) // Mass matrix for Robin bc
+         {
+            opRobinMass->AddMult(u, z, -1.0);
+         }
 
          // Set bcs (set du_dt on dofs with approximation)
          du_dt = *dT_approx;
@@ -339,7 +346,8 @@ namespace mfem
          }
          else
          {
-            M->EliminateVDofsInRHS(ess_tdof_list, du_dt, z);
+            opM.EliminateBC(opMe, ess_tdof_list, du_dt, z);
+            //M->EliminateVDofsInRHS(ess_tdof_list, du_dt, z);  // TODO: CHANGE, there's no bcs in M as it's assembled with empty 
          }
 
          // Solve
@@ -356,12 +364,15 @@ namespace mfem
       void AdvectionReactionDiffusionOperator::ImplicitSolve(const real_t dt, const Vector &u,
                                                              Vector &du_dt)
       {
-         //MFEM_VERIFY(!pa,
-         //            "Partial assembly not supported for implicit time integraton");
-
          // Solve the equation:
          //    du_dt = M^{-1}*[-K(u + f + dt*du_dt)]
-         SetTimeStep(dt);
+
+         MFEM_VERIFY(implicit_time_integration,
+                     "Implicit time integration not set in the operator, maybe there's an issue in HeatSolver::CreateODESolver");
+            
+         current_dt = dt;
+         T_solver->SetTimeStep(current_dt); // This also resets the solver internally to recompute the operator
+         T_solver->Rebuild(); // Rebuild the operator.     NOTE: internally rebuild is skipped if the operator is unchanged
 
          // MFEM_VERIFY(dt == current_dt, ""); // SDIRK methods use the same dt
          opK->Mult(u, z); // z = K(u)
@@ -394,19 +405,17 @@ namespace mfem
          }
       }
 
-      void AdvectionReactionDiffusionOperator::SetTimeStep(real_t dt)
+      void AdvectionReactionDiffusionOperator::SetCoefficientsTime(const real_t &time)
       {
-         if (dt == current_dt)
-            return;
+         // Set time for coefficients
+         rhoC->SetTime(time);
 
-         current_dt = dt;
-        
-         if (!pa)
-         {
-            static_cast<ImplicitSolverFA *>(T_solver)->SetOperators(Mfull, opK.As<HypreParMatrix>(), opRobinMass.As<HypreParMatrix>());
-         }
-
-         T_solver->SetTimeStep(dt); // This also resets the solver internally to recompute the operator
+         if (has_diffusion)
+            Kappa->SetTime(time);
+         if (has_advection)
+            u->SetTime(time);
+         if (has_reaction)
+            beta->SetTime(time);
       }
 
       void AdvectionReactionDiffusionOperator::AddVolumetricTerm(Coefficient *coeff,

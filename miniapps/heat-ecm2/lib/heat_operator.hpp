@@ -101,7 +101,10 @@ namespace mfem
       CGSolver M_solver; // Krylov solver for inverting the mass matrix M
       Solver *M_prec;    // Preconditioner for the mass matrix M
 
-      ImplicitSolverBase *T_solver;       // Implicit solver for T = M + dt K
+      bool implicit_time_integration = false; // Implicit time integration flag
+      // TODO: it might make sense to have flags for time-dependent bcs and coefficients
+      bool enable_reassembling = true;        // Reassemble the operator T at every iteration (can be set to false in case of constant coefficients and/or bcs)
+      ImplicitSolverBase *T_solver;           // Implicit solver for T = M + dt K
 
       ProductCoefficient *rhoC;
       MatrixCoefficient *Kappa; // Diffusion term
@@ -124,6 +127,9 @@ namespace mfem
       // verbosity
       bool verbose;
 
+      // Set time for coefficients
+      void SetCoefficientsTime(const real_t &time);   
+
     public:
       AdvectionReactionDiffusionOperator(std::shared_ptr<ParMesh> pmesh_, ParFiniteElementSpace &f,
                                          BCHandler *bcs,
@@ -136,6 +142,9 @@ namespace mfem
       // Enable partial assembly
       void EnablePA(bool pa_ = false);
 
+      // Disable re-assembly of bilinear form at each iteration
+      void DisableReassembly() { enable_reassembling = false; }
+
       /** Set up the AdvectionReactionDiffusionOperator.
        * This involves adding all the necessary integrators to the linear form for
        * the rhs (volumetric terms, neumann, robin contribution)
@@ -143,7 +152,7 @@ namespace mfem
        * @note Must be called AFTER adding the volumetric terms with
        * AddVolumetricTerm()
        */
-      virtual void Setup(real_t dt = 0.0, int prec_type = 1);
+      virtual void Setup(real_t dt = 0.0, bool implicit_time_integration = false, int prec_type = 1);
 
       /** Update the AdvectionReactionDiffusionOperator in case of changes in Mesh. */
       void Update();
@@ -157,9 +166,6 @@ namespace mfem
 
       /** Update bcs and rhs*/
       virtual void SetTime(const real_t time);
-
-      /** Set the time step */
-      void SetTimeStep(real_t dt);
 
       /** Set the starting temperature for the current step */
       void SetStartingTemperature(const Vector *Tn);

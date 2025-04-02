@@ -1,4 +1,4 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
+// Copyright (c) 2010-2025, Lawrence Livermore National Security, LLC. Produced
 // at the Lawrence Livermore National Laboratory. All Rights reserved. See files
 // LICENSE and NOTICE for details. LLNL-CODE-806117.
 //
@@ -15,6 +15,7 @@
 #include "fe_base.hpp"
 #include "fe_h1.hpp"
 #include "fe_l2.hpp"
+#include "fe_pyramid.hpp"
 
 namespace mfem
 {
@@ -334,6 +335,110 @@ public:
    { ProjectCurl_RT(nk, dof2nk, fe, Trans, curl); }
 };
 
+/** Arbitrary order H(Div) basis functions defined on pyramid-shaped elements
+
+  This implementation is closely based on the finite elements
+  described in section 9.3 of the paper "Orientation embedded high
+  order shape functions for the exact sequence elements of all shapes"
+  by Federico Fuentes, Brendan Keith, Leszek Demkowicz, and Sriram
+  Nagaraj, see https://doi.org/10.1016/j.camwa.2015.04.027.
+ */
+class RT_FuentesPyramidElement
+   : public VectorFiniteElement, public FuentesPyramid
+{
+private:
+   static const real_t nk[24];
+
+   mutable real_t zmax;
+
+#ifndef MFEM_THREAD_SAFE
+   mutable Vector      tmp1_i;
+   mutable DenseMatrix tmp1_ij;
+   mutable DenseMatrix tmp2_ij;
+   mutable DenseMatrix tmp3_ij;
+   mutable DenseMatrix tmp4_ij;
+   mutable DenseTensor tmp1_ijk;
+   mutable DenseTensor tmp2_ijk;
+   mutable DenseTensor tmp3_ijk;
+   mutable DenseTensor tmp4_ijk;
+   mutable DenseTensor tmp5_ijk;
+   mutable DenseTensor tmp6_ijk;
+   mutable DenseTensor tmp7_ijk;
+   mutable DenseMatrix u;
+   mutable Vector      divu;
+#endif
+   Array<int> dof2nk;
+   DenseMatrixInverse Ti;
+
+   void calcBasis(const int p, const IntegrationPoint &ip,
+                  Vector &phi_k,
+                  DenseMatrix &phi_ij,
+                  DenseMatrix &dphi_k,
+                  DenseTensor &VQ_ijk,
+                  DenseTensor &VT_ijk,
+                  DenseTensor &VTT_ijk,
+                  DenseTensor &E_ijk, DenseTensor &dE_ijk,
+                  DenseTensor &dphi_ijk,
+                  DenseTensor &VL_ijk,
+                  DenseMatrix &VR_ij,
+                  DenseMatrix &F) const;
+
+   void calcDivBasis(const int p, const IntegrationPoint &ip,
+                     Vector &phi_k,
+                     DenseMatrix &phi_ij,
+                     DenseMatrix &dphi_k,
+                     DenseTensor &VQ_ijk,
+                     DenseTensor &VT_ijk,
+                     DenseTensor &VTT_ijk, DenseMatrix &dVTT_ij,
+                     DenseTensor &E_ijk, DenseTensor &dE_ijk,
+                     DenseTensor &dphi_ijk,
+                     DenseTensor &VL_ijk,
+                     DenseMatrix &VR_ij,
+                     Vector &dF) const;
+
+public:
+   RT_FuentesPyramidElement(const int p);
+   virtual void CalcVShape(const IntegrationPoint &ip,
+                           DenseMatrix &shape) const;
+   virtual void CalcVShape(ElementTransformation &Trans,
+                           DenseMatrix &shape) const
+   { CalcVShape_RT(Trans, shape); }
+   void CalcDivShape(const IntegrationPoint &ip,
+                     Vector &divshape) const override;
+   void GetLocalInterpolation(ElementTransformation &Trans,
+                              DenseMatrix &I) const override
+   { LocalInterpolation_RT(*this, nk, dof2nk, Trans, I); }
+   void GetLocalRestriction(ElementTransformation &Trans,
+                            DenseMatrix &R) const override
+   { LocalRestriction_RT(nk, dof2nk, Trans, R); }
+   void GetTransferMatrix(const FiniteElement &fe,
+                          ElementTransformation &Trans,
+                          DenseMatrix &I) const override
+   { LocalInterpolation_RT(CheckVectorFE(fe), nk, dof2nk, Trans, I); }
+   using FiniteElement::Project;
+   void Project(VectorCoefficient &vc,
+                ElementTransformation &Trans, Vector &dofs) const override
+   { Project_RT(nk, dof2nk, vc, Trans, dofs); }
+   void ProjectMatrixCoefficient(MatrixCoefficient &mc,
+                                 ElementTransformation &T,
+                                 Vector &dofs) const override
+   { ProjectMatrixCoefficient_RT(nk, dof2nk, mc, T, dofs); }
+   void Project(const FiniteElement &fe, ElementTransformation &Trans,
+                DenseMatrix &I) const override
+   { Project_RT(nk, dof2nk, fe, Trans, I); }
+   void ProjectCurl(const FiniteElement &fe,
+                    ElementTransformation &Trans,
+                    DenseMatrix &curl) const override
+   { ProjectCurl_RT(nk, dof2nk, fe, Trans, curl); }
+
+   void CalcRawVShape(const IntegrationPoint &ip,
+                      DenseMatrix &shape) const;
+
+   void CalcRawDivShape(const IntegrationPoint &ip,
+                        Vector &dshape) const;
+
+   real_t GetZetaMax() const { return zmax; }
+};
 
 /// Arbitrary order, three component, Raviart-Thomas elements in 1D on a segment
 /** RT_R1D_SegmentElement provides a representation of a three component

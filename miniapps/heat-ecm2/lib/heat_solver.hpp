@@ -30,8 +30,8 @@ namespace mfem
       namespace heat
       {
             // Converters from Celsius to Kelvin
-            double CelsiusToKelvin(double Tc);
-            double KelvinToCelsius(double Tk);
+            real_t CelsiusToKelvin(real_t Tc);
+            real_t KelvinToCelsius(real_t Tk);
 
             class HeatSolver
             {
@@ -71,7 +71,7 @@ namespace mfem
 
                   void Update();
 
-                  void Step(double &time, double dt, int step, bool UpdateHistory = true);
+                  void Step(real_t &time, real_t dt, int step, bool UpdateHistory = true);
 
                   // Explicit update of the time step history: useful to avoid automatic one in Step method (for multiple solutions at same time step)
                   void UpdateTimeStepHistory();
@@ -97,7 +97,7 @@ namespace mfem
 
                   void AddVisItField(const std::string &field_name, ParGridFunction *gf);
 
-                  void WriteFields(const int &it = 0, const double &time = 0);
+                  void WriteFields(const int &it = 0, const real_t &time = 0);
 
                   ParaViewDataCollection &GetParaViewDc() { return *paraview_dc; }
                   VisItDataCollection &GetVisItDc() { return *visit_dc; }
@@ -106,7 +106,7 @@ namespace mfem
 
                   void DisplayToGLVis();
 
-                  std::vector<double> GetTimingData();
+                  std::vector<real_t> GetTimingData();
 
                   void PrintTimingData();
 
@@ -125,7 +125,7 @@ namespace mfem
                   ODESolver *CreateODESolver(int ode_solver_type, TimeDependentOperator &op);
 
                   /* Compute approximation of first derivative on essential tdofs*/
-                  void ComputeDerivativeApproximation(const Vector &T, double dt) const;
+                  void ComputeDerivativeApproximation(const Vector &T, real_t dt) const;
 
                   /* Rotate the solution history */
                   void UpdateTimeStepHistory(const Vector &u);
@@ -152,6 +152,7 @@ namespace mfem
 
                   AdvectionReactionDiffusionOperator *op; // Conduction Operator
 
+                  bool implicit_time_integration; // Implicit time integration flag
                   ODESolver *ode_solver; // ODE Solver
 
                   Array<int> tmp_domain_attr; // Temporary domain attributes
@@ -167,7 +168,7 @@ namespace mfem
 
                   // Previous solutions (to compute the time derivative for dirichlet bcs)
                   int time_scheme_order;
-                  double alpha;
+                  real_t alpha;
                   Vector beta;
                   std::deque<Vector> T_prev;
                   mutable Vector T_bcs; // auxiliary vector for bcs

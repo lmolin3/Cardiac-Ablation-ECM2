@@ -1,4 +1,4 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
+// Copyright (c) 2010-2025, Lawrence Livermore National Security, LLC. Produced
 // at the Lawrence Livermore National Laboratory. All Rights reserved. See files
 // LICENSE and NOTICE for details. LLNL-CODE-806117.
 //
@@ -1819,10 +1819,12 @@ void IdentityInterpolator::AssemblePA(const FiniteElementSpace &trial_fes,
 
    MFEM_VERIFY(trial_el->GetOrder() == test_el->GetOrder(), "");
 
+   MFEM_VERIFY(vdim == 1, "vdim != 1 with PA is not supported yet!");
+
    ne = trial_fes.GetNE();
 
    const int order = trial_el->GetOrder();
-   dofquad_fe = new H1_SegmentElement(order);
+   dofquad_fe.reset(new H1_SegmentElement(order));
    mfem::QuadratureFunctions1D qf1d;
    mfem::IntegrationRule closed_ir;
    closed_ir.SetSize(order + 1);
