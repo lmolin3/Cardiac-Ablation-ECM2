@@ -78,7 +78,7 @@ void BCHandler::AddDirichletBC(ScalarFuncT func, Array<int> &attr, bool own)
     AddDirichletBC(new FunctionCoefficient(func), attr, own);
 }
 
-void BCHandler::AddDirichletBC(double coeff_val, Array<int> &attr, bool own)
+void BCHandler::AddDirichletBC(real_t coeff_val, Array<int> &attr, bool own)
 {
     auto coeff = new ConstantCoefficient(coeff_val);
     AddDirichletBC(coeff, attr, own);
@@ -99,7 +99,7 @@ void BCHandler::AddDirichletBC(ScalarFuncT func, int &attr, bool own)
     AddDirichletBC(new FunctionCoefficient(func), attr, own);
 }
 
-void BCHandler::AddDirichletBC(double coeff_val, int &attr, bool own)
+void BCHandler::AddDirichletBC(real_t coeff_val, int &attr, bool own)
 {
     auto coeff = new ConstantCoefficient(coeff_val);
     AddDirichletBC(coeff, attr, own);
@@ -154,7 +154,7 @@ void BCHandler::AddNeumannBC(Coefficient *coeff, int &attr, bool own)
     AddNeumannBC(coeff, neumann_attr_tmp, own);
 }
 
-void BCHandler::AddNeumannBC(double val, int &attr, bool own)
+void BCHandler::AddNeumannBC(real_t val, int &attr, bool own)
 {
     auto coeff = new ConstantCoefficient(val);
     AddNeumannBC(coeff, attr, own);
@@ -263,7 +263,7 @@ void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *T0_coeff, int &att
     AddRobinBC(h_coeff, T0_coeff, robin_attr_tmp, own);
 }
 
-void BCHandler::AddRobinBC(double h_val, double T0_val, int &attr, bool own)
+void BCHandler::AddRobinBC(real_t h_val, real_t T0_val, int &attr, bool own)
 {
     auto h_coeff = new ConstantCoefficient(h_val);
     auto T0_coeff = new ConstantCoefficient(T0_val);
@@ -363,7 +363,7 @@ void BCHandler::AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Co
 
 
 /// Update time dependent boundary conditions
-void BCHandler::UpdateTimeDirichletBCs(double new_time)
+void BCHandler::UpdateTimeDirichletBCs(real_t new_time)
 {
     for (auto &dirichlet_bc : dirichlet_dbcs)
     {
@@ -371,7 +371,7 @@ void BCHandler::UpdateTimeDirichletBCs(double new_time)
     }
 }
 
-void BCHandler::UpdateTimeNeumannBCs(double new_time)
+void BCHandler::UpdateTimeNeumannBCs(real_t new_time)
 {
     for (auto &neumann_bc : neumann_bcs)
     {
@@ -379,7 +379,7 @@ void BCHandler::UpdateTimeNeumannBCs(double new_time)
     }
 }
 
-void BCHandler::UpdateTimeNeumannVectorBCs(double new_time)
+void BCHandler::UpdateTimeNeumannVectorBCs(real_t new_time)
 {
     for (auto &neumann_vec_bc : neumann_vec_bcs)
     {
@@ -387,7 +387,7 @@ void BCHandler::UpdateTimeNeumannVectorBCs(double new_time)
     }
 }
 
-void BCHandler::UpdateTimeRobinBCs(double new_time)
+void BCHandler::UpdateTimeRobinBCs(real_t new_time)
 {
     for (auto &robin_bc : robin_bcs)
     {
@@ -396,7 +396,7 @@ void BCHandler::UpdateTimeRobinBCs(double new_time)
     }
 }
 
-void BCHandler::SetTime(double new_time)
+void BCHandler::SetTime(real_t new_time)
 {
     time = new_time;
     UpdateTimeDirichletBCs(new_time);

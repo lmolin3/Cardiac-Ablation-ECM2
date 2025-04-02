@@ -68,16 +68,16 @@ namespace mfem
             void AddDirichletBC(ScalarFuncT *func, Array<int> &attr, bool own = true);
 
             /**
-             * \brief Add Dirichlet BC for temperature using double and specific mesh attribute.
+             * \brief Add Dirichlet BC for temperature using real_t and specific mesh attribute.
              *
-             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing double,
+             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing real_t,
              * and integer for specific mesh attribute (they will be applied at setup time).
              *
              * \param coeff_val Value of the Dirichlet BC
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddDirichletBC(double coeff_val, Array<int> &attr, bool own = true);
+            void AddDirichletBC(real_t coeff_val, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for temperature using Coefficient and specific mesh attribute.
@@ -104,16 +104,16 @@ namespace mfem
             void AddDirichletBC(ScalarFuncT *func, int &attr, bool own = true);
 
             /**
-             * \brief Add Dirichlet BC for temperature using double and specific mesh attribute.
+             * \brief Add Dirichlet BC for temperature using real_t and specific mesh attribute.
              *
-             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing double,
+             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing real_t,
              * and integer for specific mesh attribute (they will be applied at setup time).
              *
              * \param coeff_val Value of the Dirichlet BC
              * \param attr Boundary attribute
              *
              */
-            void AddDirichletBC(double coeff_val, int &attr, bool own = true);
+            void AddDirichletBC(real_t coeff_val, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using Coefficient and list of essential boundaries.
@@ -164,16 +164,16 @@ namespace mfem
             void AddNeumannBC(ScalarFuncT *func, int &attr, bool own = true);
 
             /**
-             * \brief Add Neumann BC using double and specific mesh attribute.
+             * \brief Add Neumann BC using real_t and specific mesh attribute.
              *
              * Add a Neumann boundary condition to internal list of Neumann bcs,
-             * using double and specific mesh attribute (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
+             * using real_t and specific mesh attribute (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
              *
              * \param val Neumann value
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannBC(double val, int &attr, bool own = true);
+            void AddNeumannBC(real_t val, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using VectorCoefficient and list of essential boundaries.
@@ -294,7 +294,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddRobinBC(double val_h, double val_T0, int &attr, bool own = true);
+            void AddRobinBC(real_t val_h, real_t val_T0, int &attr, bool own = true);
 
             /**
              * \brief Add Robin BC using Coefficient and list of essential boundaries.
@@ -339,7 +339,7 @@ namespace mfem
              * \param time Time value.
              *
              */
-            void SetTime(double time);
+            void SetTime(real_t time);
 
             // Getters
 
@@ -412,7 +412,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeDirichletBCs(double new_time);
+            void UpdateTimeDirichletBCs(real_t new_time);
 
             /**
              * \brief Update the time in the pressure BCs coefficients.
@@ -422,7 +422,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeNeumannBCs(double new_time);
+            void UpdateTimeNeumannBCs(real_t new_time);
 
             /**
              * \brief Update the time in the pressure BCs coefficients.
@@ -432,7 +432,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeNeumannVectorBCs(double new_time);
+            void UpdateTimeNeumannVectorBCs(real_t new_time);
 
             /**
              * \brief Update the time in the Robin BCs coefficients.
@@ -442,7 +442,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeRobinBCs(double new_time);
+            void UpdateTimeRobinBCs(real_t new_time);
 
             /**
              * \brief Update the time in the general Robin BCs coefficients.
@@ -452,10 +452,10 @@ namespace mfem
              * \param new_time New time value.
              * 
              */
-            void UpdateTimeGeneralRobinBCs(double new_time);
+            void UpdateTimeGeneralRobinBCs(real_t new_time);
 
 
-            double time;
+            real_t time;
 
             // Shared pointer to Mesh
             std::shared_ptr<ParMesh> pmesh;
