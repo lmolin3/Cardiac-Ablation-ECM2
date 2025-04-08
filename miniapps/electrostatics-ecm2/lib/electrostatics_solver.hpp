@@ -68,6 +68,7 @@ namespace mfem
          ~ElectrostaticsSolver();
 
          HYPRE_BigInt GetProblemSize();
+         int GetLocalProblemSize();
 
          void PrintSizes();
 
@@ -126,6 +127,9 @@ namespace mfem
          ParFiniteElementSpace *GetL2FESpace() { return L2FESpace; }
 
       private:
+         // Check if any essential BCs were applied and fix at least one point since solution is not unique
+         void FixEssentialTDofs( Array<int> &ess_tdof_list);
+
          void Assemble();
 
          void AssembleRHS();
@@ -185,6 +189,9 @@ namespace mfem
          StopWatch sw_setup, sw_assemble, sw_solve;
 
          bool verbose;
+
+         int my_id;
+         int num_procs;
       };
 
    } // namespace electromagnetics

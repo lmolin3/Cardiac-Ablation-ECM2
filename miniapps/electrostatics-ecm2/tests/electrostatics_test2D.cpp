@@ -28,9 +28,7 @@
 // Sample runs:
 //
 //   A cylinder at constant voltage in a square, grounded metal pipe:
-//      mpirun -np 4 electrostatics_test2D -m ../../data/square-disc.mesh
-//                         -sattr '1' -sval '1.0'
-//                         -dbcs '1 2 3 4 5 6 7 8' -dbcv '0 0 0 0 1 1 1 1'
+//      mpirun -np 4 electrostatics_test2D -m ../../data/square-disc.mesh -sattr '1' -sval '1.0' -dbcs '1 2 3 4 5 6 7 8' -dbcv '0 0 0 0 1 1 1 1'
 //
 
 #include "lib/electrostatics_solver.hpp"
