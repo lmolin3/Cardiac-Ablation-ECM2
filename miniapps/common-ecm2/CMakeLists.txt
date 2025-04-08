@@ -13,17 +13,12 @@
 
 list(APPEND SRCS
   utils.cpp
+  interface_transfer.cpp
   )
 list(APPEND HDRS
   utils.hpp
+  interface_transfer.hpp
   )
-
-if (MFEM_USE_CUDA)
-  set_property(SOURCE ${SRCS} PROPERTY LANGUAGE CUDA)
-endif()
-if (MFEM_USE_HIP)
-  set_property(SOURCE ${SRCS} PROPERTY HIP_SOURCE_PROPERTY_FORMAT TRUE)
-endif()
 
 convert_filenames_to_full_paths(SRCS)
 convert_filenames_to_full_paths(HDRS)

@@ -4,6 +4,9 @@
 #include "mfem.hpp"
 #include "utils.hpp"
 
+// Interface transfer
+#include "interface_transfer.hpp"
+
 #include <fstream>
 #include <sstream>
 #include <iostream>

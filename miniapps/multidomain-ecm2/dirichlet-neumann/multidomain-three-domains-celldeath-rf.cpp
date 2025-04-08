@@ -37,6 +37,9 @@
 #include "lib/celldeath_solver.hpp"
 #include "lib/electrostatics_solver.hpp"
 
+// Interface transfer
+#include "interface_transfer.hpp"
+
 // Physical and Domain-Decomposition parameters
 #include "contexts.hpp" 
 

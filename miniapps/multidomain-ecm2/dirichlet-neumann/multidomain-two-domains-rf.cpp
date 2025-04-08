@@ -20,6 +20,9 @@
 // Multiphysics modules
 #include "lib/electrostatics_solver.hpp"
 
+// Interface transfer
+#include "interface_transfer.hpp"
+
 // Utils
 #include "../common/mesh_extras.hpp"
 #include "anisotropy_utils.hpp"

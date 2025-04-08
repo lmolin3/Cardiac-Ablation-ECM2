@@ -30,4 +30,5 @@ include_directories(
 add_subdirectory(general)
 add_subdirectory(dirichlet-neumann)
 add_subdirectory(osm)
+add_subdirectory(osm-2d)
 

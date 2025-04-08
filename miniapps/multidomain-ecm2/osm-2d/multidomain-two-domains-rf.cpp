@@ -7,11 +7,11 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 1.0 -alpha '1e3 1e-3'
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm-2d -o 3 -tet -alpha '1e3 1e-3'
 // 2. Hexahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 1.0 -alpha '1e3 1e-3'
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm-2d -o 3 -hex -alpha '1e3 1e-3'
 // 3. Hexahedral mesh with partial assembly
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 1.0 -alpha '1e3 1e-3'
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm-2d -o 3 -hex -pa-rf -alpha '1e3 1e-3'
 
 
 // MFEM library
@@ -50,8 +50,7 @@ std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zm
 void print_matrix(const DenseMatrix &A);
 void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step);
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]){
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 1. Initialize MPI and Hypre
@@ -75,7 +74,7 @@ int main(int argc, char *argv[])
    // FE
    args.AddOption(&RF_ctx.order, "-o", "--order",
                   "Finite element order (polynomial degree).");
-   args.AddOption(&RF_ctx.pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
+   args.AddOption(&RF_ctx.pa, "-pa-rf", "--partial-assembly-rf", "-no-par-rf", "--no-partial-assembly-rf",
                   "Enable or disable partial assembly.");
    // Mesh
    args.AddOption(&Mesh_ctx.hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
@@ -90,8 +89,8 @@ int main(int argc, char *argv[])
    args.AddOption(&DD_ctx.alpha_rf, "-alpha", "--alpha-robin",
                   "Robin-Robin coupling parameters (Fluid, Solid).");
    // Physics
-   args.AddOption(&RF_ctx.aniso_ratio, "-ar", "--aniso-ratio-rf",
-                  "Anisotropy ratio for RF problem.");
+   args.AddOption(&RF_ctx.phi_applied, "-phi", "--applied-potential",
+                  "Applied potential.");
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
@@ -122,18 +121,15 @@ int main(int argc, char *argv[])
 
    // Load serial mesh
    Mesh *serial_mesh = nullptr;
-   if (Mesh_ctx.hex)
-   { // Load Hex mesh (NETCDF required)
 #ifdef MFEM_USE_NETCDF
-      serial_mesh = new Mesh("../../../data/three-domains.e");
-#else
-      MFEM_ABORT("MFEM is not built with NetCDF support!");
-#endif
-   }
+   if (Mesh_ctx.hex)
+   // Load mesh (NETCDF required)
+      serial_mesh = new Mesh("../../../data/rfa-quad.e");
    else
-   {
-      serial_mesh = new Mesh("../../../data/three-domains.msh");
-   }
+      serial_mesh = new Mesh("../../../data/rfa-tri.e");
+   #else
+   MFEM_ABORT("MFEM is not built with NetCDF support!");
+#endif
 
    int sdim = serial_mesh->SpaceDimension();
 
@@ -164,7 +160,7 @@ int main(int argc, char *argv[])
 
    // Create parallel mesh
    ParMesh parent_mesh = ParMesh(MPI_COMM_WORLD, *serial_mesh, partitioning, partition_type);
-   // ExportMeshwithPartitioning(Sim_ctx.outfolder, *serial_mesh, partitioning);
+   ExportMeshwithPartitioning(Sim_ctx.outfolder, *serial_mesh, partitioning);
    delete[] partitioning;
    delete serial_mesh;
 
@@ -187,23 +183,9 @@ int main(int argc, char *argv[])
 
    Array<int> solid_domain_attribute;
    Array<int> fluid_domain_attribute;
-   Array<int> cylinder_domain_attribute;
 
-   if (Mesh_ctx.hex)
-   {
-      solid_domain_attribute.SetSize(1);
-      fluid_domain_attribute.SetSize(1);
-      cylinder_domain_attribute.SetSize(1);
-      solid_domain_attribute = 3;
-      fluid_domain_attribute = 1;
-      cylinder_domain_attribute = 2;
-   }
-   else
-   {
-      solid_domain_attribute = attr_sets.GetAttributeSet("Solid");
-      fluid_domain_attribute = attr_sets.GetAttributeSet("Fluid");
-      cylinder_domain_attribute = attr_sets.GetAttributeSet("Cylinder");
-   }
+   solid_domain_attribute = attr_sets.GetAttributeSet("Solid");
+   fluid_domain_attribute = attr_sets.GetAttributeSet("Fluid");
 
    auto solid_submesh =
        std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, solid_domain_attribute));
@@ -211,22 +193,10 @@ int main(int argc, char *argv[])
    auto fluid_submesh =
        std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, fluid_domain_attribute));
 
-   auto cylinder_submesh =
-       std::make_shared<ParSubMesh>(ParSubMesh::CreateFromDomain(parent_mesh, cylinder_domain_attribute));
-
    if (Mpi::Root())
       mfem::out << "\033[34mdone." << std::endl;
 
-
-   // Extract solid bounding box
-   Vector pmin, pmax;
-   solid_submesh->GetBoundingBox(pmin, pmax);
-   real_t zmin = pmin[2];
-   real_t zmax = pmax[2];
-
-   if (Mpi::Root())
-      mfem::out << "zmin: " << zmin << " zmax: " << zmax << std::endl;
-
+      
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 4. Set up coefficients
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -242,12 +212,7 @@ int main(int argc, char *argv[])
    // Conductivity
    // NOTE: if using PWMatrixCoefficient you need to create one for the boundary too
    auto *Sigma_fluid = new ScalarMatrixProductCoefficient(sigma_fluid, *Id);
-
-   Vector sigma_vec_solid(3);
-   sigma_vec_solid[0] = sigma_solid;
-   sigma_vec_solid[1] = sigma_solid;
-   sigma_vec_solid[2] = sigma_solid;
-   auto *Sigma_solid = new MatrixFunctionCoefficient(3, ConductivityMatrix(sigma_vec_solid, EulerAngles(zmin, zmax) ));
+   auto *Sigma_solid = new ScalarMatrixProductCoefficient(sigma_solid, *Id);
 
    if (Mpi::Root())
       mfem::out << "\033[34mdone." << std::endl;
@@ -288,10 +253,10 @@ int main(int argc, char *argv[])
    *phi_fs_fluid = 0.0;
    ParGridFunction *phi_fs_solid = new ParGridFunction(fes_solid);
    *phi_fs_solid = 0.0;
-   ParGridFunction *E_fs_solid = new ParGridFunction(fes_grad_solid);
-   *E_fs_solid = 0.0;
-   ParGridFunction *E_fs_fluid = new ParGridFunction(fes_grad_fluid);
-   *E_fs_fluid = 0.0;
+   ParGridFunction *J_fs_solid = new ParGridFunction(fes_grad_solid);
+   *J_fs_solid = 0.0;
+   ParGridFunction *J_fs_fluid = new ParGridFunction(fes_grad_fluid);
+   *J_fs_fluid = 0.0;
 
    ParGridFunction *phi_solid_prev_gf = new ParGridFunction(fes_solid);
    *phi_solid_prev_gf = 0.0;
@@ -307,48 +272,6 @@ int main(int argc, char *argv[])
       mfem::out << "\033[34mdone." << std::endl;
 
 
-   // Export fibers to disk
-   if (Mpi::Root())
-      mfem::out << "Exporting fibers to disk... \033[0m";
-
-   ParGridFunction *fiber_f_gf = new ParGridFunction(fes_grad_solid);
-   ParGridFunction *fiber_t_gf = new ParGridFunction(fes_grad_solid);
-   ParGridFunction *fiber_s_gf = new ParGridFunction(fes_grad_solid);
-   ParGridFunction *euler_angles_gf = new ParGridFunction(fes_grad_solid);
-   VectorFunctionCoefficient fiber_f_coeff(sdim, FiberDirection(EulerAngles(zmax, zmin), 0));
-   VectorFunctionCoefficient fiber_t_coeff(sdim, FiberDirection(EulerAngles(zmax, zmin), 1));
-   VectorFunctionCoefficient fiber_s_coeff(sdim, FiberDirection(EulerAngles(zmax, zmin), 2));
-   VectorFunctionCoefficient euler_angles_coeff(sdim, EulerAngles(zmax, zmin));
-   fiber_f_gf->ProjectCoefficient(fiber_f_coeff);
-   fiber_t_gf->ProjectCoefficient(fiber_t_coeff);
-   fiber_s_gf->ProjectCoefficient(fiber_s_coeff);
-   euler_angles_gf->ProjectCoefficient(euler_angles_coeff);
-
-   if (Sim_ctx.paraview)
-   {
-      ParaViewDataCollection* paraview_dc_fiber = new ParaViewDataCollection("Fiber", solid_submesh.get());
-      paraview_dc_fiber->SetPrefixPath(Sim_ctx.outfolder);
-      paraview_dc_fiber->SetDataFormat(VTKFormat::BINARY);
-      paraview_dc_fiber->SetCompressionLevel(9);
-      paraview_dc_fiber->RegisterField("Fiber", fiber_f_gf);
-      paraview_dc_fiber->RegisterField("Sheet", fiber_t_gf);
-      paraview_dc_fiber->RegisterField("Sheet-normal", fiber_s_gf);
-      paraview_dc_fiber->RegisterField("Euler Angles", euler_angles_gf);
-      if (RF_ctx.order > 1)
-      {
-         paraview_dc_fiber->SetHighOrderOutput(true);
-         paraview_dc_fiber->SetLevelsOfDetail(RF_ctx.order);
-      }
-      paraview_dc_fiber->SetTime(0.0);
-      paraview_dc_fiber->SetCycle(0);
-      paraview_dc_fiber->Save();
-      delete paraview_dc_fiber;
-   }
-
-   delete fiber_f_gf;
-   delete fiber_t_gf;
-   delete fiber_s_gf;
-
    if (Mpi::Root())
       mfem::out << "\033[34mdone.\033[0m" << std::endl;
 
@@ -356,64 +279,31 @@ int main(int argc, char *argv[])
    /// 7. Populate BC Handler
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   Array<int> fluid_cylinder_interface;
    Array<int> fluid_solid_interface;
    Array<int> solid_cylinder_interface;
 
-   Array<int> fluid_lateral_attr;
+   Array<int> fluid_lateral_left_attr;
+   Array<int> fluid_lateral_right_attr;
    Array<int> fluid_top_attr;
    Array<int> solid_lateral_attr;
    Array<int> solid_bottom_attr;
-   Array<int> cylinder_top_attr;
 
-   Array<int> fluid_cylinder_interface_marker;
    Array<int> fluid_solid_interface_marker;
    Array<int> solid_cylinder_interface_marker;
 
-   if (Mesh_ctx.hex)
-   {
-      // Extract boundary attributes
-      fluid_cylinder_interface.SetSize(1);
-      fluid_cylinder_interface = 8;
-      fluid_solid_interface.SetSize(1);
-      fluid_solid_interface = 3;
-      solid_cylinder_interface.SetSize(1);
-      solid_cylinder_interface = 4;
+   // Extract boundary attributes
+   fluid_solid_interface = bdr_attr_sets.GetAttributeSet("Fluid-Solid");
+   solid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Solid");
 
-      fluid_lateral_attr.SetSize(1);
-      fluid_lateral_attr = 5;
-      fluid_top_attr.SetSize(1);
-      fluid_top_attr = 6;
-      solid_lateral_attr.SetSize(1);
-      solid_lateral_attr = 2;
-      solid_bottom_attr.SetSize(1);
-      solid_bottom_attr = 1;
-      cylinder_top_attr.SetSize(1);
-      cylinder_top_attr = 7;
+   fluid_lateral_left_attr = bdr_attr_sets.GetAttributeSet("Fluid-Lateral-Left");
+   fluid_lateral_right_attr = bdr_attr_sets.GetAttributeSet("Fluid-Lateral-Right");
+   fluid_top_attr = bdr_attr_sets.GetAttributeSet("Fluid-Top");
+   solid_lateral_attr = bdr_attr_sets.GetAttributeSet("Solid-Lateral");
+   solid_bottom_attr = bdr_attr_sets.GetAttributeSet("Solid-Bottom");
 
-      // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
-      fluid_cylinder_interface_marker = AttributeSets::AttrToMarker(parent_mesh.bdr_attributes.Max(), fluid_cylinder_interface);
-      fluid_solid_interface_marker = AttributeSets::AttrToMarker(parent_mesh.bdr_attributes.Max(), fluid_solid_interface);
-      solid_cylinder_interface_marker = AttributeSets::AttrToMarker(parent_mesh.bdr_attributes.Max(), solid_cylinder_interface);
-   }
-   else
-   {
-      // Extract boundary attributes
-      fluid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Fluid");
-      fluid_solid_interface = bdr_attr_sets.GetAttributeSet("Solid-Fluid");
-      solid_cylinder_interface = bdr_attr_sets.GetAttributeSet("Cylinder-Solid");
-
-      fluid_lateral_attr = bdr_attr_sets.GetAttributeSet("Fluid Lateral");
-      fluid_top_attr = bdr_attr_sets.GetAttributeSet("Fluid Top");
-      solid_lateral_attr = bdr_attr_sets.GetAttributeSet("Solid Lateral");
-      solid_bottom_attr = bdr_attr_sets.GetAttributeSet("Solid Bottom");
-      cylinder_top_attr = bdr_attr_sets.GetAttributeSet("Cylinder Top");
-
-      // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
-      fluid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Fluid");
-      fluid_solid_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Solid-Fluid");
-      solid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Solid");
-   }
+   // Extract boundary attributes markers on parent mesh (needed for GSLIB interpolation)
+   fluid_solid_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Fluid-Solid");
+   solid_cylinder_interface_marker = bdr_attr_sets.GetAttributeSetMarker("Cylinder-Solid");
 
    Array<int> solid_domain_attributes = AttributeSets::AttrToMarker(solid_submesh->attributes.Max(), solid_domain_attribute);
    Array<int> fluid_domain_attributes = AttributeSets::AttrToMarker(fluid_submesh->attributes.Max(), fluid_domain_attribute);
@@ -431,30 +321,28 @@ int main(int argc, char *argv[])
    // - Robin-Robin on  Γfs
 
    if (Mpi::Root())
-      mfem::out << "\033[34m\nSetting up BCs for fluid domain... \033[0m" << std::endl;
+      mfem::out << "\033[34m\nSetting up RF BCs for fluid domain... \033[0m" << std::endl;
 
    ConstantCoefficient alpha_coeff1(DD_ctx.alpha_rf[0]);
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
-   VectorGridFunctionCoefficient *E_fs_fluid_coeff = new VectorGridFunctionCoefficient(E_fs_fluid);
-   //bcs_fluid->AddDirichletBC(RF_ctx.phi_gnd, fluid_top_attr[0]);
-   bcs_fluid->AddRobinBC(&alpha_coeff1, &alpha_coeff1, phi_fs_fluid_coeff, E_fs_fluid_coeff, fluid_solid_interface[0], false); 
-
+   VectorGridFunctionCoefficient *J_fs_fluid_coeff = new VectorGridFunctionCoefficient(J_fs_fluid);
+   bcs_fluid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
+   bcs_fluid->AddRobinBC(&alpha_coeff1, &alpha_coeff1, phi_fs_fluid_coeff, J_fs_fluid_coeff, fluid_solid_interface[0], false); 
 
    // Solid:
-   // - Phi = 0 on bottom wall
-   // - Dirichlet   on  Γsc
+   // - Dirichlet on bottom wall (ground)
+   // - Dirichlet   on  Γsc      (applied potential)
    // - Robin-Robin on  Γfs
    // - Homogeneous Neumann lateral wall
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for solid domain...\033[0m" << std::endl;
-   RF_ctx.phi_gnd = 0.0;
-   RF_ctx.phi_applied = 1.0;
    ConstantCoefficient alpha_coeff2(DD_ctx.alpha_rf[1]);
    GridFunctionCoefficient *phi_fs_solid_coeff = new GridFunctionCoefficient(phi_fs_solid);
-   VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
+   VectorGridFunctionCoefficient *J_fs_solid_coeff = new VectorGridFunctionCoefficient(J_fs_solid);
    bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
    bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
-   bcs_solid->AddRobinBC(&alpha_coeff2, &alpha_coeff2, phi_fs_solid_coeff, E_fs_solid_coeff, fluid_solid_interface[0], false); 
+   bcs_solid->AddRobinBC(&alpha_coeff2, &alpha_coeff2, phi_fs_solid_coeff, J_fs_solid_coeff, fluid_solid_interface[0], false); 
+
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup interface transfer
@@ -465,7 +353,9 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
-   BidirectionalInterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB, parent_mesh.GetComm());
+   //InterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB, parent_mesh.GetComm());
+
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
@@ -474,11 +364,16 @@ int main(int argc, char *argv[])
    finder_fluid_to_solid.GetElementIdxSrc(fs_fluid_element_idx);
    finder_fluid_to_solid.GetElementIdxDst(fs_solid_element_idx);
 
+   Vector bdr_element_coords_fluid = finder_fluid_to_solid.GetBdrElementCoordsSrc();
+   Vector bdr_element_coords_solid = finder_fluid_to_solid.GetBdrElementCoordsDst();
+   int npts_fluid = bdr_element_coords_fluid.Size() / sdim;
+   int npts_solid = bdr_element_coords_solid.Size() / sdim;
+
    // 3. Define QoI (current density) on the source meshes (cylinder, solid, fluid)
    int qoi_size_on_qp = sdim;
 
    // Define lamdbas to compute the current density
-   auto currentDensity_solid = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector &qoi_loc)
+   auto J_solid = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector &qoi_loc)
    {
       DenseMatrix SigmaMat(sdim);
       Vector gradloc(sdim);
@@ -489,7 +384,7 @@ int main(int argc, char *argv[])
       SigmaMat.Mult(gradloc, qoi_loc);
    };
 
-   auto currentDensity_fluid = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector &qoi_loc)
+   auto J_fluid = [&](ElementTransformation &Tr, const IntegrationPoint &ip, Vector &qoi_loc)
    {
       DenseMatrix SigmaMat(sdim);
       Vector gradloc(sdim);
@@ -507,17 +402,27 @@ int main(int argc, char *argv[])
    /// 9. Setup solver and Assemble forms
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
+
    MPI_Barrier(parent_mesh.GetComm());
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up solvers and assembling forms... \033[0m" << std::endl;
 
    StopWatch chrono_assembly;
+
    chrono_assembly.Start();
+
+   if (Mpi::Root())
+      mfem::out << "\033[0mAssembling Fluid \033[0m";
+
+   RF_Fluid.EnablePA(RF_ctx.pa);
+   RF_Fluid.Setup();   
+
+   if (Mpi::Root())
+      mfem::out << "\033[0m\nAssembling Solid \033[0m" << std::endl;
+
    RF_Solid.EnablePA(RF_ctx.pa);
    RF_Solid.Setup();
 
-   RF_Fluid.EnablePA(RF_ctx.pa);
-   RF_Fluid.Setup();
    chrono_assembly.Stop();
    real_t assembly_time = chrono_assembly.RealTime();
 
@@ -538,282 +443,303 @@ int main(int argc, char *argv[])
       RF_Fluid.RegisterParaviewFields(paraview_dc_fluid);
    }
 
+   if (Sim_ctx.paraview)
+   {
+      RF_Solid.WriteFields(0, 0.0);
+      RF_Fluid.WriteFields(0, 0.0);
+   }
+
    if (Mpi::Root())
       mfem::out << "\033[34mdone.\033[0m" << std::endl;
 
-   ///////////////////////////////////////////////////////////////////////////////////////////////
-   /// 9. Solve the problem until convergence
-   ///////////////////////////////////////////////////////////////////////////////////////////////
-
-   if (Mpi::Root())
-      mfem::out << "\033[34m\nSolving... \033[0m" << std::endl;
-
-   // Write fields to disk for VisIt
-   bool converged = false;
-   real_t tol = 1.0e-10;
-   int max_iter = 100;
-   int step = 0;
-
    if (Sim_ctx.paraview)
    {
-      RF_Solid.WriteFields(0);
-      RF_Fluid.WriteFields(0);
+      RF_Solid.WriteFields(0, 0.1);
+      RF_Fluid.WriteFields(0, 0.1);
    }
 
-   Vector phi_solid(phi_solid_gf->Size());
-   phi_solid = 0.0;
-   Vector phi_fluid(phi_fluid_gf->Size());
-   phi_fluid = 0.0;
-   Vector phi_solid_prev(phi_solid_gf->Size());
+///////////////////////////////////////////////////////////////////////////////////////////////
+/// 9. Solve the problem until convergence
+///////////////////////////////////////////////////////////////////////////////////////////////
+
+if (Mpi::Root())
+   mfem::out << "\033[34m\nSolving... \033[0m" << std::endl;
+
+// Write fields to disk for VisIt
+bool converged = false;
+real_t tol = 1.0e-10;
+int max_iter = 100;
+int step = 0;
+
+if (Sim_ctx.paraview)
+{
+   RF_Solid.WriteFields(0);
+   RF_Fluid.WriteFields(0);
+}
+
+Vector phi_solid(phi_solid_gf->Size());
+phi_solid = 0.0;
+Vector phi_fluid(phi_fluid_gf->Size());
+phi_fluid = 0.0;
+Vector phi_solid_prev(phi_solid_gf->Size());
+phi_solid_prev = 0.0;
+Vector phi_fluid_prev(phi_fluid_gf->Size());
+phi_fluid_prev = 0.0;
+
+int fluid_dofs = RF_Fluid.GetProblemSize();
+int solid_dofs = RF_Solid.GetProblemSize();
+
+if (Mpi::Root())
+{
+   out << " Fluid dofs: " << fluid_dofs << std::endl;
+   out << " Solid dofs: " << solid_dofs << std::endl;
+}
+
+// Outer loop for time integration
+DD_ctx.omega_rf_fluid = DD_ctx.omega_rf; // TODO: Add different relaxation parameters for each domain
+DD_ctx.omega_rf_solid = DD_ctx.omega_rf;
+
+Array2D<real_t> convergence_rf(max_iter, 3); convergence_rf = 0.0;
+// Inner loop for the segregated solve
+int iter = 0;
+int iter_solid = 0;
+int iter_fluid = 0;
+real_t norm_diff = 2 * tol;
+real_t norm_diff_solid = 2 * tol;
+real_t norm_diff_fluid = 2 * tol;
+
+bool converged_solid = false;
+bool converged_fluid = false;
+
+// Enable re-assembly of the RHS
+bool assembleRHS = true;
+
+// Integration rule for the L2 error
+int order_quad = std::max(2, RF_ctx.order + 1);
+const IntegrationRule *irs[Geometry::NumGeom];
+for (int i = 0; i < Geometry::NumGeom; ++i)
+{
+   irs[i] = &(IntRules.Get(i, order_quad));
+}
+
+// Timing
+StopWatch chrono, chrono_total;
+real_t t_transfer, t_interp, t_solve_fluid, t_solve_solid, t_relax_fluid, t_relax_solid, t_error, t_error_bdry, t_paraview, t_joule;
+
+if (Mpi::Root())
+{
+   out << "------------------------------------------------------------" << std::endl;
+   out << std::left << std::setw(16) << "Iteration" << std::setw(16) << "Fluid Error" << std::setw(16) << "Solid Error" << std::endl;
+   out << "------------------------------------------------------------" << std::endl;
+}
+while (!converged && iter <= max_iter)
+{
+
+   chrono_total.Clear(); chrono_total.Start();
+
+   // Store the previous temperature on domains for convergence
+   phi_solid_gf->GetTrueDofs(phi_solid_prev);
+   phi_fluid_gf->GetTrueDofs(phi_fluid_prev);
+   phi_solid_prev_gf->SetFromTrueDofs(phi_solid_prev);
+   phi_fluid_prev_gf->SetFromTrueDofs(phi_fluid_prev);
+
    phi_solid_prev = 0.0;
-   Vector phi_fluid_prev(phi_fluid_gf->Size());
-   phi_fluid_prev = 0.0;
 
-   int fluid_dofs = RF_Fluid.GetProblemSize();
-   int solid_dofs = RF_Solid.GetProblemSize();
+   ///////////////////////////////////////////////////
+   //         Fluid Domain (F), Dirichlet(S)        //
+   ///////////////////////////////////////////////////
+
+   MPI_Barrier(parent_mesh.GetComm());
+
+   // Transfer
+   chrono.Clear(); chrono.Start();
+   //if (!converged_fluid)
+   { // S->F: Φ, J
+      finder_fluid_to_solid.InterpolateBackward(*phi_solid_gf, *phi_fs_fluid);
+      finder_fluid_to_solid.InterpolateQoIBackward(J_solid, *J_fs_fluid);
+   }
+   chrono.Stop();
+   t_transfer = chrono.RealTime();
+
+   // Solve
+   chrono.Clear(); chrono.Start();
+   RF_Fluid.Solve(assembleRHS);
+   chrono.Stop();
+   t_solve_fluid = chrono.RealTime();
+
+   // Relaxation
+   chrono.Clear(); chrono.Start();
+   if (iter > 0)
+   {
+      phi_fluid_gf->GetTrueDofs(phi_fluid);
+      phi_fluid *= DD_ctx.omega_rf_fluid;
+      phi_fluid.Add(1.0 - DD_ctx.omega_rf_fluid, phi_fluid_prev);
+      phi_fluid_gf->SetFromTrueDofs(phi_fluid);
+   }
+   chrono.Stop();
+   t_relax_fluid = chrono.RealTime();
+
+   /////////////////////////////////////////////////////////////////
+   //          Solid Domain (S), Neumann(F)-Dirichlet(C)          //
+   /////////////////////////////////////////////////////////////////
+
+   MPI_Barrier(parent_mesh.GetComm());
+
+   // Transfer
+   chrono.Clear(); chrono.Start();
+   // if (!converged_solid)
+   { // F->S: Φ, J
+      finder_fluid_to_solid.InterpolateForward(*phi_fluid_gf, *phi_fs_solid);
+      finder_fluid_to_solid.InterpolateQoIForward(J_fluid, *J_fs_solid);
+   }
+   chrono.Stop();
+   t_interp = chrono.RealTime();
+
+   // Solve
+   chrono.Clear(); chrono.Start();
+   RF_Solid.Solve(assembleRHS);
+   chrono.Stop();
+   t_solve_solid = chrono.RealTime();
+
+   // Relaxation
+   chrono.Clear(); chrono.Start();
+   if (iter > 0)
+   {
+      phi_solid_gf->GetTrueDofs(phi_solid);
+      phi_solid *= DD_ctx.omega_rf_solid;
+      phi_solid.Add(1.0 - DD_ctx.omega_rf_solid, phi_solid_prev);
+      phi_solid_gf->SetFromTrueDofs(phi_solid);
+   }
+   chrono.Stop();
+   t_relax_solid = chrono.RealTime();
+
+   //////////////////////////////////////////////////////////////////////
+   //                        Check convergence                         //
+   //////////////////////////////////////////////////////////////////////
+
+   chrono.Clear(); chrono.Start();
+   // Compute global norms
+   real_t global_norm_diff_solid = phi_solid_gf->ComputeL2Error(phi_solid_prev_coeff, irs, &fs_solid_element_idx);
+   real_t global_norm_diff_fluid = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff, irs, &fs_fluid_element_idx);
+   chrono.Stop();
+   t_error_bdry = chrono.RealTime();
+
+   Vector diff_solid(phi_solid_gf->Size());
+   diff_solid = phi_solid;
+   diff_solid -= phi_solid_prev;
+   real_t norm_diff_solid = diff_solid.Norml2();
+
+   mfem::out << "Solid diff: " << norm_diff_solid << std::endl;
+   mfem::out << "Phi_solid norm: " << phi_solid.Norml2() << std::endl;
+
+   // Check convergence on domains
+   converged_solid = (global_norm_diff_solid < tol); //   &&(iter > 0);
+   converged_fluid = (global_norm_diff_fluid < tol); //   &&(iter > 0);
+
+   // Check convergence
+   converged = converged_solid && converged_fluid;
+
+   iter++;
+
+   if (Mpi::Root() && Sim_ctx.save_convergence)
+   {
+      convergence_rf(iter, 0) = iter;
+      convergence_rf(iter, 1) = global_norm_diff_fluid;
+      convergence_rf(iter, 2) = global_norm_diff_solid;
+   }
 
    if (Mpi::Root())
    {
-      out << " Fluid dofs: " << fluid_dofs << std::endl;
-      out << " Solid dofs: " << solid_dofs << std::endl;
+      out << std::left << std::setw(16) << iter
+          << std::scientific << std::setw(16) << global_norm_diff_fluid
+          << std::setw(16) << global_norm_diff_solid
+          << std::endl;
    }
 
-   // Outer loop for time integration
-   DD_ctx.omega_rf_fluid = DD_ctx.omega_rf; // TODO: Add different relaxation parameters for each domain
-   DD_ctx.omega_rf_solid = DD_ctx.omega_rf;
-
-   Array2D<real_t> convergence_rf(max_iter, 3); convergence_rf = 0.0;
-   // Inner loop for the segregated solve
-   int iter = 0;
-   int iter_solid = 0;
-   int iter_fluid = 0;
-   real_t norm_diff = 2 * tol;
-   real_t norm_diff_solid = 2 * tol;
-   real_t norm_diff_fluid = 2 * tol;
-
-   bool converged_solid = false;
-   bool converged_fluid = false;
-
-   // Enable re-assembly of the RHS
-   bool assembleRHS = true;
-
-   // Integration rule for the L2 error
-   int order_quad = std::max(2, RF_ctx.order + 1);
-   const IntegrationRule *irs[Geometry::NumGeom];
-   for (int i = 0; i < Geometry::NumGeom; ++i)
-   {
-      irs[i] = &(IntRules.Get(i, order_quad));
-   }
-
-   // Timing
-   StopWatch chrono, chrono_total;
-   real_t t_transfer, t_interp, t_solve_fluid, t_solve_solid, t_relax_fluid, t_relax_solid, t_error, t_error_bdry, t_paraview, t_joule;
-
-   if (Mpi::Root())
-   {
-      out << "------------------------------------------------------------" << std::endl;
-      out << std::left << std::setw(16) << "Iteration" << std::setw(16) << "Fluid Error" << std::setw(16) << "Solid Error" << std::endl;
-      out << "------------------------------------------------------------" << std::endl;
-   }
-   while (!converged && iter <= max_iter)
-   {
-
-      chrono_total.Clear(); chrono_total.Start();
-
-      // Store the previous temperature on domains for convergence
-      phi_solid_gf->GetTrueDofs(phi_solid_prev);
-      phi_fluid_gf->GetTrueDofs(phi_fluid_prev);
-      phi_solid_prev_gf->SetFromTrueDofs(phi_solid_prev);
-      phi_fluid_prev_gf->SetFromTrueDofs(phi_fluid_prev);
-
-      ///////////////////////////////////////////////////
-      //         Fluid Domain (F), Dirichlet(S)        //
-      ///////////////////////////////////////////////////
-
-      MPI_Barrier(parent_mesh.GetComm());
-
-      chrono.Clear(); chrono.Start();
-      //if (!converged_fluid)
-      { // S->F: Φ, J
-         finder_fluid_to_solid.InterpolateBackward(*phi_solid_gf, *phi_fs_fluid);
-         finder_fluid_to_solid.InterpolateQoIBackward(currentDensity_solid, *E_fs_fluid);
-      }
-      chrono.Stop();
-      t_transfer = chrono.RealTime();
-
-      chrono.Clear(); chrono.Start();
-      RF_Fluid.Solve(assembleRHS);
-      chrono.Stop();
-      t_solve_fluid = chrono.RealTime();
-
-      chrono.Clear(); chrono.Start();
-      if (iter > 0)
-      {
-         phi_fluid_gf->GetTrueDofs(phi_fluid);
-         phi_fluid *= DD_ctx.omega_rf_fluid;
-         phi_fluid.Add(1.0 - DD_ctx.omega_rf_fluid, phi_fluid_prev);
-         phi_fluid_gf->SetFromTrueDofs(phi_fluid);
-      }
-      chrono.Stop();
-      t_relax_fluid = chrono.RealTime();
-
-      /////////////////////////////////////////////////////////////////
-      //          Solid Domain (S), Neumann(F)-Dirichlet(C)          //
-      /////////////////////////////////////////////////////////////////
-
-      MPI_Barrier(parent_mesh.GetComm());
-
-      chrono.Clear(); chrono.Start();
-      // if (!converged_solid)
-      { // F->S: Φ, J
-         finder_fluid_to_solid.InterpolateForward(*phi_fluid_gf, *phi_fs_solid);
-         finder_fluid_to_solid.InterpolateQoIForward(currentDensity_fluid, *E_fs_solid);
-      }
-      chrono.Stop();
-      t_interp = chrono.RealTime();
-
-      chrono.Clear(); chrono.Start();
-      RF_Solid.Solve(assembleRHS);
-      chrono.Stop(); 
-      t_solve_solid = chrono.RealTime();
-
-      chrono.Clear(); chrono.Start();
-      if (iter > 0)
-      {
-         phi_solid_gf->GetTrueDofs(phi_solid);
-         phi_solid *= DD_ctx.omega_rf_solid;
-         phi_solid.Add(1.0 - DD_ctx.omega_rf_solid, phi_solid_prev);
-         phi_solid_gf->SetFromTrueDofs(phi_solid);
-      }
-      chrono.Stop();
-      t_relax_solid = chrono.RealTime();
-
-      //////////////////////////////////////////////////////////////////////
-      //                        Check convergence                         //
-      //////////////////////////////////////////////////////////////////////
-
-      //chrono.Clear(); chrono.Start();
-      // Compute global norms directly
-      //real_t global_norm_diff_solid_domain = phi_solid_gf->ComputeL2Error(phi_solid_prev_coeff);
-      //real_t global_norm_diff_fluid_domain = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff);
-      //chrono.Stop();
-      //t_error = chrono.RealTime();
-
-      chrono.Clear(); chrono.Start();
-      // Compute global norms directly
-      real_t global_norm_diff_solid = phi_solid_gf->ComputeL2Error(phi_solid_prev_coeff, irs, &fs_solid_element_idx);
-      real_t global_norm_diff_fluid = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff, irs, &fs_fluid_element_idx);
-      chrono.Stop();
-      t_error_bdry = chrono.RealTime();
-
-      // Check convergence on domains
-      converged_solid = (global_norm_diff_solid < tol); //   &&(iter > 0);
-      converged_fluid = (global_norm_diff_fluid < tol); //   &&(iter > 0);
-      
-      // Check convergence
-      converged = converged_solid && converged_fluid;
-      
-      iter++;
-
-      if (Mpi::Root() && Sim_ctx.save_convergence)
-      {
-         convergence_rf(iter, 0) = iter;
-         convergence_rf(iter, 1) = global_norm_diff_fluid;
-         convergence_rf(iter, 2) = global_norm_diff_solid;
-      }
-
-      if (Mpi::Root())
-      {
-         out << std::left << std::setw(16) << iter
-             << std::scientific << std::setw(16) << global_norm_diff_fluid
-             << std::setw(16) << global_norm_diff_solid
-             << std::endl;
-      }
-
-      chrono_total.Stop();
-
-      if (Mpi::Root() && Sim_ctx.print_timing)
-      { // Print times
-         out << "------------------------------------------------------------" << std::endl;
-         out << "Transfer: " << t_transfer << " s" << std::endl;
-         out << "Interpolation: " << t_interp << " s" << std::endl;
-         out << "Fluid Solve: " << t_solve_fluid << " s" << std::endl;
-         out << "Solid Solve: " << t_solve_solid << " s" << std::endl;
-         out << "Relaxation Fluid: " << t_relax_fluid << " s" << std::endl;
-         out << "Relaxation Solid: " << t_relax_solid << " s" << std::endl;
-         //out << "Error: " << t_error << " s" << std::endl;
-         out << "Error Boundary: " << t_error_bdry << " s" << std::endl;
-         out << "Total: " << chrono_total.RealTime() << " s" << std::endl;
-         out << "------------------------------------------------------------" << std::endl;
-      }
-         
-   }
-
-   // Compute Joule heating
-   chrono.Clear(); chrono.Start();
-   // Output of time steps
-   RF_Solid.GetJouleHeating(*JouleHeating_gf);
-   chrono.Stop();
-   t_joule = chrono.RealTime();
-
-   // Export converged fields
-   chrono.Clear(); chrono.Start();
-   real_t t_iter = 0.1; // This will be replaced by the actual time in transient simulations
-   if (Sim_ctx.paraview )
-   {
-      RF_Solid.WriteFields(1, t_iter);
-      RF_Fluid.WriteFields(1, t_iter);
-   }
-   chrono.Stop();
-   t_paraview = chrono.RealTime();
+   chrono_total.Stop();
 
    if (Mpi::Root() && Sim_ctx.print_timing)
    { // Print times
       out << "------------------------------------------------------------" << std::endl;
-      out << "Assembly: " << assembly_time << " s" << std::endl;
-      out << "Joule: " << t_joule << " s" << std::endl;
-      out << "Paraview: " << t_paraview << " s" << std::endl;
+      out << "Transfer: " << t_transfer << " s" << std::endl;
+      out << "Interpolation: " << t_interp << " s" << std::endl;
+      out << "Fluid Solve: " << t_solve_fluid << " s" << std::endl;
+      out << "Solid Solve: " << t_solve_solid << " s" << std::endl;
+      out << "Relaxation Fluid: " << t_relax_fluid << " s" << std::endl;
+      out << "Relaxation Solid: " << t_relax_solid << " s" << std::endl;
+      //out << "Error: " << t_error << " s" << std::endl;
+      out << "Error Boundary: " << t_error_bdry << " s" << std::endl;
+      out << "Total: " << chrono_total.RealTime() << " s" << std::endl;
       out << "------------------------------------------------------------" << std::endl;
    }
 
-   // Save convergence
-   if (Mpi::Root() && Sim_ctx.save_convergence)
-   {
-      std::string name_rf = "RF-pre";
-      saveConvergenceArray(convergence_rf, Sim_ctx.outfolder, name_rf, 0);
-      convergence_rf.DeleteAll();
-   }
+}
 
-   //////////////////////////////////////////////////////////////////////
-   //                        Clean up                                  //
-   //////////////////////////////////////////////////////////////////////
+// Compute Joule heating
+chrono.Clear(); chrono.Start();
+// Output of time steps
+RF_Solid.GetJouleHeating(*JouleHeating_gf);
+chrono.Stop();
+t_joule = chrono.RealTime();
 
-   // Need to clean:
-   // - Coefficients provided to Solvers
-   // - Custom allocations in main
-   // - Call FreeData() on GSLIB finders
-   //
-   // Coefficients passed to BCHandlers are deleted, unless own=false is specified
+// Export converged fields
+chrono.Clear(); chrono.Start();
+real_t t_iter = 0.1; // This will be replaced by the actual time in transient simulations
+if (Sim_ctx.paraview )
+{
+   RF_Solid.WriteFields(1, t_iter);
+   RF_Fluid.WriteFields(1, t_iter);
+}
+chrono.Stop();
+t_paraview = chrono.RealTime();
 
-   delete Id;
-   delete Sigma_fluid;
-   delete Sigma_solid;
-   
-   delete fes_grad_solid;
-   delete fes_grad_fluid;
+if (Mpi::Root() && Sim_ctx.print_timing)
+{ // Print times
+   out << "------------------------------------------------------------" << std::endl;
+   out << "Assembly: " << assembly_time << " s" << std::endl;
+   out << "Joule: " << t_joule << " s" << std::endl;
+   out << "Paraview: " << t_paraview << " s" << std::endl;
+   out << "------------------------------------------------------------" << std::endl;
+}
 
-   delete E_fs_solid;
-   delete E_fs_fluid;
-   delete phi_fs_fluid;
-   delete phi_solid_prev_gf;
-   delete phi_fluid_prev_gf;
-   delete JouleHeating_gf;
+// Save convergence
+if (Mpi::Root() && Sim_ctx.save_convergence)
+{
+   std::string name_rf = "RF-pre";
+   saveConvergenceArray(convergence_rf, Sim_ctx.outfolder, name_rf, 0);
+   convergence_rf.DeleteAll();
+}
 
-   delete phi_fs_fluid_coeff;
-   delete E_fs_fluid_coeff;
-   delete phi_fs_solid_coeff;
-   delete E_fs_solid_coeff;
-   
+//////////////////////////////////////////////////////////////////////
+//                        Clean up                                  //
+//////////////////////////////////////////////////////////////////////
+
+// Need to clean:
+// - Coefficients provided to Solvers
+// - Custom allocations in main
+// - Call FreeData() on GSLIB finders
+//
+// Coefficients passed to BCHandlers are deleted, unless own=false is specified
+
+delete Id;
+delete Sigma_fluid;
+delete Sigma_solid;
+
+delete fes_grad_solid;
+delete fes_grad_fluid;
+
+delete J_fs_solid;
+delete J_fs_fluid;
+delete phi_fs_fluid;
+delete phi_solid_prev_gf;
+delete phi_fluid_prev_gf;
+delete JouleHeating_gf;
+
+delete phi_fs_fluid_coeff;
+delete J_fs_fluid_coeff;
+delete phi_fs_solid_coeff;
+delete J_fs_solid_coeff;
+
    return 0;
 }
 

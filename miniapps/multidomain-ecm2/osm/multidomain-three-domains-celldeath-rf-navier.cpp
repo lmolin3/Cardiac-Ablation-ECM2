@@ -20,15 +20,15 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -tet -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier-osm -tet -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0 -alpha-rf '1e3 1e-3' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
 // 2. Hexahedral mesh  
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier-osm -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0 -alpha-rf '1e3 1e-3' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
 // 3. Hexahedral mesh with partial assembly for RF
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier-osm -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0 -alpha-rf '1e3 1e-3' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
 // 4. Hexahedral mesh with partial assembly for RF and Heat
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier-osm -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0 -alpha-rf '1e3 1e-3' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
 // 5. Hexahedral mesh with partial assembly for RF and Heat, and anisotropic conductivity
-//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5 -ta 1 --preload-ns 2.0
+//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf-navier-osm -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat-h 1.0 -omegat-rf 1.0 -ta 1 --preload-ns 2.0 -alpha-rf '1e3 1e-3' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
 
 // MFEM library
 #include "mfem.hpp"
@@ -137,10 +137,14 @@ int main(int argc, char *argv[])
    args.AddOption(&preload_ns, "-preload-ns", "--preload-ns",
                   "Preload time for Navier-Stokes problem.");
    // Domain decomposition
-   args.AddOption(&DD_ctx.omega_heat, "-omegat", "--relaxation-parameter-heat",
+   args.AddOption(&DD_ctx.omega_heat, "-omegat-h", "--relaxation-parameter-heat",
                   "Relaxation parameter.");
-   args.AddOption(&DD_ctx.omega_rf, "-omegarf", "--relaxation-parameter-rf",
+   args.AddOption(&DD_ctx.omega_rf, "-omegat-rf", "--relaxation-parameter-rf",
                   "Relaxation parameter for RF problem.");
+   args.AddOption(&DD_ctx.alpha_rf, "-alpha-rf", "--alpha-robin-rf",
+                     "Robin-Robin coupling parameters for rf problem (FS_fluid, FS_Solid).");
+   args.AddOption(&DD_ctx.alpha_heat, "-alpha-h", "--alpha-robin-heat",
+                        "Robin-Robin coupling parameters for heat problem (FS_fluid, FC_fluid, FS_solid, SC_solid, FC_cylinder, SC_cylinder). ");
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
@@ -182,6 +186,17 @@ int main(int argc, char *argv[])
    DD_ctx.omega_heat_solid = DD_ctx.omega_heat;
    DD_ctx.omega_heat_cyl = DD_ctx.omega_heat;
 
+
+   // Check on provided alpha values
+   if (DD_ctx.alpha_rf.Size() != 2)
+   {
+      MFEM_ABORT("2 coupling parameters must be provided for Robin-Robin coupling in RF problem, but " << DD_ctx.alpha_rf.Size() << " were provided.");
+   }
+
+   if (DD_ctx.alpha_heat.Size() != 6)
+   {
+      MFEM_ABORT("6 coupling parameters must be provided for Robin-Robin coupling in heat problem, but " << DD_ctx.alpha_heat.Size() << " were provided.");
+   }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
@@ -391,7 +406,7 @@ int main(int argc, char *argv[])
    VectorGridFunctionCoefficient *wind_coeff = new VectorGridFunctionCoefficient(velocity_fluid_gf);
 
    heat::HeatSolver Heat_Cylinder(cylinder_submesh, Heat_ctx.order, heat_bcs_cyl, Kappa_cyl, c_cyl, rho_cyl, Heat_ctx.ode_solver_type, solv_verbose);    // Diffuson
-   heat::HeatSolver Heat_Solid(solid_submesh, Heat_ctx.order, heat_bcs_solid, Kappa_solid, c_solid, rho_solid, Heat_ctx.ode_solver_type, solv_verbose);  // Diffusion + Joule heating
+   heat::HeatSolver Heat_Solid(solid_submesh, Heat_ctx.order, heat_bcs_solid, Kappa_solid, c_solid, rho_solid, Heat_ctx.ode_solver_type, true);  // Diffusion + Joule heating
    heat::HeatSolver Heat_Fluid(fluid_submesh, Heat_ctx.order, heat_bcs_fluid, Kappa_fluid, c_fluid, rho_fluid, 1.0, wind_coeff, 0.0, Heat_ctx.ode_solver_type, solv_verbose); // Advection + Diffusion
 
    electrostatics::ElectrostaticsSolver RF_Solid(solid_submesh, RF_ctx.order, rf_bcs_solid, Sigma_solid, solv_verbose);
@@ -430,29 +445,44 @@ int main(int argc, char *argv[])
    ParFiniteElementSpace *rf_fes_l2_solid = RF_Solid.GetL2FESpace();
 
 
-   // Grid functions for interface transfer --> need it for gridfunction coefficients
-   ParGridFunction *temperature_fc_fluid = new ParGridFunction(heat_fes_fluid); *temperature_fc_fluid = 0.0;
-   ParGridFunction *temperature_sc_cylinder = new ParGridFunction(heat_fes_cylinder); *temperature_sc_cylinder = 0.0;
-   ParGridFunction *temperature_fs_fluid = new ParGridFunction(heat_fes_fluid); *temperature_fs_fluid = 0.0;
 
+   //// Grid functions for interface transfer --> need it for gridfunction coefficients
+   // Heat-Transfer
+   ParGridFunction *temperature_fc_fluid = new ParGridFunction(heat_fes_fluid); *temperature_fc_fluid = Heat_ctx.T_fluid;
+   ParGridFunction *temperature_fc_cylinder = new ParGridFunction(heat_fes_cylinder); *temperature_fc_cylinder = Heat_ctx.T_cylinder;
+   ParGridFunction *temperature_sc_solid = new ParGridFunction(heat_fes_solid); *temperature_sc_solid = Heat_ctx.T_solid;
+   ParGridFunction *temperature_sc_cylinder = new ParGridFunction(heat_fes_cylinder); *temperature_sc_cylinder = Heat_ctx.T_cylinder;
+   ParGridFunction *temperature_fs_fluid = new ParGridFunction(heat_fes_fluid); *temperature_fs_fluid = Heat_ctx.T_fluid;
+   ParGridFunction *temperature_fs_solid = new ParGridFunction(heat_fes_solid); *temperature_fs_solid = Heat_ctx.T_solid;
+
+   ParGridFunction *heatFlux_fs_fluid = new ParGridFunction(heat_fes_grad_fluid); *heatFlux_fs_fluid = 0.0;
    ParGridFunction *heatFlux_fs_solid = new ParGridFunction(heat_fes_grad_solid); *heatFlux_fs_solid = 0.0;
+   ParGridFunction *heatFlux_fc_fluid = new ParGridFunction(heat_fes_grad_fluid); *heatFlux_fc_fluid = 0.0;
    ParGridFunction *heatFlux_fc_cylinder = new ParGridFunction(heat_fes_grad_cylinder); *heatFlux_fc_cylinder = 0.0;
    ParGridFunction *heatFlux_sc_solid = new ParGridFunction(heat_fes_grad_solid); *heatFlux_sc_solid = 0.0;
+   ParGridFunction *heatFlux_sc_cylinder = new ParGridFunction(heat_fes_grad_cylinder); *heatFlux_sc_cylinder = 0.0;
 
+   // RF
    ParGridFunction *phi_fs_fluid = new ParGridFunction(rf_fes_fluid); *phi_fs_fluid = 0.0;
+   ParGridFunction *phi_fs_solid = new ParGridFunction(rf_fes_solid); *phi_fs_solid = 0.0;
+
    ParGridFunction *E_fs_solid = new ParGridFunction(rf_fes_grad_solid); *E_fs_solid = 0.0;
    ParGridFunction *E_fs_fluid = new ParGridFunction(rf_fes_grad_fluid); *E_fs_fluid = 0.0;
 
+
+
    // Grid functions and coefficients for error computation
-   ParGridFunction *temperature_solid_prev_gf = new ParGridFunction(heat_fes_solid); *temperature_solid_prev_gf = 0.0;
-   ParGridFunction *temperature_fluid_prev_gf = new ParGridFunction(heat_fes_fluid); *temperature_fluid_prev_gf = 0.0;
-   ParGridFunction *temperature_cylinder_prev_gf = new ParGridFunction(heat_fes_cylinder); *temperature_cylinder_prev_gf = 0.0;
+   ParGridFunction *temperature_solid_prev_gf = new ParGridFunction(heat_fes_solid); *temperature_solid_prev_gf = Heat_ctx.T_solid;
+   ParGridFunction *temperature_fluid_prev_gf = new ParGridFunction(heat_fes_fluid); *temperature_fluid_prev_gf = Heat_ctx.T_fluid;
+   ParGridFunction *temperature_cylinder_prev_gf = new ParGridFunction(heat_fes_cylinder); *temperature_cylinder_prev_gf = Heat_ctx.T_cylinder;
    GridFunctionCoefficient temperature_solid_prev_coeff(temperature_solid_prev_gf);
    GridFunctionCoefficient temperature_fluid_prev_coeff(temperature_fluid_prev_gf);
    GridFunctionCoefficient temperature_cylinder_prev_coeff(temperature_cylinder_prev_gf);
 
-   ParGridFunction *phi_solid_prev_gf = new ParGridFunction(rf_fes_solid); *phi_solid_prev_gf = 0.0;
-   ParGridFunction *phi_fluid_prev_gf = new ParGridFunction(rf_fes_fluid); *phi_fluid_prev_gf = 0.0;
+   ParGridFunction *phi_solid_prev_gf = new ParGridFunction(rf_fes_solid);
+   *phi_solid_prev_gf = 0.0;
+   ParGridFunction *phi_fluid_prev_gf = new ParGridFunction(rf_fes_fluid);
+   *phi_fluid_prev_gf = 0.0;
    GridFunctionCoefficient phi_solid_prev_coeff(phi_solid_prev_gf);
    GridFunctionCoefficient phi_fluid_prev_coeff(phi_fluid_prev_gf);
 
@@ -517,7 +547,7 @@ int main(int argc, char *argv[])
    Array<int> fluid_solid_interface;
    Array<int> solid_cylinder_interface;
 
-   Array<int> fluid_lateral_attr_tmp;
+   Array<int> fluid_lateral_attr_tmp;   
    Array<int> fluid_lateral_attr;
    Array<int> fluid_lateral_1_attr;
    Array<int> fluid_lateral_2_attr;
@@ -595,7 +625,6 @@ int main(int argc, char *argv[])
    fluid_lateral_attr = AttributeSets::AttrToMarker(fluid_submesh->bdr_attributes.Max(), fluid_lateral_attr_tmp);
    fluid_lateral_attr_tmp.DeleteAll();
 
-   // Convert attributes to markers
    Array<int> solid_domain_attributes = AttributeSets::AttrToMarker(solid_submesh->attributes.Max(), solid_domain_attribute);
    Array<int> fluid_domain_attributes = AttributeSets::AttrToMarker(fluid_submesh->attributes.Max(), fluid_domain_attribute);
    Array<int> cylinder_domain_attributes = AttributeSets::AttrToMarker(cylinder_submesh->attributes.Max(), cylinder_domain_attribute);
@@ -637,47 +666,58 @@ int main(int argc, char *argv[])
 
    // Fluid:
    // - T = Heat_ctx.T_fluid on top/lateral walls
-   // - Dirichlet   on  Γfs
-   // - Dirichlet   on  Γfc
+   // - Robin   on  Γfs
+   // - Robin   on  Γfc
 
    if (Mpi::Root())
       mfem::out << "\033[0m\nSetting up BCs for fluid domain... \033[0m" << std::endl;
 
-   GridFunctionCoefficient *temperature_fs_solid_coeff = new GridFunctionCoefficient(temperature_fs_fluid);
-   GridFunctionCoefficient *temperature_fc_cylinder_coeff = new GridFunctionCoefficient(temperature_fc_fluid);
-   heat_bcs_fluid->AddDirichletBC(temperature_fs_solid_coeff, fluid_solid_interface[0]);
-   heat_bcs_fluid->AddDirichletBC(temperature_fc_cylinder_coeff, fluid_cylinder_interface[0]); // Don't own the coefficient, it'll be deleted already in the previous line
+   ConstantCoefficient alpha_coeff_fs_fluid_heat(DD_ctx.alpha_heat[0]);
+   ConstantCoefficient alpha_coeff_fc_fluid_heat(DD_ctx.alpha_heat[1]);
+   GridFunctionCoefficient *temperature_fs_fluid_coeff = new GridFunctionCoefficient(temperature_fs_fluid);
+   GridFunctionCoefficient *temperature_fc_fluid_coeff = new GridFunctionCoefficient(temperature_fc_fluid);
+   VectorGridFunctionCoefficient *heatFlux_fs_fluid_coeff = new VectorGridFunctionCoefficient(heatFlux_fs_fluid);
+   VectorGridFunctionCoefficient *heatFlux_fc_fluid_coeff = new VectorGridFunctionCoefficient(heatFlux_fc_fluid);
+
+   heat_bcs_fluid->AddGeneralRobinBC(&alpha_coeff_fs_fluid_heat, &alpha_coeff_fs_fluid_heat, temperature_fs_fluid_coeff, heatFlux_fs_fluid_coeff, fluid_solid_interface[0], false); 
+   heat_bcs_fluid->AddGeneralRobinBC(&alpha_coeff_fc_fluid_heat, &alpha_coeff_fc_fluid_heat, temperature_fc_fluid_coeff, heatFlux_fc_fluid_coeff, fluid_cylinder_interface[0], false);
    heat_bcs_fluid->AddDirichletBC(Heat_ctx.T_fluid, fluid_lateral_attr);
    heat_bcs_fluid->AddDirichletBC(Heat_ctx.T_fluid, fluid_top_attr[0]);
 
    // Solid:
    // - T = Heat_ctx.T_solid on bottom/lateral walls
-   // - Neumann   on  Γsc
-   // - Neumann   on  Γfs
+   // - Robin   on  Γsc
+   // - Robin   on  Γfs
    if (Mpi::Root())
       mfem::out << "\033[0m\nSetting up BCs for solid domain...\033[0m" << std::endl;
 
+   ConstantCoefficient alpha_coeff_fs_solid_heat(DD_ctx.alpha_heat[2]);
+   ConstantCoefficient alpha_coeff_sc_solid_heat(DD_ctx.alpha_heat[3]);
+   GridFunctionCoefficient *temperature_fs_solid_coeff = new GridFunctionCoefficient(temperature_fs_solid);
+   GridFunctionCoefficient *temperature_sc_solid_coeff = new GridFunctionCoefficient(temperature_sc_solid);
    VectorGridFunctionCoefficient *heatFlux_fs_solid_coeff = new VectorGridFunctionCoefficient(heatFlux_fs_solid);
    VectorGridFunctionCoefficient *heatFlux_sc_solid_coeff = new VectorGridFunctionCoefficient(heatFlux_sc_solid);
-
-   heat_bcs_solid->AddNeumannVectorBC(heatFlux_fs_solid_coeff, fluid_solid_interface[0]);
-   heat_bcs_solid->AddNeumannVectorBC(heatFlux_sc_solid_coeff, solid_cylinder_interface[0]);
+   heat_bcs_solid->AddGeneralRobinBC(&alpha_coeff_fs_solid_heat, &alpha_coeff_fs_solid_heat, temperature_fs_solid_coeff, heatFlux_fs_solid_coeff, fluid_solid_interface[0], false);
+   heat_bcs_solid->AddGeneralRobinBC(&alpha_coeff_sc_solid_heat, &alpha_coeff_sc_solid_heat, temperature_sc_solid_coeff, heatFlux_sc_solid_coeff, solid_cylinder_interface[0], false);
    heat_bcs_solid->AddDirichletBC(Heat_ctx.T_solid, solid_lateral_attr[0]);
    heat_bcs_solid->AddDirichletBC(Heat_ctx.T_solid, solid_bottom_attr[0]);
 
    // Cylinder:
    // - T = Heat_ctx.T_cylinder on top wall
-   // - Dirichlet  on  Γsc
-   // - Neumann    on  Γfc
+   // - Robin  on  Γsc
+   // - Robin  on  Γfc
 
    if (Mpi::Root())
       mfem::out << "\033[0m\nSetting up BCs for cylinder domain...\033[0m" << std::endl;
 
-   VectorGridFunctionCoefficient *heatFlux_fc_cylinder_coeff = new VectorGridFunctionCoefficient(heatFlux_fc_cylinder);
+   ConstantCoefficient alpha_coeff_fc_cylinder_heat(DD_ctx.alpha_heat[4]);
+   ConstantCoefficient alpha_coeff_sc_cylinder_heat(DD_ctx.alpha_heat[5]);
+   GridFunctionCoefficient *temperature_fc_cylinder_coeff = new GridFunctionCoefficient(temperature_fc_cylinder);
    GridFunctionCoefficient *temperature_sc_cylinder_coeff = new GridFunctionCoefficient(temperature_sc_cylinder);
-
-   heat_bcs_cyl->AddNeumannVectorBC(heatFlux_fc_cylinder_coeff, fluid_cylinder_interface[0]);
-   heat_bcs_cyl->AddDirichletBC(temperature_sc_cylinder_coeff, solid_cylinder_interface[0]);
+   VectorGridFunctionCoefficient *heatFlux_fc_cylinder_coeff = new VectorGridFunctionCoefficient(heatFlux_fc_cylinder);
+   VectorGridFunctionCoefficient *heatFlux_sc_cylinder_coeff = new VectorGridFunctionCoefficient(heatFlux_sc_cylinder);
+   heat_bcs_cyl->AddGeneralRobinBC(&alpha_coeff_fc_cylinder_heat, &alpha_coeff_fc_cylinder_heat, temperature_sc_cylinder_coeff, heatFlux_fc_cylinder_coeff, solid_cylinder_interface[0], false);
+   heat_bcs_cyl->AddGeneralRobinBC(&alpha_coeff_sc_cylinder_heat, &alpha_coeff_sc_cylinder_heat, temperature_fc_cylinder_coeff, heatFlux_fc_cylinder_coeff, fluid_cylinder_interface[0], false);
    heat_bcs_cyl->AddDirichletBC(Heat_ctx.T_cylinder, cylinder_top_attr[0]);
 
    Heat_Solid.AddVolumetricTerm(JouleHeating_coeff, solid_domain_attributes, false); // does not assume ownership of the coefficient
@@ -698,9 +738,11 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up RF BCs for fluid domain... \033[0m" << std::endl;
 
+   ConstantCoefficient alpha_coeff_fs_fluid_rf(DD_ctx.alpha_rf[0]);
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
-   rf_bcs_fluid->AddDirichletBC(phi_fs_fluid_coeff, fluid_solid_interface[0]);
-
+   VectorGridFunctionCoefficient *E_fs_fluid_coeff = new VectorGridFunctionCoefficient(E_fs_fluid);
+   rf_bcs_fluid->AddRobinBC(&alpha_coeff_fs_fluid_rf, &alpha_coeff_fs_fluid_rf, phi_fs_fluid_coeff, E_fs_fluid_coeff, fluid_solid_interface[0], false); 
+   
    // Solid:
    // - Phi = 0 on bottom wall
    // - Dirichlet   on  Γsc
@@ -708,10 +750,12 @@ int main(int argc, char *argv[])
    // - Homogeneous Neumann lateral wall
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up RF BCs for solid domain...\033[0m" << std::endl;
+   ConstantCoefficient alpha_coeff_fs_solid_rf(DD_ctx.alpha_rf[1]);
+   GridFunctionCoefficient *phi_fs_solid_coeff = new GridFunctionCoefficient(phi_fs_solid);
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
    rf_bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
    rf_bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
-   rf_bcs_solid->AddNeumannVectorBC(E_fs_solid_coeff, fluid_solid_interface[0]);
+   rf_bcs_solid->AddRobinBC(&alpha_coeff_fs_solid_rf, &alpha_coeff_fs_solid_rf, phi_fs_solid_coeff, E_fs_solid_coeff, fluid_solid_interface[0], false); 
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup interface transfer
@@ -831,13 +875,13 @@ int main(int argc, char *argv[])
    StopWatch chrono_assembly;
    chrono_assembly.Start();
    Heat_Solid.EnablePA(Heat_ctx.pa);
-   Heat_Solid.Setup();
+   Heat_Solid.Setup(Sim_ctx.dt);
    
    Heat_Cylinder.EnablePA(Heat_ctx.pa);
-   Heat_Cylinder.Setup();
+   Heat_Cylinder.Setup(Sim_ctx.dt);
 
    Heat_Fluid.EnablePA(Heat_ctx.pa);
-   Heat_Fluid.Setup();
+   Heat_Fluid.Setup(Sim_ctx.dt);
    chrono_assembly.Stop();
    if (Mpi::Root())
       mfem::out << "\033[0mdone, in " << chrono_assembly.RealTime() << "s.\033[0m" << std::endl;
@@ -1102,9 +1146,10 @@ int main(int argc, char *argv[])
 
          chrono.Clear();
          chrono.Start();
-         // if (!converged_fluid)
-         { // S->F: Φ
+         //if (!converged_fluid)
+         { // S->F: Φ, J
             finder_fluid_to_solid_rf.InterpolateBackward(*phi_solid_gf, *phi_fs_fluid);
+            finder_fluid_to_solid_rf.InterpolateQoIBackward(currentDensity_solid, *E_fs_fluid);
          }
          chrono.Stop();
          t_transfer = chrono.RealTime();
@@ -1136,7 +1181,8 @@ int main(int argc, char *argv[])
          chrono.Clear();
          chrono.Start();
          // if (!converged_solid)
-         { // F->S: grad Φ
+         { // F->S: Φ, J
+            finder_fluid_to_solid_rf.InterpolateForward(*phi_fluid_gf, *phi_fs_solid);
             finder_fluid_to_solid_rf.InterpolateQoIForward(currentDensity_fluid, *E_fs_solid);
          }
          chrono.Stop();
@@ -1280,10 +1326,13 @@ int main(int argc, char *argv[])
    real_t t = 0.0;
    bool last_step = false;
    bool converged = false;
-   real_t tol = 1.0e-10;
-   int max_iter = 100;
+   real_t tol = 1.0e-6;
+   int max_iter = 20;
    int num_steps = (int)(Sim_ctx.t_final / Sim_ctx.dt);
-
+   real_t global_norm_diff_solid;
+   real_t global_norm_diff_fluid;
+   real_t global_norm_diff_cylinder;
+   
    Array<int> subiter_count_heat;
 
    // Timing
@@ -1321,7 +1370,6 @@ int main(int argc, char *argv[])
          bool accept_step = Navier_Fluid.Step(t, Sim_ctx.dt, step);
          t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
 
-
          if (Mpi::Root())
                   mfem::out << "\033[31mdone.\033[0m" << std::endl;
 
@@ -1335,20 +1383,11 @@ int main(int argc, char *argv[])
          wind_coeff->SetGridFunction(velocity_fluid_gf);  // NOTE: do we need this since wind_coeff gets a pointer to velocity_fluid_gf?
       }
 
-      MPI_Barrier(parent_mesh.GetComm());
-
       /////////////////////////////////////////
       //         Solve HEAT TRANSFER         //
       /////////////////////////////////////////
       Array2D<real_t> convergence_heat(max_iter, 3); convergence_heat = 0.0;
       {
-
-         // Reset the convergence flag and time for the next iteration
-         if (Mpi::Root())
-         {
-            mfem::out << "\033[34mSolving HeatTransfer problem... ";
-         }
-
          temperature_solid_tn = *temperature_solid_gf->GetTrueDofs();
          temperature_cylinder_tn = *temperature_cylinder_gf->GetTrueDofs();
          temperature_fluid_tn = *temperature_fluid_gf->GetTrueDofs();
@@ -1384,7 +1423,7 @@ int main(int argc, char *argv[])
             temperature_cylinder_prev_gf->SetFromTrueDofs(temperature_cylinder_prev);
 
             /////////////////////////////////////////////////////////////////
-            //         Fluid Domain (F), Dirichlet(S)-Dirichlet(C)         //
+            //         Fluid Domain (F), Robin(S)-Robin(C)         //
             /////////////////////////////////////////////////////////////////
 
             MPI_Barrier(parent_mesh.GetComm());
@@ -1394,7 +1433,9 @@ int main(int argc, char *argv[])
                chrono.Clear();
                chrono.Start();
                finder_fluid_to_cylinder_heat.InterpolateBackward(*temperature_cylinder_gf, *temperature_fc_fluid);
+               finder_fluid_to_cylinder_heat.InterpolateQoIBackward(heatFlux_cyl, *heatFlux_fc_fluid);
                finder_fluid_to_solid_heat.InterpolateBackward(*temperature_solid_gf, *temperature_fs_fluid);
+               finder_fluid_to_solid_heat.InterpolateQoIBackward(heatFlux_solid, *heatFlux_fs_fluid);
                chrono.Stop();
                t_transfer_fluid = chrono.RealTime();
 
@@ -1425,7 +1466,7 @@ int main(int argc, char *argv[])
             }
 
             /////////////////////////////////////////////////////////////////
-            //          Solid Domain (S), Neumann(F)-Neumann(C)            //
+            //          Solid Domain (S), Robin(F)-Robin(C)            //
             /////////////////////////////////////////////////////////////////
 
             MPI_Barrier(parent_mesh.GetComm());
@@ -1434,7 +1475,9 @@ int main(int argc, char *argv[])
             { // F->S: Transfer k ∇T_wall, C->S: Transfer k ∇T_wall
                chrono.Clear();
                chrono.Start();
+               finder_fluid_to_solid_heat.InterpolateForward(*temperature_fluid_gf, *temperature_fs_solid);
                finder_fluid_to_solid_heat.InterpolateQoIForward(heatFlux_fluid, *heatFlux_fs_solid);
+               finder_solid_to_cylinder_heat.InterpolateBackward(*temperature_cylinder_gf, *temperature_sc_solid);
                finder_solid_to_cylinder_heat.InterpolateQoIBackward(heatFlux_cyl, *heatFlux_sc_solid);
                chrono.Stop();
                t_transfer_solid = chrono.RealTime();
@@ -1475,8 +1518,10 @@ int main(int argc, char *argv[])
             { // F->C: Transfer k ∇T_wall, S->C: Transfer T
                chrono.Clear();
                chrono.Start();
+               finder_fluid_to_cylinder_heat.InterpolateForward(*temperature_fluid_gf, *temperature_fc_cylinder); 
                finder_fluid_to_cylinder_heat.InterpolateQoIForward(heatFlux_fluid, *heatFlux_fc_cylinder);
                finder_solid_to_cylinder_heat.InterpolateForward(*temperature_solid_gf, *temperature_sc_cylinder);
+               finder_solid_to_cylinder_heat.InterpolateQoIForward(heatFlux_solid, *heatFlux_sc_cylinder);
                chrono.Stop();
                t_transfer_cylinder = chrono.RealTime();
 
@@ -1513,9 +1558,9 @@ int main(int argc, char *argv[])
             // Compute local norms
             chrono.Clear();
             chrono.Start();
-            real_t global_norm_diff_solid = temperature_solid_gf->ComputeL2Error(temperature_solid_prev_coeff, irs_heat, &solid_interfaces_element_idx);
-            real_t global_norm_diff_fluid = temperature_fluid_gf->ComputeL2Error(temperature_fluid_prev_coeff, irs_heat, &fluid_interfaces_element_idx);
-            real_t global_norm_diff_cylinder = temperature_cylinder_gf->ComputeL2Error(temperature_cylinder_prev_coeff, irs_heat, &cylinder_interfaces_element_idx);
+            global_norm_diff_solid = temperature_solid_gf->ComputeL2Error(temperature_solid_prev_coeff, irs_heat, &solid_interfaces_element_idx);
+            global_norm_diff_fluid = temperature_fluid_gf->ComputeL2Error(temperature_fluid_prev_coeff, irs_heat, &fluid_interfaces_element_idx);
+            global_norm_diff_cylinder = temperature_cylinder_gf->ComputeL2Error(temperature_cylinder_prev_coeff, irs_heat, &cylinder_interfaces_element_idx);
             chrono.Stop();
             t_error_bdry = chrono.RealTime();
 
@@ -1538,11 +1583,14 @@ int main(int argc, char *argv[])
             t_total_subiter = chrono_total_subiter.RealTime();
          } // END OF CONVERGENCE LOOP
 
-
          if (iter > max_iter)
          {
             if (Mpi::Root())
-               mfem::out << "Warning: Maximum number of iterations reached. Error: " << norm_diff << " << Aborting!" << std::endl;
+               mfem::out << "Warning: Maximum number of iterations reached. Errors: "
+                         << std::scientific << std::setw(16) << " Fluid: " << global_norm_diff_fluid
+                         << std::setw(16) << " Solid: " << global_norm_diff_solid
+                         << std::setw(16) << " Cylinder: " << global_norm_diff_cylinder
+                         << std::endl;
             break;
          }
 
@@ -1556,12 +1604,13 @@ int main(int argc, char *argv[])
 
          // Reset the convergence flag and time for the next iteration
          if (Mpi::Root())
-         {
+         { 
             // Print the message and iterations on the same line
-            mfem::out << std::setw(20) << " " // Adjust the width to align with "Sub-iterations (F-S-C)"
-            << std::setw(2) << iter_fluid << std::setw(2) << "-"
-            << std::setw(2) << iter_solid << std::setw(2) << "-"
-            << std::setw(2) << iter_cylinder << "\033[0m" << std::endl;
+            mfem::out << "\033[34mSolving HeatTransfer problem... "
+                     << std::setw(20) << " " // Adjust the width to align with "Sub-iterations (F-S-C)"
+                     << std::setw(2) << iter_fluid << std::setw(2) << "-"
+                     << std::setw(2) << iter_solid << std::setw(2) << "-"
+                     << std::setw(2) << iter_cylinder << "\033[0m" << std::endl;
          }
 
          if (Mpi::Root() && Sim_ctx.print_timing)
@@ -1678,6 +1727,11 @@ int main(int argc, char *argv[])
    delete temperature_fc_fluid;
    delete temperature_sc_cylinder;
    delete temperature_fs_fluid;
+
+   delete temperature_fc_cylinder_coeff;
+   delete temperature_sc_cylinder_coeff;
+   delete temperature_fs_fluid_coeff;
+   delete temperature_fc_fluid_coeff;
 
    delete heatFlux_fs_solid;
    delete heatFlux_fc_cylinder;

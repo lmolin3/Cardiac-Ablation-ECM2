@@ -30,7 +30,8 @@
 #include "lib/heat_solver.hpp"
 #include "lib/celldeath_solver.hpp"
 
-// Utils
+// Interface transfer
+#include "interface_transfer.hpp"
 
 // Physical and Domain-Decomposition parameters
 #include "contexts.hpp" 
