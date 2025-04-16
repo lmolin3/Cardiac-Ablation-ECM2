@@ -805,6 +805,7 @@ int main(int argc, char *argv[])
    delete E_fs_solid;
    delete E_fs_fluid;
    delete phi_fs_fluid;
+   delete phi_fs_solid;
    delete phi_solid_prev_gf;
    delete phi_fluid_prev_gf;
    delete JouleHeating_gf;

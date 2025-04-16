@@ -295,6 +295,11 @@ namespace mfem
 
             ~GeneralRobinContainer()
             {
+                delete alpha2_u2; // Deleted regardless since it is created by GeneralRobinContainer
+                alpha2_u2 = nullptr;
+                delete mu2_grad_u2; // Deleted regardless since it is created by GeneralRobinContainer
+                mu2_grad_u2 = nullptr;
+                
                 if (own)
                 {
                     delete alpha1;

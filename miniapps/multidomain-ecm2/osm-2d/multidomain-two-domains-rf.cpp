@@ -44,8 +44,6 @@ using TransferBackend = InterfaceTransfer::Backend;
 
 IdentityMatrixCoefficient *Id = NULL;
 
-std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
-
 // Forward declaration
 void print_matrix(const DenseMatrix &A);
 void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step);
@@ -723,6 +721,7 @@ delete fes_grad_fluid;
 delete J_fs_solid;
 delete J_fs_fluid;
 delete phi_fs_fluid;
+delete phi_fs_solid;
 delete phi_solid_prev_gf;
 delete phi_fluid_prev_gf;
 delete JouleHeating_gf;

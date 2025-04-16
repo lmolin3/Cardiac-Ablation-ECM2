@@ -137,6 +137,10 @@ namespace mfem
             paraview_dc.SetCompressionLevel(9);
             paraview_dc.RegisterField("partitioning", &attr);
             paraview_dc.Save();
+
+            // Clean up
+            delete attr_fespace;
+            delete attr_fec;
         }
 
 
