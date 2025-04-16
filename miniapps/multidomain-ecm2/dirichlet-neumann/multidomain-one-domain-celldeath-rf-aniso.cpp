@@ -1,5 +1,5 @@
 // Sample run:
-// mpirun -np 4 ./multidomain-one-domain-celldeath-rf-aniso -hex -pa -pa_rf -oh 3 -or 4 -ode 1 -tf 1.0 -dt 0.01 -paraview -of ./Output/Solid/oh3_or4
+// mpirun -np 4 ./multidomain-one-domain-celldeath-rf-aniso -hex -pa-heat -pa-rf -oh 3 -or 4 -ode 1 -tf 1.0 -dt 0.01 -paraview -of ./Output/Solid/oh3_or4
 
 // MFEM library
 #include "mfem.hpp"
@@ -62,9 +62,9 @@ int main(int argc, char *argv[])
                   "Finite element order for RF problem (polynomial degree).");
    args.AddOption(&CellDeath_ctx.order, "-oc", "--order-celldeath",
                   "Finite element order for cell death (polynomial degree).");
-   args.AddOption(&Heat_ctx.pa, "-pa", "--partial-assembly-heat", "-no-pa", "--no-partial-assembly-heat",
+   args.AddOption(&Heat_ctx.pa, "-pa-heat", "--partial-assembly-heat", "-no-pa", "--no-partial-assembly-heat",
                   "Enable or disable partial assembly.");
-   args.AddOption(&RF_ctx.pa, "-pa_rf", "--partial-assembly-rf", "-no-pa_rf", "--no-partial-assembly-rf",
+   args.AddOption(&RF_ctx.pa, "-pa-rf", "--partial-assembly-rf", "-no-pa_rf", "--no-partial-assembly-rf",
                   "Enable or disable partial assembly for RF problem.");
    args.AddOption(&CellDeath_ctx.solver_type, "-cdt", "--celldeath-solver-type",
                   "Cell-death solver type: 0 - Eigen, 1 - GoTran.");
@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+   args.AddOption(&Sim_ctx.paraview, "--paraview", "-paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
@@ -299,9 +299,9 @@ int main(int argc, char *argv[])
    // Cell Death solver (needs pointer to temperature grid function)
    celldeath::CellDeathSolver *CellDeath_Solid = nullptr;
    if (CellDeath_ctx.solver_type == 0)
-      CellDeath_Solid = new celldeath::CellDeathSolverEigen(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
+      CellDeath_Solid = new celldeath::CellDeathSolverEigen(CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
    else if (CellDeath_ctx.solver_type == 1)
-      CellDeath_Solid = new celldeath::CellDeathSolverGotran(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
+      CellDeath_Solid = new celldeath::CellDeathSolverGotran(CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
    else
       MFEM_ABORT("Invalid cell death solver type.");
 
@@ -729,6 +729,7 @@ int main(int argc, char *argv[])
    delete Sigma_solid;
 
    delete JouleHeating_gf;
+   delete euler_angles_gf;
 
    return 0;
 }

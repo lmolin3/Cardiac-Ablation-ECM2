@@ -28,6 +28,13 @@
 // the timestep T_box(t) to T_box(t+Sim_ctx.dt). Then for the convection-diffusion
 // equation T_wall is set to T_box(t+Sim_ctx.dt) and the equation is solved for T(t+Sim_ctx.dt)
 // which results in a first-order one way coupling.
+//
+// Run with:
+// 1. Full assembly
+//       mpirun -np 4 ./multidomain-dirichlet -o 2 -dt 0.01 -tf 0.05
+// 2. Partial assembly
+//       mpirun -np 4 ./multidomain-dirichlet -o 2 -dt 0.01 -tf 0.05 -pa
+//
 
 // MFEM library
 #include "mfem.hpp"
@@ -81,7 +88,7 @@ int main(int argc, char *argv[])
                   "Final time; start time is 0.");
    args.AddOption(&Sim_ctx.dt, "-dt", "--time-step",
                   "Time step.");
-   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+   args.AddOption(&Sim_ctx.paraview, "--paraview", "-paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
@@ -89,11 +96,12 @@ int main(int argc, char *argv[])
                   "Output folder.");
    args.ParseCheck();
 
+   
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 3. Create serial Mesh and parallel
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
-   Mesh *serial_mesh = new Mesh("multidomain-hex.mesh");
+   Mesh *serial_mesh = new Mesh("../multidomain-hex.mesh");
    int sdim = serial_mesh->SpaceDimension();
    ParMesh parent_mesh = ParMesh(MPI_COMM_WORLD, *serial_mesh);
    delete serial_mesh;
@@ -270,6 +278,11 @@ int main(int argc, char *argv[])
          last_step = true;
       }
 
+      if (Mpi::Root())
+      {
+         mfem::out << "Step " << step << ", t = " << t << ", dt = " << Sim_ctx.dt << std::endl;
+      }
+
       // Advance the diffusion equation on the outer block to the next time step
       Heat_solid.Step(t, Sim_ctx.dt, step);
       t -= Sim_ctx.dt; // Reset t to same time step, since t is incremented in the Step function
@@ -294,7 +307,7 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Cleanup
    ///////////////////////////////////////////////////////////////////////////////////////////////
-
+   
    delete temperature_cylinder_wall_gf;
 
    delete Kappa_cyl;

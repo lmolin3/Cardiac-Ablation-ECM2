@@ -88,7 +88,7 @@ int main(int argc, char *argv[])
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&Sim_ctx.paraview, "-paraview", "-paraview", "-no-paraview", "--no-paraview",
+   args.AddOption(&Sim_ctx.paraview, "--paraview", "-paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
@@ -536,13 +536,13 @@ int main(int argc, char *argv[])
       RF_Fluid.WriteFields(0);
    }
 
-   Vector phi_solid(phi_solid_gf->Size());
+   Vector phi_solid(fes_solid->GetTrueVSize());
    phi_solid = 0.0;
-   Vector phi_fluid(phi_fluid_gf->Size());
+   Vector phi_fluid(fes_fluid->GetTrueVSize());
    phi_fluid = 0.0;
-   Vector phi_solid_prev(phi_solid_gf->Size());
+   Vector phi_solid_prev(fes_solid->GetTrueVSize());
    phi_solid_prev = 0.0;
-   Vector phi_fluid_prev(phi_fluid_gf->Size());
+   Vector phi_fluid_prev(fes_fluid->GetTrueVSize());
    phi_fluid_prev = 0.0;
 
    int fluid_dofs = RF_Fluid.GetProblemSize();
@@ -747,7 +747,7 @@ int main(int argc, char *argv[])
       out << "Paraview: " << t_paraview << " s" << std::endl;
       out << "------------------------------------------------------------" << std::endl;
    }
-
+   
    //////////////////////////////////////////////////////////////////////
    //                        Clean up                                  //
    //////////////////////////////////////////////////////////////////////
@@ -772,6 +772,8 @@ int main(int argc, char *argv[])
    delete phi_solid_prev_gf;
    delete phi_fluid_prev_gf;
    delete JouleHeating_gf;
+
+   delete euler_angles_gf;
 
    return 0;
 }

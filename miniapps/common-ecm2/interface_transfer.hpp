@@ -123,8 +123,8 @@ namespace mfem
                 void GSLIBAttrToMarker(int max_attr, const Array<unsigned int> &elems, Array<int> &marker);
         
                 InterfaceTransfer::Backend backend; ///< Backend type.
-        
-                ParTransferMap *transfer_map; ///< Transfer map.
+
+                ParTransferMap *transfer_map = nullptr; ///< Transfer map.
                 FindPointsGSLIB finder; ///< GSLIB finder.
         
                 ParFiniteElementSpace *src_fes; ///< Source finite element space.

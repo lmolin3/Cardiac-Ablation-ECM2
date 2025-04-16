@@ -67,7 +67,7 @@ struct s_CellDeathContext
     real_t deltaE2 = 38.6*1e3;
     real_t deltaE3 = 47.2*1e3;
     // FE
-    int order = 1;
+    int order = -1;
     // Solver
     int solver_type = 0; // 0 = Eigen, 1 = Gotran
 } CellDeath_ctx;

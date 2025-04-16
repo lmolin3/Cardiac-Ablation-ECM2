@@ -161,7 +161,7 @@ int main(int argc, char *argv[])
    case 2:
    {
       type = (element_type == 0) ? Element::TRIANGLE : Element::QUADRILATERAL;
-      mesh = new Mesh(Mesh::MakeCartesian2D(5, 5, type, 0.83, 0.833, true));
+      mesh = new Mesh(Mesh::MakeCartesian2D(5, 5, type, true, 0.833, 0.833, true));     
       if (Mpi::Root())
       {
          cout << "Solving Problem 1: 2D conduction in rectangular plate \n"

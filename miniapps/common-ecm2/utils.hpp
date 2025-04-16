@@ -256,15 +256,15 @@ namespace mfem
         class GeneralRobinContainer
         {
         public:
-            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1, Coefficient *alpha2, Coefficient *u2, VectorCoefficient *grad_u2, Coefficient *mu2, bool own = true)
-                : attr(attr), alpha1(alpha1), alpha2(alpha2), mu2(mu2), grad_u2(grad_u2), u2(u2), own(own)
+            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, Coefficient *u2_, VectorCoefficient *grad_u2_, Coefficient *mu2_, bool own = true)
+                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), mu2(mu2_), grad_u2(grad_u2_), u2(u2_), own(own)
             {
                 alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
                 mu2_grad_u2 = new ScalarVectorProductCoefficient(*mu2, *grad_u2);
             }
 
-            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1, Coefficient *alpha2, VectorCoefficient *mu2_grad_u2, Coefficient *mu2, bool own = true)
-                : attr(attr), alpha1(alpha1), alpha2(alpha2), grad_u2(mu2_grad_u2), mu2(nullptr), u2(u2), own(own)
+            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, VectorCoefficient *mu2_grad_u2_, Coefficient *u2_, bool own = true)
+                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), grad_u2(mu2_grad_u2_), mu2(nullptr), u2(u2_), own(own)
             {
                 alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
                 mu2_grad_u2 = new ScalarVectorProductCoefficient(1.0, *grad_u2);

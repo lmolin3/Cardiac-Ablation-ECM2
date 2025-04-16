@@ -439,6 +439,11 @@ namespace mfem
          delete K;
          delete fform;
 
+         if (Mfull)
+         {
+            delete Mfull;
+         }
+
          delete T_solver;
          delete M_prec;
 

@@ -74,7 +74,7 @@ int main(int argc, char *argv[]){
    // FE
    args.AddOption(&RF_ctx.order, "-o", "--order",
                   "Finite element order (polynomial degree).");
-   args.AddOption(&RF_ctx.pa, "-pa-rf", "--partial-assembly-rf", "-no-par-rf", "--no-partial-assembly-rf",
+   args.AddOption(&RF_ctx.pa, "-pa-rf", "--partial-assembly-rf", "-no-pa-rf", "--no-partial-assembly-rf",
                   "Enable or disable partial assembly.");
    // Mesh
    args.AddOption(&Mesh_ctx.hex, "-hex", "--hex-mesh", "-tet", "--tet-mesh",
@@ -94,7 +94,7 @@ int main(int argc, char *argv[]){
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&Sim_ctx.paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
+   args.AddOption(&Sim_ctx.paraview, "--paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
@@ -467,7 +467,7 @@ if (Mpi::Root())
 
 // Write fields to disk for VisIt
 bool converged = false;
-real_t tol = 1.0e-10;
+real_t tol = 1.0e-12;
 int max_iter = 100;
 int step = 0;
 
@@ -477,13 +477,13 @@ if (Sim_ctx.paraview)
    RF_Fluid.WriteFields(0);
 }
 
-Vector phi_solid(phi_solid_gf->Size());
+Vector phi_solid(fes_solid->GetTrueVSize());
 phi_solid = 0.0;
-Vector phi_fluid(phi_fluid_gf->Size());
+Vector phi_fluid(fes_fluid->GetTrueVSize());
 phi_fluid = 0.0;
-Vector phi_solid_prev(phi_solid_gf->Size());
+Vector phi_solid_prev(fes_solid->GetTrueVSize());
 phi_solid_prev = 0.0;
-Vector phi_fluid_prev(phi_fluid_gf->Size());
+Vector phi_fluid_prev(fes_fluid->GetTrueVSize());
 phi_fluid_prev = 0.0;
 
 int fluid_dofs = RF_Fluid.GetProblemSize();
@@ -491,8 +491,8 @@ int solid_dofs = RF_Solid.GetProblemSize();
 
 if (Mpi::Root())
 {
-   out << " Fluid dofs: " << fluid_dofs << std::endl;
-   out << " Solid dofs: " << solid_dofs << std::endl;
+   mfem::out << " Fluid dofs: " << fluid_dofs << std::endl;
+   mfem::out << " Solid dofs: " << solid_dofs << std::endl;
 }
 
 // Outer loop for time integration
@@ -623,14 +623,6 @@ while (!converged && iter <= max_iter)
    real_t global_norm_diff_fluid = phi_fluid_gf->ComputeL2Error(phi_fluid_prev_coeff, irs, &fs_fluid_element_idx);
    chrono.Stop();
    t_error_bdry = chrono.RealTime();
-
-   Vector diff_solid(phi_solid_gf->Size());
-   diff_solid = phi_solid;
-   diff_solid -= phi_solid_prev;
-   real_t norm_diff_solid = diff_solid.Norml2();
-
-   mfem::out << "Solid diff: " << norm_diff_solid << std::endl;
-   mfem::out << "Phi_solid norm: " << phi_solid.Norml2() << std::endl;
 
    // Check convergence on domains
    converged_solid = (global_norm_diff_solid < tol); //   &&(iter > 0);

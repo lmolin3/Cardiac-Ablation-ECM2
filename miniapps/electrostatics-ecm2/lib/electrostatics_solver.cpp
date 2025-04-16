@@ -71,6 +71,7 @@ namespace mfem
 
          // Initialize vector/s
          B.SetSize(H1FESpace->GetTrueVSize());
+         Phi.SetSize(H1FESpace->GetTrueVSize());
 
          tmp_domain_attr.SetSize(pmesh->attributes.Max());
       }
@@ -124,6 +125,7 @@ namespace mfem
 
          // Initialize vector/s
          B.SetSize(H1FESpace->GetTrueVSize());
+         Phi.SetSize(H1FESpace->GetTrueVSize());
 
          tmp_domain_attr.SetSize(pmesh->attributes.Max());
 

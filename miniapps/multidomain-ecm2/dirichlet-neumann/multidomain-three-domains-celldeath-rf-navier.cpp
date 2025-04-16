@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
    // Postprocessing
    args.AddOption(&Sim_ctx.print_timing, "-pt", "--print-timing", "-no-pt", "--no-print-timing",
                   "Print timing data.");
-   args.AddOption(&Sim_ctx.paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
+   args.AddOption(&Sim_ctx.paraview, "--paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&Sim_ctx.save_freq, "-sf", "--save-freq",
                   "Save fields every 'save_freq' time steps.");
@@ -409,9 +409,9 @@ int main(int argc, char *argv[])
    // Cell Death solver (needs pointer to temperature grid function)
    celldeath::CellDeathSolver *CellDeath_Solid = nullptr;
    if (CellDeath_ctx.solver_type == 0)
-      CellDeath_Solid = new celldeath::CellDeathSolverEigen(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
+      CellDeath_Solid = new celldeath::CellDeathSolverEigen( CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
    else if (CellDeath_ctx.solver_type == 1)
-      CellDeath_Solid = new celldeath::CellDeathSolverGotran(solid_submesh, CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
+      CellDeath_Solid = new celldeath::CellDeathSolverGotran( CellDeath_ctx.order, temperature_solid_gf, CellDeath_ctx.A1, CellDeath_ctx.A2, CellDeath_ctx.A3, CellDeath_ctx.deltaE1, CellDeath_ctx.deltaE2, CellDeath_ctx.deltaE3);
    else
       MFEM_ABORT("Invalid cell death solver type.");
 
@@ -966,24 +966,24 @@ int main(int argc, char *argv[])
    }
 
    // Vectors for error computation and relaxation
-   Vector temperature_solid(temperature_solid_gf->Size());   temperature_solid = Heat_ctx.T_solid;
-   Vector temperature_cylinder(temperature_cylinder_gf->Size()); temperature_cylinder = Heat_ctx.T_cylinder;
-   Vector temperature_fluid(temperature_fluid_gf->Size()); temperature_fluid = Heat_ctx.T_fluid;
+   Vector temperature_solid(heat_fes_solid->GetTrueVSize());   temperature_solid = Heat_ctx.T_solid;
+   Vector temperature_cylinder(heat_fes_cylinder->GetTrueVSize()); temperature_cylinder = Heat_ctx.T_cylinder;
+   Vector temperature_fluid(heat_fes_fluid->GetTrueVSize()); temperature_fluid = Heat_ctx.T_fluid;
 
-   Vector temperature_solid_prev(temperature_solid_gf->Size());
+   Vector temperature_solid_prev(heat_fes_solid->GetTrueVSize());
    temperature_solid_prev = Heat_ctx.T_solid;
-   Vector temperature_cylinder_prev(temperature_cylinder_gf->Size());
+   Vector temperature_cylinder_prev(heat_fes_cylinder->GetTrueVSize());
    temperature_cylinder_prev = Heat_ctx.T_cylinder;
-   Vector temperature_fluid_prev(temperature_fluid_gf->Size()); temperature_fluid_prev = Heat_ctx.T_fluid;
+   Vector temperature_fluid_prev(heat_fes_fluid->GetTrueVSize()); temperature_fluid_prev = Heat_ctx.T_fluid;
 
    Vector temperature_solid_tn(*temperature_solid_gf->GetTrueDofs()); temperature_solid_tn = Heat_ctx.T_solid;
    Vector temperature_cylinder_tn(*temperature_cylinder_gf->GetTrueDofs()); temperature_cylinder_tn = Heat_ctx.T_cylinder;
    Vector temperature_fluid_tn(*temperature_fluid_gf->GetTrueDofs()); temperature_fluid_tn = Heat_ctx.T_fluid;
 
-   Vector phi_solid(phi_solid_gf->Size()); phi_solid = 0.0;
-   Vector phi_fluid(phi_fluid_gf->Size()); phi_fluid = 0.0;
-   Vector phi_solid_prev(phi_solid_gf->Size()); phi_solid_prev = 0.0;
-   Vector phi_fluid_prev(phi_fluid_gf->Size()); phi_fluid_prev = 0.0;
+   Vector phi_solid(rf_fes_solid->GetTrueVSize()); phi_solid = 0.0;
+   Vector phi_fluid(rf_fes_fluid->GetTrueVSize()); phi_fluid = 0.0;
+   Vector phi_solid_prev(rf_fes_solid->GetTrueVSize()); phi_solid_prev = 0.0;
+   Vector phi_fluid_prev(rf_fes_fluid->GetTrueVSize()); phi_fluid_prev = 0.0;
 
    // Dofs
    int heat_cyl_dofs = Heat_Cylinder.GetProblemSize();
@@ -1696,7 +1696,8 @@ int main(int argc, char *argv[])
    delete phi_solid_prev_gf;
    delete phi_fluid_prev_gf;
    delete JouleHeating_gf;
-
+   delete euler_angles_gf;
+   
    return 0;
 }
 
