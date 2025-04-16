@@ -10,6 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "celldeath_solver.hpp"
+#include <algorithm>
 
 #ifdef MFEM_USE_MPI
 
@@ -19,14 +20,17 @@ namespace mfem
 {
          namespace celldeath
          {
-            CellDeathSolver::CellDeathSolver(std::shared_ptr<ParMesh> pmesh_, int order_,
+            CellDeathSolver::CellDeathSolver(int order_,
                                              ParGridFunction *T_,
                                              real_t A1_, real_t A2_, real_t A3_,
                                              real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                              bool verbose)
-                : pmesh(pmesh_), A1(A1_), A2(A2_), A3(A3_),
+                : A1(A1_), A2(A2_), A3(A3_),
                   deltaE1(deltaE1_), deltaE2(deltaE2_), deltaE3(deltaE3_), T_gf(T_), verbose(verbose)
             {
+               // Extract mesh
+               pmesh = T_gf->ParFESpace()->GetParMesh();
+
                // Initialize the FE spaces for projection
                fesT = T_gf->ParFESpace();
                order = order_;
@@ -89,10 +93,10 @@ namespace mfem
                fec = (order == 0)
                          ? static_cast<FiniteElementCollection *>(new L2_FECollection(order, pmesh->Dimension()))
                          : static_cast<FiniteElementCollection *>(new H1_FECollection(order, pmesh->Dimension()));
-               fes = new ParFiniteElementSpace(pmesh.get(), fec);
+               fes = new ParFiniteElementSpace(pmesh, fec);
 
                // Create the TransferOperator
-               transferOp = (orderT > order) ? new TrueTransferOperator(*fes, *fesT) : new TrueTransferOperator(*fesT, *fes);
+               transferOp = new TrueTransferOperator(*fesT, *fes);
             }
 
             void CellDeathSolver::ProjectTemperature(Vector &Tin, Vector &Tout)
@@ -104,14 +108,7 @@ namespace mfem
                }
 
                // Project the temperature field from the source space to the target space
-               if (orderT > order) // Fine to coarse restriction
-               {
-                  transferOp->MultTranspose(Tin, Tout);
-               }
-               else // Coarse to fine prolongation
-               {
-                  transferOp->Mult(Tin, Tout);
-               }
+               transferOp->Mult(Tin, Tout);
             }
 
             void CellDeathSolver::RegisterParaviewFields(ParaViewDataCollection &paraview_dc_)
@@ -194,15 +191,21 @@ namespace mfem
                }
             }
 
-            CellDeathSolverEigen::CellDeathSolverEigen(std::shared_ptr<ParMesh> pmesh, int order,
+            CellDeathSolverEigen::CellDeathSolverEigen(int order,
                                                        ParGridFunction *T_,
                                                        real_t A1_, real_t A2_, real_t A3_,
                                                        real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                                        bool verbose)
-                : CellDeathSolver(pmesh, order, T_, A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_, verbose)
+                : CellDeathSolver(order, T_, A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_, verbose)
             {
-               Xn = Vector(3);
-               X = Vector(3);
+               #ifndef MFEM_THREAD_SAFE
+               Xn.SetSize(3); Xn = 0.0;
+               X.SetSize(3); X = 0.0;
+               exp_lambda_dt.SetSize(3); exp_lambda_dt = 0.0;
+               lambda.SetSize(3); lambda = 0.0;
+               P.SetSize(3, 3);
+               Plu.SetSize(3, 3);
+               #endif
             }
 
             CellDeathSolverEigen::~CellDeathSolverEigen()
@@ -211,123 +214,133 @@ namespace mfem
 
             inline void CellDeathSolverEigen::EigenSystem(real_t k1, real_t k2, real_t k3, Vector &lambda, DenseMatrix &P)
             {
+               // Convention:
+               // Matrix is stored in column-major order
+               // P = [e1 e2 e3] is the eigenvector matrix
+               // so that P_data[0] = e1[0]; P_data[1] = e1[1]; P_data[2] = e1[2];
+               //         P_data[3] = e2[0]; P_data[4] = e2[1]; P_data[5] = e2[2];
+               //         P_data[6] = e3[0]; P_data[7] = e3[1]; P_data[8] = e3[2];
+
+               // Extract the data from the matrix P
+               real_t *P_data = P.HostWrite();
+               real_t *Plu_data = Plu.HostWrite();
+               real_t *lambda_data = lambda.HostWrite();
+
                // Create an index based on which ki are non-zero
                int index = (k1 != 0.0 ? 1 : 0) | (k2 != 0.0 ? 2 : 0) | (k3 != 0.0 ? 4 : 0);
-               real_t e1[3], e2[3], e3[3];
-               real_t lambda_[3];
 
                switch (index)
                {
                case 0: // All k1, k2, k3 are zero
                {
-                  lambda_[0] = 0;
-                  lambda_[1] = 0;
-                  lambda_[2] = 0;
-                  e1[0] = 1.0;
-                  e1[1] = 0.0;
-                  e1[2] = 0.0;
-                  e2[0] = 0.0;
-                  e2[1] = 1.0;
-                  e2[2] = 0.0;
-                  e3[0] = 0.0;
-                  e3[1] = 0.0;
-                  e3[2] = 1.0;
+                  lambda_data[0] = 0;
+                  lambda_data[1] = 0;
+                  lambda_data[2] = 0;
+                  P_data[0] = 1.0;    
+                  P_data[1] = 0.0;
+                  P_data[2] = 0.0;
+                  P_data[3] = 0.0;
+                  P_data[4] = 1.0;
+                  P_data[5] = 0.0;
+                  P_data[6] = 0.0;
+                  P_data[7] = 0.0;
+                  P_data[8] = 1.0;
                   break;
                }
                case 1: // Only k1 is non-zero
                {
-                  lambda_[0] = 0;
-                  lambda_[1] = 0;
-                  lambda_[2] = -1.0 * k1;
-                  e1[0] = 0;
-                  e1[1] = 1;
-                  e1[2] = 0;
-                  e2[0] = 0;
-                  e2[1] = 0;
-                  e2[2] = 1;
-                  e3[0] = -1;
-                  e3[1] = 1;
-                  e3[2] = 0;
+                  lambda_data[0] = 0;
+                  lambda_data[1] = 0;
+                  lambda_data[2] = -1.0 * k1;
+                  P_data[0] = 0;
+                  P_data[1] = 1;
+                  P_data[2] = 0;
+                  P_data[3] = 0;
+                  P_data[4] = 0;
+                  P_data[5] = 1;
+                  P_data[6] = -1;
+                  P_data[7] = 1;
+                  P_data[8] = 0;
                   break;
                }
                case 2: // Only k2 is non-zero
                {
-                  lambda_[0] = 0;
-                  lambda_[1] = 0;
-                  lambda_[2] = -1.0 * k2;
-                  e1[0] = 1;
-                  e1[1] = 0;
-                  e1[2] = 0;
-                  e2[0] = 0;
-                  e2[1] = 0;
-                  e2[2] = 1;
-                  e3[0] = -1;
-                  e3[1] = 1;
-                  e3[2] = 0;
+                  lambda_data[0] = 0;
+                  lambda_data[1] = 0;
+                  lambda_data[2] = -1.0 * k2;
+                  P_data[0] = 1;
+                  P_data[1] = 0;
+                  P_data[2] = 0;
+                  P_data[3] = 0;
+                  P_data[4] = 0;
+                  P_data[5] = 1;
+                  P_data[6] = -1;
+                  P_data[7] = 1;
+                  P_data[8] = 0;
                   break;
                }
                case 3: // k1 and k2 are non-zero
                {
-                  lambda_[0] = 0;
-                  lambda_[1] = 0;
-                  lambda_[2] = -1.0 * k1 - 1.0 * k2;
-                  e1[0] = k2 / k1;
-                  e1[1] = 1;
-                  e1[2] = 0;
-                  e2[0] = 0;
-                  e2[1] = 0;
-                  e2[2] = 1;
-                  e3[0] = -1;
-                  e3[1] = 1;
-                  e3[2] = 0;
+                  lambda_data[0] = 0;
+                  lambda_data[1] = 0;
+                  lambda_data[2] = -1.0 * k1 - 1.0 * k2;
+                  P_data[0] = k2 / k1;
+                  P_data[1] = 1;
+                  P_data[2] = 0;
+                  P_data[3] = 0;
+                  P_data[4] = 0;
+                  P_data[5] = 1;
+                  P_data[6] = -1;
+                  P_data[7] = 1;
+                  P_data[8] = 0;
                   break;
                }
                case 4: // Only k3 is non-zero
                {
-                  lambda_[0] = 0;
-                  lambda_[1] = 0;
-                  lambda_[2] = -1.0 * k3;
-                  e1[0] = 1;
-                  e1[1] = 0;
-                  e1[2] = 0;
-                  e2[0] = 0;
-                  e2[1] = 0;
-                  e2[2] = 1;
-                  e3[0] = 0;
-                  e3[1] = -1;
-                  e3[2] = 1;
+                  lambda_data[0] = 0;
+                  lambda_data[1] = 0;
+                  lambda_data[2] = -1.0 * k3;
+                  P_data[0] = 1;
+                  P_data[1] = 0;
+                  P_data[2] = 0;
+                  P_data[3] = 0;
+                  P_data[4] = 0;
+                  P_data[5] = 1;
+                  P_data[6] = 0;
+                  P_data[7] = -1;
+                  P_data[8] = 1;
                   break;
                }
                case 5: // k1 and k3 are non-zero
                {
-                  lambda_[0] = 0;
-                  lambda_[1] = -1.0 * k1;
-                  lambda_[2] = -1.0 * k3;
-                  e1[0] = 0;
-                  e1[1] = 0;
-                  e1[2] = 1;
-                  e2[0] = (k1 - k3) / k3;
-                  e2[1] = -k1 / k3;
-                  e2[2] = 1;
-                  e3[0] = 0;
-                  e3[1] = -1;
-                  e3[2] = 1;
+                  lambda_data[0] = 0;
+                  lambda_data[1] = -1.0 * k1;
+                  lambda_data[2] = -1.0 * k3;
+                  P_data[0] = 0;
+                  P_data[1] = 0;
+                  P_data[2] = 1;
+                  P_data[3] = (k1 - k3) / k3;
+                  P_data[4] = -k1 / k3;
+                  P_data[5] = 1;
+                  P_data[6] = 0;
+                  P_data[7] = -1;
+                  P_data[8] = 1;
                   break;
                }
                case 6: // k2 and k3 are non-zero
                {
-                  lambda_[0] = 0;
-                  lambda_[1] = 0;
-                  lambda_[2] = -1.0 * k2 - 1.0 * k3;
-                  e1[0] = 1;
-                  e1[1] = 0;
-                  e1[2] = 0;
-                  e2[0] = 0;
-                  e2[1] = 0;
-                  e2[2] = 1;
-                  e3[0] = k2 / k3;
-                  e3[1] = -(k2 + k3) / k3;
-                  e3[2] = 1;
+                  lambda_data[0] = 0;
+                  lambda_data[1] = 0;
+                  lambda_data[2] = -1.0 * k2 - 1.0 * k3;
+                  P_data[0] = 1;
+                  P_data[1] = 0;
+                  P_data[2] = 0;
+                  P_data[3] = 0;
+                  P_data[4] = 0;
+                  P_data[5] = 1;
+                  P_data[6] = k2 / k3;
+                  P_data[7] = -(k2 + k3) / k3;
+                  P_data[8] = 1;
                   break;
                }
                case 7: // All k1, k2, k3 are non-zero
@@ -340,20 +353,20 @@ namespace mfem
                   const real_t sum_factor = (k1 + k2 + k3);
 
                   // Compute eigenvalues
-                  lambda_[0] = 0.0;
-                  lambda_[1] = -0.5 * sum_factor - 0.5 * sqrt_factor;
-                  lambda_[2] = -0.5 * sum_factor + 0.5 * sqrt_factor;
+                  lambda_data[0] = 0.0;
+                  lambda_data[1] = -0.5 * sum_factor - 0.5 * sqrt_factor;
+                  lambda_data[2] = -0.5 * sum_factor + 0.5 * sqrt_factor;
 
                   // Compute eigenvectors and fill in matrix P
-                  e1[0] = 0.0;
-                  e1[1] = 0.0;
-                  e1[2] = 1.0;
-                  e2[0] = (k1 + k2 - k3 + sqrt_factor) / (2 * k3);
-                  e2[1] = -(sum_factor + sqrt_factor) / (2 * k3);
-                  e2[2] = 1.0;
-                  e3[0] = (k1 + k2 - k3 - sqrt_factor) / (2 * k3);
-                  e3[1] = -(sum_factor - sqrt_factor) / (2 * k3);
-                  e3[2] = 1.0;
+                  P_data[0] = 0.0;
+                  P_data[1] = 0.0;
+                  P_data[2] = 1.0;
+                  P_data[3] = (k1 + k2 - k3 + sqrt_factor) / (2 * k3);
+                  P_data[4] = -(sum_factor + sqrt_factor) / (2 * k3);
+                  P_data[5] = 1.0;
+                  P_data[6] = (k1 + k2 - k3 - sqrt_factor) / (2 * k3);
+                  P_data[7] = -(sum_factor - sqrt_factor) / (2 * k3);
+                  P_data[8] = 1.0;
                   break;
                }
                default:
@@ -363,14 +376,7 @@ namespace mfem
                }
                }
 
-               // Assign the eigenvalues
-               lambda = lambda_;
-
-               // Create eigenvector matrix P
-               real_t eigenvectors[9] = {e1[0], e1[1], e1[2], e2[0], e2[1], e2[2], e3[0], e3[1], e3[2]};
-               P.UseExternalData(eigenvectors, 3, 3);
-
-               // Normalize the eigenvectors
+               // Normalize the eigenvector matrix P
                Vector norms(3);
                P.Norm2(norms);
                P.InvRightScaling(norms);
@@ -378,10 +384,17 @@ namespace mfem
 
             void CellDeathSolverEigen::Solve(real_t t, real_t dt)
             {
-               // Allocate reusable resources to avoid redundant allocation in each loop
-               DenseMatrix P, Plu;
-               Vector lambda(3), exp_lambda_dt(3);
+#ifdef MFEM_THREAD_SAFE
+               // Thread-safe version
+               Vector Xn(3);
+               Vector X(3);
+               DenseMatrix P(3, 3);
+               DenseMatrix Plu(3, 3);
+               Vector lambda(3);
+               Vector exp_lambda_dt(3);
+#endif
 
+               // Get the true degrees of freedom for the grid functions
                T_gf->GetTrueDofs(Tsrc);
                N_gf.GetTrueDofs(N);
                U_gf.GetTrueDofs(U);
@@ -418,7 +431,7 @@ namespace mfem
                   exp_lambda_dt(2) = exp(lambda(2) * dt);
 
                   // Solve P C = Xn by creating a deep copy of P (Plu) to preserve it
-                  Plu = P; // Copy matrix P into Plu for solving
+                  std::copy(P.HostRead(), P.HostRead() + 9, Plu.HostWrite());
                   LinearSolve(Plu, Xn.GetData());
 
                   // Construct the new solution X_n+1 = P * exp(lambda * dt) * C
@@ -442,12 +455,11 @@ namespace mfem
                D_gf.SetFromTrueDofs(D);
             }
 
-            CellDeathSolverGotran::CellDeathSolverGotran(std::shared_ptr<ParMesh> pmesh_,
-                                                         int order_, ParGridFunction *T_,
+            CellDeathSolverGotran::CellDeathSolverGotran(int order_, ParGridFunction *T_,
                                                          real_t A1_, real_t A2_, real_t A3_,
                                                          real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                                          bool verbose)
-                : CellDeathSolver(pmesh_, order_, T_, A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_, verbose)
+                : CellDeathSolver(order_, T_, A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_, verbose)
             {
                // Initialize ODE model parameters
                parameters_nodes = new real_t[fes_truevsize][num_param];
@@ -506,7 +518,7 @@ namespace mfem
                MFEM_ASSERT((method >= 0 && method < 4), "Invalid method for time integration");
 
                // Get the solution and state vectors
-               T_gf->GetTrueDofs(T);
+               T_gf->GetTrueDofs(Tsrc);
                N_gf.GetTrueDofs(N);
                U_gf.GetTrueDofs(U);
                D_gf.GetTrueDofs(D);

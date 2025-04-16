@@ -19,11 +19,11 @@ namespace mfem
         class CellDeathSolver
         {
         public:
-            CellDeathSolver(std::shared_ptr<ParMesh> pmesh, int order,
-                                ParGridFunction *T_,
-                                real_t A1_, real_t A2_, real_t A3_,
-                                real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
-                                bool verbose = false);
+            CellDeathSolver(int order,
+                            ParGridFunction *T_,
+                            real_t A1_, real_t A2_, real_t A3_,
+                            real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
+                            bool verbose = false);
 
             virtual ~CellDeathSolver();
 
@@ -63,7 +63,7 @@ namespace mfem
 
         protected:
             // Shared pointer to Mesh
-            std::shared_ptr<ParMesh> pmesh;
+            ParMesh *pmesh = nullptr; /// NOT OWNED
             int dim;
 
             // FE spaces
@@ -101,11 +101,11 @@ namespace mfem
         class CellDeathSolverEigen : public CellDeathSolver
         {
         public:
-            CellDeathSolverEigen(std::shared_ptr<ParMesh> pmesh, int order,
-                            ParGridFunction *T_,
-                            real_t A1_, real_t A2_, real_t A3_,
-                            real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
-                            bool verbose = false);
+            CellDeathSolverEigen(int order,
+                                 ParGridFunction *T_,
+                                 real_t A1_, real_t A2_, real_t A3_,
+                                 real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
+                                 bool verbose = false);
 
             ~CellDeathSolverEigen();
 
@@ -118,21 +118,24 @@ namespace mfem
             inline void EigenSystem(real_t k1, real_t k2, real_t k3, Vector &lambda, DenseMatrix &P);
 
             // Eigenvalue problem
-            Vector Xn; // initial conditions
-            Vector X;  // solution
+#ifndef MFEM_THREAD_SAFE
+            Vector Xn;            // initial conditions
+            Vector X;             // solution
+            DenseMatrix P, Plu;   // eigenvector matrix
+            Vector lambda;        // eigenvalues
+            Vector exp_lambda_dt; // exp(lambda * dt)
+#endif
         };
 
         class CellDeathSolverGotran : public CellDeathSolver
         {
         public:
-            CellDeathSolverGotran(std::shared_ptr<ParMesh> pmesh_,
-                                  int order_, ParGridFunction *T_,
+            CellDeathSolverGotran(int order_, ParGridFunction *T_,
                                   real_t A1_, real_t A2_, real_t A3_,
                                   real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                   bool verbose = false);
 
             ~CellDeathSolverGotran();
-
             // Solve the system
             void Solve(real_t t, real_t dt) override;
             void Solve(real_t t, real_t dt, int method = 1, int substeps = 1);

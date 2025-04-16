@@ -48,5 +48,10 @@ add_mfem_miniapp(test_celldeath
     EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
     LIBRARIES mfem mfem-common celldeath-ecm2)
 
+add_mfem_miniapp(test_transfer
+    MAIN tests/test_transfer.cpp
+    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
+    LIBRARIES mfem mfem-common)
+
 endif () #MFEM_USE_MPI
 
