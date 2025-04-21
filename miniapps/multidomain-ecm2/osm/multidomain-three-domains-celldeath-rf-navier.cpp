@@ -73,6 +73,12 @@ void inflow(const Vector &x, real_t t, Vector &u)
    u(1) = Navier_ctx.u_inflow;
 }
 
+// Variables for domain decomposition convergence
+static constexpr int MAX_ITER = 100;
+static constexpr double TOL = 1e-8;
+static constexpr double TOL_HEAT = 1e-4;
+
+
 int main(int argc, char *argv[])
 {
 
@@ -741,7 +747,7 @@ int main(int argc, char *argv[])
    ConstantCoefficient alpha_coeff_fs_fluid_rf(DD_ctx.alpha_rf[0]);
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
    VectorGridFunctionCoefficient *E_fs_fluid_coeff = new VectorGridFunctionCoefficient(E_fs_fluid);
-   rf_bcs_fluid->AddRobinBC(&alpha_coeff_fs_fluid_rf, &alpha_coeff_fs_fluid_rf, phi_fs_fluid_coeff, E_fs_fluid_coeff, fluid_solid_interface[0], false); 
+   rf_bcs_fluid->AddGeneralRobinBC(&alpha_coeff_fs_fluid_rf, &alpha_coeff_fs_fluid_rf, phi_fs_fluid_coeff, E_fs_fluid_coeff, fluid_solid_interface[0], false); 
    
    // Solid:
    // - Phi = 0 on bottom wall
@@ -755,7 +761,7 @@ int main(int argc, char *argv[])
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
    rf_bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
    rf_bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
-   rf_bcs_solid->AddRobinBC(&alpha_coeff_fs_solid_rf, &alpha_coeff_fs_solid_rf, phi_fs_solid_coeff, E_fs_solid_coeff, fluid_solid_interface[0], false); 
+   rf_bcs_solid->AddGeneralRobinBC(&alpha_coeff_fs_solid_rf, &alpha_coeff_fs_solid_rf, phi_fs_solid_coeff, E_fs_solid_coeff, fluid_solid_interface[0], false); 
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup interface transfer
@@ -1106,15 +1112,12 @@ int main(int argc, char *argv[])
 
    {
       bool converged = false;
-      real_t tol = 1.0e-10;
-      int max_iter = 100;
-
       int iter = 0;
       int iter_solid = 0;
       int iter_fluid = 0;
-      real_t norm_diff = 2 * tol;
-      real_t norm_diff_solid = 2 * tol;
-      real_t norm_diff_fluid = 2 * tol;
+      real_t norm_diff = 2 * TOL;
+      real_t norm_diff_solid = 2 * TOL;
+      real_t norm_diff_fluid = 2 * TOL;
 
       bool converged_solid = false;
       bool converged_fluid = false;
@@ -1124,9 +1127,9 @@ int main(int argc, char *argv[])
       real_t t_transfer, t_interp, t_solve_fluid, t_solve_solid, t_relax_fluid, t_relax_solid, t_error, t_error_bdry, t_paraview, t_joule;
 
       bool assembleRHS = true;
-      Array2D<real_t> convergence_rf(max_iter, 3); convergence_rf = 0.0;
+      Array2D<real_t> convergence_rf(MAX_ITER, 3); convergence_rf = 0.0;
 
-      while (!converged && iter <= max_iter)
+      while (!converged && iter <= MAX_ITER)
       {
 
          chrono_total.Clear();
@@ -1219,8 +1222,8 @@ int main(int argc, char *argv[])
          t_error_bdry = chrono.RealTime();
 
          // Check convergence on domains
-         converged_solid = (global_norm_diff_solid < tol); //   &&(iter > 0);
-         converged_fluid = (global_norm_diff_fluid < tol); //   &&(iter > 0);
+         converged_solid = (global_norm_diff_solid < TOL); //   &&(iter > 0);
+         converged_fluid = (global_norm_diff_fluid < TOL); //   &&(iter > 0);
 
          // Check convergence
          converged = converged_solid && converged_fluid;
@@ -1326,8 +1329,6 @@ int main(int argc, char *argv[])
    real_t t = 0.0;
    bool last_step = false;
    bool converged = false;
-   real_t tol = 1.0e-6;
-   int max_iter = 20;
    int num_steps = (int)(Sim_ctx.t_final / Sim_ctx.dt);
    real_t global_norm_diff_solid;
    real_t global_norm_diff_fluid;
@@ -1386,7 +1387,7 @@ int main(int argc, char *argv[])
       /////////////////////////////////////////
       //         Solve HEAT TRANSFER         //
       /////////////////////////////////////////
-      Array2D<real_t> convergence_heat(max_iter, 3); convergence_heat = 0.0;
+      Array2D<real_t> convergence_heat(MAX_ITER, 3); convergence_heat = 0.0;
       {
          temperature_solid_tn = *temperature_solid_gf->GetTrueDofs();
          temperature_cylinder_tn = *temperature_cylinder_gf->GetTrueDofs();
@@ -1397,10 +1398,10 @@ int main(int argc, char *argv[])
          int iter_solid = 0;
          int iter_fluid = 0;
          int iter_cylinder = 0;
-         real_t norm_diff = 2 * tol;
-         real_t norm_diff_solid = 2 * tol;
-         real_t norm_diff_fluid = 2 * tol;
-         real_t norm_diff_cylinder = 2 * tol;
+         real_t norm_diff = 2 * TOL_HEAT;
+         real_t norm_diff_solid = 2 * TOL_HEAT;
+         real_t norm_diff_fluid = 2 * TOL_HEAT;
+         real_t norm_diff_cylinder = 2 * TOL_HEAT;
 
          bool converged_solid = false;
          bool converged_fluid = false;
@@ -1409,7 +1410,7 @@ int main(int argc, char *argv[])
          chrono_total.Clear();
          chrono_total.Start();
 
-         while (!converged && iter <= max_iter)
+         while (!converged && iter <= MAX_ITER)
          {
             chrono_total_subiter.Clear();
             chrono_total_subiter.Start();
@@ -1572,9 +1573,9 @@ int main(int argc, char *argv[])
             }
 
             // Check convergence
-            converged_solid = global_norm_diff_solid < tol;
-            converged_fluid = global_norm_diff_fluid < tol;
-            converged_cylinder = global_norm_diff_cylinder < tol;
+            converged_solid = global_norm_diff_solid < TOL_HEAT;
+            converged_fluid = global_norm_diff_fluid < TOL_HEAT;
+            converged_cylinder = global_norm_diff_cylinder < TOL_HEAT;
             converged = converged_solid && converged_fluid && converged_cylinder;
             
             iter++;
@@ -1583,7 +1584,7 @@ int main(int argc, char *argv[])
             t_total_subiter = chrono_total_subiter.RealTime();
          } // END OF CONVERGENCE LOOP
 
-         if (iter > max_iter)
+         if (iter > MAX_ITER)
          {
             if (Mpi::Root())
                mfem::out << "Warning: Maximum number of iterations reached. Errors: "

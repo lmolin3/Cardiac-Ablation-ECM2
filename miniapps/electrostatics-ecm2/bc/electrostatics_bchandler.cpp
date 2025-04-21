@@ -256,7 +256,7 @@ void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr, bool own)
 }
 
 
-void BCHandler::AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, Array<int> &attr, bool own)
+void BCHandler::AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
@@ -290,25 +290,25 @@ void BCHandler::AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficie
 }
 
 
-void BCHandler::AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, int &attr, bool own)
+void BCHandler::AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     robin_attr_tmp = 0;
     robin_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddRobinBC(alpha_1, alpha_2, phi_2, gradPhi_2, mu2, robin_attr_tmp, own);
+    AddGeneralRobinBC(alpha_1, alpha_2, phi_2, gradPhi_2, mu2, robin_attr_tmp, own);
 }
 
 
-void BCHandler::AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, Array<int> &attr, bool own)
+void BCHandler::AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
     // Append to the list of Robin BCs
-    robin_bcs.emplace_back(attr, alpha_1, alpha_2, phi_2, mu2_gradPhi_2, nullptr, own);
+    robin_bcs.emplace_back(attr, alpha_1, alpha_2, phi_2, mu2_gradPhi_2, own);
 
     for (int i = 0; i < attr.Size(); ++i)
     {
@@ -335,14 +335,14 @@ void BCHandler::AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficie
 }
 
 
-void BCHandler::AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, int &attr, bool own)
+void BCHandler::AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     robin_attr_tmp = 0;
     robin_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddRobinBC(alpha_1, alpha_2, phi_2, mu2_gradPhi_2, robin_attr_tmp, own);
+    AddGeneralRobinBC(alpha_1, alpha_2, phi_2, mu2_gradPhi_2, robin_attr_tmp, own);
 }
 
 

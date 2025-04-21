@@ -46,6 +46,10 @@ IdentityMatrixCoefficient *Id = NULL;
 
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
 
+// Domain decomposition parameters
+static constexpr int MAX_ITER = 100;
+static constexpr double TOL = 1e-8;
+
 // Forward declaration
 void print_matrix(const DenseMatrix &A);
 void saveConvergenceArray(const Array2D<real_t> &data, const std::string &outfolder, const std::string &name, int step);
@@ -437,7 +441,7 @@ int main(int argc, char *argv[])
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
    VectorGridFunctionCoefficient *E_fs_fluid_coeff = new VectorGridFunctionCoefficient(E_fs_fluid);
    //bcs_fluid->AddDirichletBC(RF_ctx.phi_gnd, fluid_top_attr[0]);
-   bcs_fluid->AddRobinBC(&alpha_coeff1, &alpha_coeff1, phi_fs_fluid_coeff, E_fs_fluid_coeff, fluid_solid_interface[0], false); 
+   bcs_fluid->AddGeneralRobinBC(&alpha_coeff1, &alpha_coeff1, phi_fs_fluid_coeff, E_fs_fluid_coeff, fluid_solid_interface[0], false); 
 
 
    // Solid:
@@ -448,13 +452,13 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up BCs for solid domain...\033[0m" << std::endl;
    RF_ctx.phi_gnd = 0.0;
-   RF_ctx.phi_applied = 1.0;
+   RF_ctx.phi_applied = 10.0;
    ConstantCoefficient alpha_coeff2(DD_ctx.alpha_rf[1]);
    GridFunctionCoefficient *phi_fs_solid_coeff = new GridFunctionCoefficient(phi_fs_solid);
    VectorGridFunctionCoefficient *E_fs_solid_coeff = new VectorGridFunctionCoefficient(E_fs_solid);
    bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
    bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
-   bcs_solid->AddRobinBC(&alpha_coeff2, &alpha_coeff2, phi_fs_solid_coeff, E_fs_solid_coeff, fluid_solid_interface[0], false); 
+   bcs_solid->AddGeneralRobinBC(&alpha_coeff2, &alpha_coeff2, phi_fs_solid_coeff, E_fs_solid_coeff, fluid_solid_interface[0], false); 
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 8. Setup interface transfer
@@ -550,8 +554,6 @@ int main(int argc, char *argv[])
 
    // Write fields to disk for VisIt
    bool converged = false;
-   real_t tol = 1.0e-10;
-   int max_iter = 100;
    int step = 0;
 
    if (Sim_ctx.paraview)
@@ -582,14 +584,14 @@ int main(int argc, char *argv[])
    DD_ctx.omega_rf_fluid = DD_ctx.omega_rf; // TODO: Add different relaxation parameters for each domain
    DD_ctx.omega_rf_solid = DD_ctx.omega_rf;
 
-   Array2D<real_t> convergence_rf(max_iter, 3); convergence_rf = 0.0;
+   Array2D<real_t> convergence_rf(MAX_ITER, 3); convergence_rf = 0.0;
    // Inner loop for the segregated solve
    int iter = 0;
    int iter_solid = 0;
    int iter_fluid = 0;
-   real_t norm_diff = 2 * tol;
-   real_t norm_diff_solid = 2 * tol;
-   real_t norm_diff_fluid = 2 * tol;
+   real_t norm_diff = 2 * TOL;
+   real_t norm_diff_solid = 2 * TOL;
+   real_t norm_diff_fluid = 2 * TOL;
 
    bool converged_solid = false;
    bool converged_fluid = false;
@@ -615,7 +617,7 @@ int main(int argc, char *argv[])
       out << std::left << std::setw(16) << "Iteration" << std::setw(16) << "Fluid Error" << std::setw(16) << "Solid Error" << std::endl;
       out << "------------------------------------------------------------" << std::endl;
    }
-   while (!converged && iter <= max_iter)
+   while (!converged && iter <= MAX_ITER)
    {
 
       chrono_total.Clear(); chrono_total.Start();
@@ -707,8 +709,8 @@ int main(int argc, char *argv[])
       t_error_bdry = chrono.RealTime();
 
       // Check convergence on domains
-      converged_solid = (global_norm_diff_solid < tol); //   &&(iter > 0);
-      converged_fluid = (global_norm_diff_fluid < tol); //   &&(iter > 0);
+      converged_solid = (global_norm_diff_solid < TOL); //   &&(iter > 0);
+      converged_fluid = (global_norm_diff_fluid < TOL); //   &&(iter > 0);
       
       // Check convergence
       converged = converged_solid && converged_fluid;

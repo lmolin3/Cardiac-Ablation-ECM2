@@ -323,7 +323,7 @@ void BCHandler::AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Co
                 "Size of attributes array does not match mesh attributes.");
 
     // Append to the list of Robin BCs
-    general_robin_bcs.emplace_back(attr, alpha_1, alpha_2, T_2, k2_gradT_2, nullptr, own);
+    general_robin_bcs.emplace_back(attr, alpha_1, alpha_2, T_2, k2_gradT_2, own);
 
     for (int i = 0; i < attr.Size(); ++i)
     {

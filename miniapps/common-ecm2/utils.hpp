@@ -62,7 +62,7 @@ namespace mfem
                 this->coeff = coeff_;
             }
 
-            VecCoeffContainer(VecCoeffContainer &&obj)
+            VecCoeffContainer(VecCoeffContainer &&obj) noexcept
             {
                 // Deep copy the attribute array
                 this->attr = obj.attr;
@@ -100,7 +100,7 @@ namespace mfem
                 this->beta = beta_;
             }
 
-            CustomNeumannContainer(CustomNeumannContainer &&obj)
+            CustomNeumannContainer(CustomNeumannContainer &&obj) noexcept
             {
                 // Deep copy the attribute array
                 this->attr = obj.attr;
@@ -149,7 +149,7 @@ namespace mfem
             {
             }
 
-            CoeffContainer(CoeffContainer &&obj)
+            CoeffContainer(CoeffContainer &&obj) noexcept
             {
                 // Deep copy the attribute and direction
                 this->attr = obj.attr;
@@ -185,7 +185,7 @@ namespace mfem
             }
 
             // Move Constructor
-            CompCoeffContainer(CompCoeffContainer &&obj)
+            CompCoeffContainer(CompCoeffContainer &&obj) noexcept
                 : CoeffContainer(std::move(obj))
             {
                 dir = obj.dir;
@@ -207,7 +207,7 @@ namespace mfem
                 hT0_coeff = new ProductCoefficient(*h_coeff, *T0_coeff);
             }
 
-            RobinCoeffContainer(RobinCoeffContainer &&obj)
+            RobinCoeffContainer(RobinCoeffContainer &&obj) noexcept
             {
                 // Deep copy the attribute and direction
                 this->attr = obj.attr;
@@ -263,14 +263,14 @@ namespace mfem
                 mu2_grad_u2 = new ScalarVectorProductCoefficient(*mu2, *grad_u2);
             }
 
-            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, VectorCoefficient *mu2_grad_u2_, Coefficient *u2_, bool own = true)
+            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, Coefficient *u2_, VectorCoefficient *mu2_grad_u2_, bool own = true)
                 : attr(attr), alpha1(alpha1_), alpha2(alpha2_), grad_u2(mu2_grad_u2_), mu2(nullptr), u2(u2_), own(own)
             {
                 alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
                 mu2_grad_u2 = new ScalarVectorProductCoefficient(1.0, *grad_u2);
             }       
 
-            GeneralRobinContainer(GeneralRobinContainer &&obj)
+            GeneralRobinContainer(GeneralRobinContainer &&obj) noexcept 
             {
                 // Deep copy the attribute and direction
                 this->attr = obj.attr;
@@ -315,15 +315,15 @@ namespace mfem
                 }
             }
 
-            Array<int> attr;
-            Coefficient *alpha1;   // May be OWNED
-            Coefficient *alpha2;   // May be OWNED
-            Coefficient *mu2;      // May be OWNED
-            VectorCoefficient *grad_u2;  // May be OWNED
-            Coefficient *u2;       // May be OWNED
-            ScalarVectorProductCoefficient *mu2_grad_u2 = nullptr; // OWNED
-            Coefficient *alpha2_u2 = nullptr;  // OWNED
-            bool own;
+                Array<int> attr;
+                Coefficient *alpha1;                                   // May be OWNED
+                Coefficient *alpha2;                                   // May be OWNED
+                Coefficient *mu2;                                      // May be OWNED
+                VectorCoefficient *grad_u2;                            // May be OWNED
+                Coefficient *u2;                                       // May be OWNED
+                ScalarVectorProductCoefficient *mu2_grad_u2 = nullptr; // OWNED
+                Coefficient *alpha2_u2 = nullptr;                      // OWNED
+                bool own;
         };
          
 

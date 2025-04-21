@@ -238,24 +238,24 @@ namespace mfem
              *
              * Note: If μ2 is not provided, we assume gradPhi_2 = μ2 ∇φ2 
              */ 
-            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, Array<int> &attr, bool own = true); 
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, Array<int> &attr, bool own = true); 
 
 
             /**
              * \brief Add Robin BC using Coefficient and specific mesh attribute.
              */
-            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, int &attr, bool own = true);
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *gradPhi_2, Coefficient *mu2, int &attr, bool own = true);
 
 
             /** \brief Add Robin BC using Coefficient and list of essential boundaries.
              * This version assumes gradPhi_2 = μ2 ∇φ2, since μ2 is not provided.
              */
-            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, Array<int> &attr, bool own = true);
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, Array<int> &attr, bool own = true);
 
             /** \brief Add Robin BC using Coefficient and specific mesh attribute.
              * This version assumes gradPhi_2 = μ2 ∇φ2, since μ2 is not provided.
              */
-            void AddRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, int &attr, bool own = true);
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *phi_2, VectorCoefficient *mu2_gradPhi_2, int &attr, bool own = true);
 
 
             /**

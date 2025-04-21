@@ -60,7 +60,7 @@ namespace mfem
       {
          sw_init.Start();
 
-         display_banner(cout);
+         //display_banner(cout);
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {

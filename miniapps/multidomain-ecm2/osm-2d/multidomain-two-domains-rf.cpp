@@ -325,7 +325,7 @@ int main(int argc, char *argv[]){
    GridFunctionCoefficient *phi_fs_fluid_coeff = new GridFunctionCoefficient(phi_fs_fluid);
    VectorGridFunctionCoefficient *J_fs_fluid_coeff = new VectorGridFunctionCoefficient(J_fs_fluid);
    bcs_fluid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
-   bcs_fluid->AddRobinBC(&alpha_coeff1, &alpha_coeff1, phi_fs_fluid_coeff, J_fs_fluid_coeff, fluid_solid_interface[0], false); 
+   bcs_fluid->AddGeneralRobinBC(&alpha_coeff1, &alpha_coeff1, phi_fs_fluid_coeff, J_fs_fluid_coeff, fluid_solid_interface[0], false); 
 
    // Solid:
    // - Dirichlet on bottom wall (ground)
@@ -339,7 +339,7 @@ int main(int argc, char *argv[]){
    VectorGridFunctionCoefficient *J_fs_solid_coeff = new VectorGridFunctionCoefficient(J_fs_solid);
    bcs_solid->AddDirichletBC(RF_ctx.phi_gnd, solid_bottom_attr[0]);
    bcs_solid->AddDirichletBC(RF_ctx.phi_applied, solid_cylinder_interface[0]);
-   bcs_solid->AddRobinBC(&alpha_coeff2, &alpha_coeff2, phi_fs_solid_coeff, J_fs_solid_coeff, fluid_solid_interface[0], false); 
+   bcs_solid->AddGeneralRobinBC(&alpha_coeff2, &alpha_coeff2, phi_fs_solid_coeff, J_fs_solid_coeff, fluid_solid_interface[0], false); 
 
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -352,8 +352,6 @@ int main(int argc, char *argv[]){
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
    BidirectionalInterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB, parent_mesh.GetComm());
-   //InterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB, parent_mesh.GetComm());
-
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
