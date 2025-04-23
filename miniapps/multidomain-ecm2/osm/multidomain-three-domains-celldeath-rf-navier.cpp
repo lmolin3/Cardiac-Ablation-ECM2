@@ -28,7 +28,7 @@
 // 4. Hexahedral mesh with partial assembly for RF and Heat
 //    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier-osm -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0 -alpha-rf '1e3 1e-3' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
 // 5. Hexahedral mesh with partial assembly for RF and Heat, and anisotropic conductivity
-//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf-navier-osm -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat-h 1.0 -omegat-rf 1.0 -ta 1 --preload-ns 2.0 -alpha-rf '1e3 1e-3' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier-osm -hex -pa-heat -pa-rf -oh 2 -or 3 -dt 0.01 -tf 0.05 --aniso-ratio-rf 1.0 --aniso-ratio-heat 1.0 -omegat-h 0.8 -omegat-rf 0.6 -ta 1 --preload-ns 2.0 -alpha-rf '1e2 -1e-2' -alpha-h '1e3 1e3 1e-3 1e-3 1e-3 1e3'
 
 // MFEM library
 #include "mfem.hpp"
