@@ -18,13 +18,6 @@ list(APPEND HDRS
   utils.hpp
   )
 
-if (MFEM_USE_CUDA)
-  set_property(SOURCE ${SRCS} PROPERTY LANGUAGE CUDA)
-endif()
-if (MFEM_USE_HIP)
-  set_property(SOURCE ${SRCS} PROPERTY HIP_SOURCE_PROPERTY_FORMAT TRUE)
-endif()
-
 convert_filenames_to_full_paths(SRCS)
 convert_filenames_to_full_paths(HDRS)
 
@@ -33,3 +26,14 @@ set(MINIAPPS_COMMON_HEADERS ${MINIAPPS_COMMON_HEADERS} ${HDRS} PARENT_SCOPE)
 
 mfem_add_library(mfem-common-ecm2 ${SRCS} ${HDRS})
 target_link_libraries(mfem-common-ecm2 mfem)
+
+# Check if we need to link stdc++fs for C++14
+if (CMAKE_CXX_STANDARD LESS 17)
+    target_link_libraries(mfem-common-ecm2 stdc++fs)
+endif()
+
+add_mfem_miniapp(MeshUtils
+  MAIN MeshUtils.cpp
+  ${MFEM_MINIAPPS_COMMON_HEADERS}
+  LIBRARIES mfem-common mfem-common-ecm2)
+

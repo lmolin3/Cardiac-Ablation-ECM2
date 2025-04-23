@@ -27,9 +27,8 @@
 //
 // Sample runs:
 //
-//   Multidomain mesh, same conductivity everywhere, same anisotropy ratio in both domains:
-//      mpirun -np 4 ./electrostatics_test3D_aniso -m ../multidomain/multidomain-hex.mesh
-//                    -rs 3 -sattr '1 2' -sval '1.0 1.0' -ar '10.0 10.0' -dbcs '6 7 8' -dbcv '1 0 0' -of Output/Multidomain/Aniso/Ratio10
+//   A cylinder at constant voltage in a square, grounded metal pipe:
+//      mpirun -np 4 ./electrostatics_test3D_aniso_rotated -m ../multidomain/multidomain-hex.mesh -rs 1 -o 4 -sattr '1 2' -sval '1.0 1.0' -ar '0.0 3.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -pa
 //
 
 #include "lib/electrostatics_solver.hpp"
@@ -43,6 +42,12 @@ using namespace mfem;
 using namespace mfem::electrostatics;
 
 
+// Forward declarations of functions
+
+// Conductivity Matrix
+void EulerAngles(const Vector &x, Vector &e);
+std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix( const Vector &d);
+
 // Boundary Conditions
 void SetupBCHandler(BCHandler *bcs, Array<int> &dbcs, Vector &dbcv, Array<int> &dbce, Array<int> &nbcs, Vector &nbcv, std::vector<Vector> &e_uniform);
 
@@ -55,23 +60,25 @@ std::vector<Vector> e_uniform(0);
 static Vector dbce_val(0);
 bool uebc_const = true;
 
+
 int main(int argc, char *argv[])
 {
    /// 1. Initialize MPI and Hypre
    Mpi::Init(argc, argv);
    Hypre::Init();
 
-
    /// 2. Parse command-line options.
    const char *mesh_file = "../multidomain/multidomain-hex.mesh";
    int order = 1;
    int serial_ref_levels = 0;
    int parallel_ref_levels = 0;
+   int prec_type = 1;
    bool visualization = false;
    bool visit = false;
    bool paraview = true;
    const char *outfolder = "./Output/Test/";
    bool pa = false;
+
 
    Array<int> dbcs;
    Array<int> dbce;
@@ -112,6 +119,9 @@ int main(int argc, char *argv[])
                   "Neumann Boundary Condition Surfaces");
    args.AddOption(&nbcv, "-nbcv", "--neumann-bc-vals",
                   "Neumann Boundary Condition Values");
+   args.AddOption(&prec_type, "-prec", "--preconditioner",
+                  "Preconditioner type (full assembly): 0 - BoomerAMG, 1 - LOR, \n"
+                  "Preconditioner type (partial assembly): 0 - Jacobi smoother, 1 - LOR");
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
@@ -184,20 +194,15 @@ int main(int argc, char *argv[])
    {
       MFEM_ASSERT(sigma_attr[i] <= pmesh->attributes.Max(), "Attribute value out of range");
 
-      double sigma_val = pw_sigma[i];
-      double sigma_ratio = aniso_ratio[i];
-      auto sigmaFunc = [sigma_val,sigma_ratio](const Vector &x, DenseMatrix &s) {
-         s.SetSize(3);
-         s = 0.0;
-         double sx = sigma_val;
-         double sy = sigma_val/sigma_ratio;
-         double sz = sigma_val/sigma_ratio;
-         s(0,0) = sx;
-         s(1,1) = sy;
-         s(2,2) = sz;
-      };
-
-      MatrixCoefficient *tmp = pw_sigma[i] != 0 ? new MatrixFunctionCoefficient(3, sigmaFunc) : NULL;
+      real_t sigma_val = pw_sigma[i];
+      real_t sigma_ratio = aniso_ratio[i];
+      // Create vector of conductivity values
+      Vector sigma_vec(d);
+      sigma_vec(0) = sigma_val;
+      sigma_vec(1) = sigma_val / sigma_ratio;
+      sigma_vec(2) = sigma_val / sigma_ratio;
+   
+      MatrixCoefficient *tmp = pw_sigma[i] != 0 ? new MatrixFunctionCoefficient(3, ConductivityMatrix(sigma_vec)) : NULL;
 
       coefs.Append(tmp);
       attr.Append(sigma_attr[i]);
@@ -226,7 +231,7 @@ int main(int argc, char *argv[])
          for (int j = 0; j < s; j++)
          {
             k = k + j;
-            e_tmp(j) = (k) < nval ? static_cast<double>(dbce_val(k)) : 0.0;
+            e_tmp(j) = (k) < nval ? static_cast<real_t>(dbce_val(k)) : 0.0;
          }
          e_uniform.push_back(e_tmp);
 
@@ -261,7 +266,7 @@ int main(int argc, char *argv[])
    /// 6. Create the Electrostatics Solver
    // Create the Electrostatic solver
    ElectrostaticsSolver Volta(pmesh, order, bcs, sigmaCoeff, verbose);
-   Volta.display_banner(std::cout);
+Volta.display_banner(std::cout);
 
    // Initialize GLVis visualization
    if (visualization)
@@ -293,11 +298,10 @@ int main(int argc, char *argv[])
          paraview_dc.SetPrefixPath(outfolder);
          paraview_dc.SetLevelsOfDetail(order);
          Volta.RegisterParaviewFields(paraview_dc);
-         
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
@@ -316,8 +320,9 @@ int main(int argc, char *argv[])
    Volta.PrintSizes();
 
    // Setup solver and Assemble all forms
+   int pl = 1;
    Volta.EnablePA(pa);
-   Volta.Setup();
+   Volta.Setup(prec_type, pl);
 
    // Solve the system and compute any auxiliary fields
    Volta.Solve();
@@ -376,3 +381,83 @@ void SetupBCHandler(BCHandler *bcs, Array<int> &dbcs, Vector &dbcv, Array<int> &
 }
 
 
+std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix( const Vector &d)
+{
+   return [d](const Vector &x, DenseMatrix &m)
+   {
+      // Define dimension of problem
+      const int dim = x.Size();
+
+      // Compute Euler angles
+      Vector e(3);
+      EulerAngles(x,e);
+      real_t e1 = e(0);
+      real_t e2 = e(1);
+      real_t e3 = e(2);
+
+      // Compute rotated matrix
+      if (dim == 3)
+      {
+         // Compute cosine and sine of the angles e1, e2, e3
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         const real_t c2 = cos(e2);
+         const real_t s2 = sin(e2);
+         const real_t c3 = cos(e3);
+         const real_t s3 = sin(e3);
+
+         // Fill the rotation matrix R with the Euler angles.
+         DenseMatrix R(3, 3);
+         R(0, 0) = c1 * c3 - c2 * s1 * s3;
+         R(0, 1) = -c1 * s3 - c2 * c3 * s1;
+         R(0, 2) = s1 * s2;
+         R(1, 0) = c3 * s1 + c1 * c2 * s3;
+         R(1, 1) = c1 * c2 * c3 - s1 * s3;
+         R(1, 2) = -c1 * s2;
+         R(2, 0) = s2 * s3;
+         R(2, 1) = c3 * s2;
+         R(2, 2) = c2;
+
+         // Multiply the rotation matrix R with the diffusivity vector.
+         Vector l(3);
+         l(0) = d[0];
+         l(1) = d[1];
+         l(2) = d[2];
+
+         // Compute m = R^t diag(l) R
+         R.Transpose();
+         MultADBt(R, l, R, m);
+      }
+      else if (dim == 2)
+      {
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         DenseMatrix Rt(2, 2);
+         Rt(0, 0) =  c1;
+         Rt(0, 1) =  s1;
+         Rt(1, 0) = -s1;
+         Rt(1, 1) =  c1;
+         Vector l(2);
+         l(0) = d[0];
+         l(1) = d[1];
+         MultADAt(Rt,l,m);
+      }
+      else
+      {
+         m(0, 0) = d[0];
+      }
+
+   };
+}
+
+void EulerAngles(const Vector &x, Vector &e)
+{
+    const int dim = x.Size();
+
+    e(0) = -60.0 * M_PI / 180.0; // convert to radians
+    e(1) = 0.0;
+    if( dim == 3)
+    {
+        e(2) = 0.0;
+    }
+}

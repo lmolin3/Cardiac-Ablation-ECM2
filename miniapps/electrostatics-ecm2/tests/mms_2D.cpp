@@ -46,13 +46,13 @@ IdentityMatrixCoefficient *Id = NULL;
 
 
 // Setting the frequency for the exact solution
-double freq = 1.0;
-double kappa;
+real_t freq = 1.0;
+real_t kappa;
 
 // Exact smooth analytic solution for convergence study
-double Phi_exact(const Vector &, double );
+real_t Phi_exact(const Vector &, real_t );
 void Phi_grad_exact(const Vector &, Vector &);
-double f_exact(const Vector &);
+real_t f_exact(const Vector &);
 
 
 int main(int argc, char *argv[])
@@ -228,7 +228,7 @@ int main(int argc, char *argv[])
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
@@ -266,7 +266,7 @@ int main(int argc, char *argv[])
    Volta.Solve();
 
    ParGridFunction E_gf = Volta.GetElectricField();
-   double el = Volta.ElectricLosses(E_gf);
+   real_t el = Volta.ElectricLosses(E_gf);
 
    // Determine the current size of the linear system
    int prob_size = Volta.GetProblemSize();
@@ -297,17 +297,17 @@ int main(int argc, char *argv[])
            << endl;
    }
 
-   double l2_err = 0.0;
-   double h1_err = 0.0;
-   double l2_rate = 0.0;
-   double h1_rate = 0.0;
+   real_t l2_err = 0.0;
+   real_t h1_err = 0.0;
+   real_t l2_rate = 0.0;
+   real_t h1_rate = 0.0;
    l2_err = Phi_gf.ComputeL2Error(Phiex_coeff);
    h1_err = Phi_gf.ComputeH1Error(&Phiex_coeff, &gradPhiex_coeff);
 
-   double h_min = 0.0;
-   double h_max = 0.0;
-   double kappa_min = 0.0;
-   double kappa_max = 0.0;
+   real_t h_min = 0.0;
+   real_t h_max = 0.0;
+   real_t kappa_min = 0.0;
+   real_t kappa_max = 0.0;
    pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
 
    ///*if (serial_ref_levels != 0)
@@ -350,9 +350,9 @@ int main(int argc, char *argv[])
 }
 
 
-double Phi_exact(const Vector &x, double t)
+real_t Phi_exact(const Vector &x, real_t t)
 {
-   double phi = 0.0;
+   real_t phi = 0.0;
    if (x.Size() == 2)
    {
       phi = sin(kappa * x(0)) * sin(kappa * x(1));
@@ -380,9 +380,9 @@ void Phi_grad_exact(const Vector &x, Vector &gradPhi)
    }
 }
 
-double f_exact(const Vector &x)
+real_t f_exact(const Vector &x)
 {
-   double f = 0.0;
+   real_t f = 0.0;
    if (x.Size() == 2)
    {
       f = 2.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)));

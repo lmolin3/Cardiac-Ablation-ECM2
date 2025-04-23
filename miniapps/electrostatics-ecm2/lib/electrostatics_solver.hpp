@@ -34,27 +34,52 @@ namespace mfem
    namespace electrostatics
    {
 
+      class JouleHeatingCoefficient: public Coefficient
+      {
+      private:
+         ParGridFunction *E_gf;
+         Coefficient *Q;
+         MatrixCoefficient *MQ;
+      public:
+         JouleHeatingCoefficient(Coefficient *Sigma_,
+                                 ParGridFunction *E_gf_)
+             : E_gf(E_gf_), Q(Sigma_), MQ(NULL) {};
+
+         JouleHeatingCoefficient(MatrixCoefficient *Sigma_,
+                                 ParGridFunction *E_gf_)
+            : E_gf(E_gf_), Q(NULL), MQ(Sigma_) {};
+         real_t Eval(ElementTransformation &T, const IntegrationPoint &ip) override;
+         virtual ~JouleHeatingCoefficient() {}
+      };
+
       class ElectrostaticsSolver
       {
       public:
          ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh, int order,
                               BCHandler *bcs,
-                              PWMatrixCoefficient *Sigma_,
+                              Coefficient *Sigma_,
+                              bool verbose_ = false);
+
+         ElectrostaticsSolver(std::shared_ptr<ParMesh> pmesh, int order,
+                              BCHandler *bcs,
+                              MatrixCoefficient *Sigma_,
                               bool verbose_ = false);
 
          ~ElectrostaticsSolver();
 
          HYPRE_BigInt GetProblemSize();
+         int GetLocalProblemSize();
 
          void PrintSizes();
 
          void EnablePA(bool pa = false);
 
-         void Setup();
+         void Setup(int prec_type = 1, int pl = 0);
 
          void Update();
 
-         void Solve();
+         // Update rhs useful for transient simulations (or domain decomposition iteration)
+         void Solve(bool updateRhs = false);
 
          // Add Volumetric term to rhs
          void AddVolumetricTerm(Coefficient *coeff, Array<int> &attr); // Using scalar coefficient
@@ -64,10 +89,12 @@ namespace mfem
 
          // Compute E^T M1 E, where M1 is the H1 mass matrix with conductivity
          // coefficient.
-         double ElectricLosses(ParGridFunction &E_gf) const;
+         real_t ElectricLosses(ParGridFunction &E_gf) const;
 
-         // E is the input, w is the output which is L2 heating.
-         void GetJouleHeating(ParGridFunction &E_gf, ParGridFunction &w_gf) const;
+         // w is the output which is L2 heating. This just projects the Joule heating coefficient which is already setup internally with the electric field and conductivity.
+         void GetJouleHeating(ParGridFunction &w_gf) const;
+
+         Coefficient *GetJouleHeatingCoefficient() { return static_cast<Coefficient*>(w_coeff); }
 
          void GetErrorEstimates(Vector &errors);
 
@@ -79,7 +106,7 @@ namespace mfem
 
          void AddVisItField(const std::string &field_name, ParGridFunction *gf);
 
-         void WriteFields(int it = 0);
+         void WriteFields(int it = 0, const real_t &time = 0.0);
 
          void InitializeGLVis();
 
@@ -91,14 +118,21 @@ namespace mfem
          void display_banner(ostream &os);
 
          // Getters for phi and E
+         ParGridFunction *GetPotentialGfPtr() { return phi; }
          ParGridFunction &GetPotential() { return *phi; }
          ParGridFunction &GetElectricField() { return *E; }
 
          // Getters for the FESpaces
-         H1_ParFESpace *GetFESpace() { return H1FESpace; }
+         ParFiniteElementSpace *GetFESpace() { return H1FESpace; }
+         ParFiniteElementSpace *GetL2FESpace() { return L2FESpace; }
 
       private:
+         // Check if any essential BCs were applied and fix at least one point since solution is not unique
+         void FixEssentialTDofs( Array<int> &ess_tdof_list);
+
          void Assemble();
+
+         void AssembleRHS();
 
          void ProjectDirichletBCS( ParGridFunction &gf);
 
@@ -111,8 +145,9 @@ namespace mfem
          VisItDataCollection *visit_dc;       // To prepare fields for VisIt viewing
          ParaViewDataCollection *paraview_dc; // To prepare fields for ParaView viewing
 
-         H1_ParFESpace *H1FESpace;    // Continuous space for phi
-         ND_ParFESpace *HCurlFESpace; // Tangentially continuous space for E
+         ParFiniteElementSpace *H1FESpace;    // Continuous space for phi
+         ParFiniteElementSpace *L2FESpace;    // Discontinuous space for w
+         ParFiniteElementSpace *HCurlFESpace; // Tangentially continuous space for E
 
          ParBilinearForm *divEpsGrad; // Laplacian operator
          ParBilinearForm *SigmaMass;  // Mass matrix with conductivity
@@ -122,17 +157,22 @@ namespace mfem
          ParLinearForm *rhs_form; // Dual of rhs
 
          OperatorHandle opA, opM;
-         Vector Phi, *B;
+         Vector Phi, B;
 
-         CGSolver solver;
+         IterativeSolver *solver;
          Solver *prec;
+         int prec_type;
+         bool symmetric = true;
 
          bool pa; // Enable partial assembly
 
          ParGridFunction *phi; // Electric Scalar Potential
          ParGridFunction *E;   // Electric Field
 
-         PWMatrixCoefficient *Sigma; // Electric conductivity Coefficient
+         JouleHeatingCoefficient *w_coeff; // Joule Heating Coefficient
+
+         Coefficient *SigmaQ; // Electric conductivity Coefficient
+         MatrixCoefficient *SigmaMQ; // Electric conductivity Coefficient
 
          std::map<std::string, socketstream *> socks; // Visualization sockets
 
@@ -149,24 +189,9 @@ namespace mfem
          StopWatch sw_setup, sw_assemble, sw_solve;
 
          bool verbose;
-      };
 
-      // A Coefficient is an object with a function Eval that returns a double. The
-      // JouleHeatingCoefficient object will contain a reference to the electric field
-      // grid function, and the conductivity sigma, and returns sigma E dot E at a
-      // point.
-      class JouleHeatingCoefficient : public Coefficient
-      {
-      private:
-         ParGridFunction &E_gf;
-         PWMatrixCoefficient Sigma;
-
-      public:
-         JouleHeatingCoefficient(const PWMatrixCoefficient &Sigma_,
-                                 ParGridFunction &E_gf_)
-             : E_gf(E_gf_), Sigma(Sigma_) {}
-         virtual double Eval(ElementTransformation &T, const IntegrationPoint &ip);
-         virtual ~JouleHeatingCoefficient() {}
+         int my_id;
+         int num_procs;
       };
 
    } // namespace electromagnetics
@@ -176,3 +201,4 @@ namespace mfem
 #endif // MFEM_USE_MPI
 
 #endif // MFEM_VOLTA_SOLVER
+

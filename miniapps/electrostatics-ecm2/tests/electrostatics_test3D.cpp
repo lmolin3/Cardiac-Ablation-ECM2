@@ -28,9 +28,7 @@
 // Sample runs:
 //
 //   A cylinder at constant voltage in a square, grounded metal pipe:
-//      mpirun -np 4 electrostatics_test3D -m ../../data/square-disc.mesh
-//                         -sattr '1' -sval '1.0'
-//                         -dbcs '1 2 3 4 5 6 7 8' -dbcv '0 0 0 0 1 1 1 1'
+//      mpirun -np 4 electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -o 5 -pa
 //
 
 #include "lib/electrostatics_solver.hpp"
@@ -38,6 +36,7 @@
 #include <iostream>
 #include <vector>
 #include <sys/stat.h> // Include for mkdir
+#include <iomanip> // Include for std::setw
 
 using namespace std;
 using namespace mfem;
@@ -69,6 +68,7 @@ int main(int argc, char *argv[])
    int order = 1;
    int serial_ref_levels = 0;
    int parallel_ref_levels = 0;
+   int prec_type = 0;
    bool visualization = false;
    bool visit = false;
    bool paraview = true;
@@ -92,6 +92,9 @@ int main(int argc, char *argv[])
                   "Number of parallel refinement levels.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
                   "Enable or disable partial assembly.");
+   args.AddOption(&prec_type, "-prec", "--preconditioner",
+                  "Preconditioner type (full assembly): 0 - BoomerAMG, 1 - LOR, \n"
+                  "Preconditioner type (partial assembly): 0 - Jacobi smoother, 1 - LOR");
    args.AddOption(&sigma_attr, "-sattr", "--sigma-attributes",
                   "Domain attributes associated to piecewise Conductivity");
    args.AddOption(&pw_sigma, "-sval", "--piecewise-sigma",
@@ -159,8 +162,6 @@ int main(int argc, char *argv[])
    delete serial_mesh;
    int sdim = pmesh->SpaceDimension();
 
-
-
    // Refine this mesh in parallel to increase the resolution.
    int par_ref_levels = parallel_ref_levels;
    for (int l = 0; l < par_ref_levels; l++)
@@ -212,7 +213,7 @@ int main(int argc, char *argv[])
          for (int j = 0; j < s; j++)
          {
             k = k + j;
-            e_tmp(j) = (k) < nval ? static_cast<double>(dbce_val(k)) : 0.0;
+            e_tmp(j) = (k) < nval ? static_cast<real_t>(dbce_val(k)) : 0.0;
          }
          e_uniform.push_back(e_tmp);
 
@@ -283,7 +284,7 @@ int main(int argc, char *argv[])
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
@@ -302,8 +303,10 @@ int main(int argc, char *argv[])
    Volta.PrintSizes();
 
    // Setup solver and Assemble all forms
+   int pl = 1;
    Volta.EnablePA(pa);
-   Volta.Setup();
+
+   Volta.Setup(prec_type, pl);
 
    // Solve the system and compute any auxiliary fields
    Volta.Solve();
@@ -322,9 +325,9 @@ int main(int argc, char *argv[])
    {
       Volta.DisplayToGLVis();
    }
-
+   
+   // Get global time for setup and solve
    Volta.PrintTimingData();
-
 
    /// 8. Cleanup
    // Delete the MatrixCoefficient objects at the end of main

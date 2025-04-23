@@ -28,10 +28,9 @@
 // Sample runs:
 //
 //   A cylinder at constant voltage in a square, grounded metal pipe:
-//      mpirun -np 4 electrostatics_test2D -m ../../data/square-disc.mesh
-//                         -sattr '1' -sval '1.0'
-//                         -dbcs '1 2 3 4 5 6 7 8' -dbcv '0 0 0 0 1 1 1 1'
-//
+//      mpirun -np 4 electrostatics_test2D -m ../../data/square-disc.mesh -rs 4 -o 4 -sattr '1' -sval '1.0' -dbcs '6 8' -dbcv '0.0  1.0' -prec 1
+//   Example with beam-quad mesh (to test pa in 2D)
+//      mpirun -np 4 electrostatics_test2D -m ../../data/beam-quad.mesh -rs 5 -o 7 -sattr '1 2' -sval '1.0 1.0' -dbcs '1 2' -dbcv '1.0  0.0' -pa -prec 1
 
 #include "lib/electrostatics_solver.hpp"
 #include <fstream>
@@ -69,6 +68,7 @@ int main(int argc, char *argv[])
    int order = 1;
    int serial_ref_levels = 0;
    int parallel_ref_levels = 0;
+   int prec_type = 0;
    bool visualization = false;
    bool visit = false;
    bool paraview = true;
@@ -92,7 +92,10 @@ int main(int argc, char *argv[])
    args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
-                  "Enable or disable partial assembly.");   
+                  "Enable or disable partial assembly.");
+   args.AddOption(&prec_type, "-prec", "--preconditioner",
+                  "Preconditioner type (full assembly): 0 - BoomerAMG, 1 - LOR, \n"
+                  "Preconditioner type (partial assembly): 0 - Jacobi smoother, 1 - LOR");
    args.AddOption(&sigma_attr, "-sattr", "--sigma-attributes",
                   "Domain attributes associated to piecewise Conductivity");
    args.AddOption(&pw_sigma, "-sval", "--piecewise-sigma",
@@ -232,7 +235,7 @@ int main(int argc, char *argv[])
          for (int j = 0; j < s; j++)
          {
             k = k + j;
-            e_tmp(j) = (k) < nval ? static_cast<double>(dbce_val(k)) : 0.0;
+            e_tmp(j) = (k) < nval ? static_cast<real_t>(dbce_val(k)) : 0.0;
          }
          e_uniform.push_back(e_tmp);
 
@@ -302,7 +305,7 @@ int main(int argc, char *argv[])
    }
 
    sw_initialization.Stop();
-   double my_rt[1], rt_max[1];
+   real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
@@ -321,14 +324,15 @@ int main(int argc, char *argv[])
    Volta.PrintSizes();
 
    // Setup solver and Assemble all forms
+   int pl = 1;
    Volta.EnablePA(pa);
-   Volta.Setup();
+   Volta.Setup(prec_type, pl);
 
    // Solve the system and compute any auxiliary fields
    Volta.Solve();
 
    ParGridFunction E_gf = Volta.GetElectricField();
-   double el = Volta.ElectricLosses(E_gf);
+   real_t el = Volta.ElectricLosses(E_gf);
 
    // Determine the current size of the linear system
    int prob_size = Volta.GetProblemSize();

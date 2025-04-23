@@ -55,17 +55,8 @@ if (MFEM_USE_MPI)
     PRIVATE ${ELECTROSTATICS_EXTRA_INCLUDE_DIRECTORIES})
 
 
-    add_mfem_miniapp(electrostatics_test3D_aniso
-    MAIN tests/electrostatics_test3D_anisotropic.cpp
-    ${ELECTROSTATICS_COMMON_FILES}
-    LIBRARIES mfem mfem-common electrostatics_ecm2)
-
-  target_include_directories(electrostatics_test3D_aniso
-    PRIVATE ${ELECTROSTATICS_EXTRA_INCLUDE_DIRECTORIES})
-
-
     add_mfem_miniapp(electrostatics_test3D_aniso_rotated
-    MAIN tests/electrostatics_test3D_anisotropic_rotated.cpp
+    MAIN tests/electrostatics_test3D_aniso_rotated.cpp
     ${ELECTROSTATICS_COMMON_FILES}
     LIBRARIES mfem mfem-common electrostatics_ecm2)
 
