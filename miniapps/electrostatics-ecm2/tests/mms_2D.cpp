@@ -29,7 +29,9 @@
 //      mpirun -np 4 ./convergence -o 1 -sattr '1' -sval '1.0' -rs 0
 //
 
-#include "lib/electrostatics_solver.hpp"
+#include <mfem.hpp>
+
+#include "../lib/electrostatics_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>

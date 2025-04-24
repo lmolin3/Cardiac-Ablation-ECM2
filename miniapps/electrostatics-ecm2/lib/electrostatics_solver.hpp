@@ -9,13 +9,14 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#ifndef MFEM_ELECTROSTATICS_SOLVER
-#define MFEM_ELECTROSTATICS_SOLVER
+#ifndef MFEM_ELECTROSTATICS_SOLVER_HPP
+#define MFEM_ELECTROSTATICS_SOLVER_HPP
 
-#include "../common/pfem_extras.hpp"
-#include "../common/mesh_extras.hpp"
+#include "mfem.hpp"
+#include "../../common/pfem_extras.hpp"
+#include "../../common/mesh_extras.hpp"
 #include "electromagnetics.hpp"
-#include "bc/electrostatics_bchandler.hpp"
+#include "../bc/electrostatics_bchandler.hpp"
 
 #ifdef MFEM_USE_MPI
 

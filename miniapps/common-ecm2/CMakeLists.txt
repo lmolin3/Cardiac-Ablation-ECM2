@@ -24,6 +24,10 @@ convert_filenames_to_full_paths(HDRS)
 set(MINIAPPS_COMMON_SOURCES ${MINIAPPS_COMMON_SOURCES} ${SRCS} PARENT_SCOPE)
 set(MINIAPPS_COMMON_HEADERS ${MINIAPPS_COMMON_HEADERS} ${HDRS} PARENT_SCOPE)
 
+if (MFEM_USE_CUDA)
+  set_property(SOURCE ${SRCS} PROPERTY LANGUAGE CUDA)
+endif()
+
 mfem_add_library(mfem-common-ecm2 ${SRCS} ${HDRS})
 target_link_libraries(mfem-common-ecm2 mfem)
 

@@ -31,7 +31,9 @@
 //      mpirun -np 4 electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -o 5 -pa
 //
 
-#include "lib/electrostatics_solver.hpp"
+#include <mfem.hpp>
+
+#include "../lib/electrostatics_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>

@@ -33,8 +33,9 @@
 //      mpirun -np 4 ./convergence_2D -e 1 -o 1 -sattr '1' -sval '1.0' -r 7 --partial-assembly
 //
 
+#include <mfem.hpp>
 
-#include "lib/electrostatics_solver.hpp"
+#include "../lib/electrostatics_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>

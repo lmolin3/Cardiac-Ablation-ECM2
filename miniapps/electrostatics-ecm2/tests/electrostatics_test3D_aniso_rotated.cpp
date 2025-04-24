@@ -28,10 +28,12 @@
 // Sample runs:
 //
 //   A cylinder at constant voltage in a square, grounded metal pipe:
-//      mpirun -np 4 ./electrostatics_test3D_aniso_rotated -m ../multidomain/multidomain-hex.mesh -rs 1 -o 4 -sattr '1 2' -sval '1.0 1.0' -ar '0.0 3.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -pa
+//      mpirun -np 4 ./electrostatics_test3D_aniso_rotated -m ../multidomain/multidomain-hex.mesh -rs 1 -o 4 -sattr '1 2' -sval '1.0 1.0' -ar '1.0 3.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -pa
 //
 
-#include "lib/electrostatics_solver.hpp"
+#include <mfem.hpp>
+
+#include "../lib/electrostatics_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>

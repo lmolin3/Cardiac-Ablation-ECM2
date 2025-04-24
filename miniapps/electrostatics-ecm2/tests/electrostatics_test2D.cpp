@@ -32,7 +32,9 @@
 //   Example with beam-quad mesh (to test pa in 2D)
 //      mpirun -np 4 electrostatics_test2D -m ../../data/beam-quad.mesh -rs 5 -o 7 -sattr '1 2' -sval '1.0 1.0' -dbcs '1 2' -dbcv '1.0  0.0' -pa -prec 1
 
-#include "lib/electrostatics_solver.hpp"
+#include <mfem.hpp>
+
+#include "../lib/electrostatics_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>
