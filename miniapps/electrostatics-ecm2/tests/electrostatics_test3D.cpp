@@ -10,7 +10,7 @@
 // CONTRIBUTING.md for details.
 //
 //            -----------------------------------------------------
-//            Volta Miniapp:  Simple Electrostatics Simulation Code
+//            RF Miniapp:  Simple Electrostatics Simulation Code
 //            -----------------------------------------------------
 //
 // This miniapp solves a simple 2D or 3D electrostatic problem (Quasi-static Maxwell).
@@ -27,8 +27,14 @@
 //
 // Sample runs:
 //
-//   A cylinder at constant voltage in a square, grounded metal pipe:
-//      mpirun -np 4 electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -o 5 -pa
+//   1. A cylinder at constant RF_solverge in a square, grounded metal pipe (Legacy assembly):
+//      mpirun -np 2 ./electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -rs 1 -rp 1 -o 4
+//
+//   2. Same as above, but with partial assembly:
+//      mpirun -np 2 ./electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -rs 1 -rp 1 -o 4 -pa
+//
+//   3. Same as above, but using CUDA backend:
+//      ./electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -rs 1 -rp 1 -o 4 -pa -d cuda
 //
 
 #include <mfem.hpp>
@@ -39,6 +45,8 @@
 #include <vector>
 #include <sys/stat.h> // Include for mkdir
 #include <iomanip> // Include for std::setw
+
+#include "../../common-ecm2/FilesystemHelper.hpp"
 
 using namespace std;
 using namespace mfem;
@@ -61,6 +69,7 @@ IdentityMatrixCoefficient *Id = NULL;
 
 int main(int argc, char *argv[])
 {
+
    /// 1. Initialize MPI and Hypre
    Mpi::Init(argc, argv);
    Hypre::Init();
@@ -70,12 +79,12 @@ int main(int argc, char *argv[])
    int order = 1;
    int serial_ref_levels = 0;
    int parallel_ref_levels = 0;
-   int prec_type = 0;
-   bool visualization = false;
-   bool visit = false;
-   bool paraview = true;
+   int prec_type = 1;
+   bool paraview = false;
    const char *outfolder = "./Output/Test/";
    bool pa = false;
+   bool fa = false;
+   const char *device_config = "cpu";
 
    Array<int> dbcs;
    Array<int> dbce;
@@ -92,8 +101,12 @@ int main(int argc, char *argv[])
                   "Number of serial refinement levels.");
    args.AddOption(&parallel_ref_levels, "-rp", "--parallel-ref-levels",
                   "Number of parallel refinement levels.");
-   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
-                  "Enable or disable partial assembly.");
+   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
+                  "--no-partial-assembly", "Enable Partial Assembly.");
+   args.AddOption(&fa, "-fa", "--full-assembly", "-no-fa",
+                  "--no-full-assembly", "Enable Full Assembly.");
+   args.AddOption(&device_config, "-d", "--device",
+                  "Device configuration string, see Device::Configure().");
    args.AddOption(&prec_type, "-prec", "--preconditioner",
                   "Preconditioner type (full assembly): 0 - BoomerAMG, 1 - LOR, \n"
                   "Preconditioner type (partial assembly): 0 - Jacobi smoother, 1 - LOR");
@@ -117,30 +130,25 @@ int main(int argc, char *argv[])
                   "Neumann Boundary Condition Surfaces");
    args.AddOption(&nbcv, "-nbcv", "--neumann-bc-vals",
                   "Neumann Boundary Condition Values");
-   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
-                  "--no-visualization",
-                  "Enable or disable GLVis visualization.");
-   args.AddOption(&visit, "-visit", "--visit", "-no-visit", "--no-visit",
-                  "Enable or disable VisIt visualization.");
    args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
-                  "Enable or disable VisIt visualization.");
+                  "Enable or disable Paraview visualization.");
    args.AddOption(&outfolder,
                   "-of",
                   "--output-folder",
                   "Output folder.");
-   args.Parse();
-   if (!args.Good())
+   args.ParseCheck();
+
+   if ( pa && fa )
    {
-      if (Mpi::Root())
-      {
-         args.PrintUsage(cout);
-      }
+      mfem::out << "Just one of --partial-assembly or --full-assembly can be selected." << endl;
       return 1;
    }
+      
+   //    Enable hardware devices such as GPUs, and programming models such as
+   //    CUDA, OCCA, RAJA and OpenMP based on command line options.
+   Device device(device_config);
    if (Mpi::Root())
-   {
-      args.PrintOptions(cout);
-   }
+      device.Print();
 
    /// 3. Read Mesh and create parallel
    // Read the (serial) mesh from the given mesh file on all processors.  We
@@ -159,7 +167,6 @@ int main(int argc, char *argv[])
       serial_mesh->UniformRefinement();
    }
 
-
    auto pmesh = make_shared<ParMesh>(MPI_COMM_WORLD, *serial_mesh);
    delete serial_mesh;
    int sdim = pmesh->SpaceDimension();
@@ -174,25 +181,9 @@ int main(int argc, char *argv[])
    pmesh->Finalize(true);
 
    /// 4. Set up conductivity coefficient
-   Id = new IdentityMatrixCoefficient(sdim);
-
    int d = pmesh->Dimension();
 
-   Array<int> attr(0);
-   Array<MatrixCoefficient *> coefs(0);
-
-   MFEM_ASSERT(pw_sigma.Size() == sigma_attr.Size(), "Size mismatch between conductivity values and attributes");
-
-   for (int i = 0; i < pw_sigma.Size(); i++)
-   {
-      MFEM_ASSERT(sigma_attr[i] <= pmesh->attributes.Max(), "Attribute value out of range");
-
-      MatrixCoefficient *tmp = pw_sigma[i] != 0 ? new ScalarMatrixProductCoefficient(pw_sigma[i], *Id) : NULL;
-      coefs.Append(tmp);
-      attr.Append(sigma_attr[i]);
-   }
-
-   PWMatrixCoefficient *sigmaCoeff = new PWMatrixCoefficient(d, attr, coefs);
+   PWConstCoefficient *sigmaCoeff = new PWConstCoefficient(pw_sigma);
 
    /// 5. Set up boundary conditions
 
@@ -244,36 +235,47 @@ int main(int argc, char *argv[])
    // Create BCHandler and parse bcs
    // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
    bool verbose = true;
+   if (Mpi::Root())
+      mfem::out << "Creating BC handler..." << std::endl;
+
    BCHandler *bcs = new BCHandler(pmesh, verbose); // Boundary conditions handler
    SetupBCHandler(bcs, dbcs, dbcv, dbce, nbcs, nbcv, e_uniform);
+   
+   if (Mpi::Root())
+      mfem::out << "done." << std::endl;
 
    /// 6. Create the Electrostatics Solver
    // Create the Electrostatic solver
-   ElectrostaticsSolver Volta(pmesh, order, bcs, sigmaCoeff, verbose);
-   Volta.display_banner(std::cout);
+   if (Mpi::Root())
+      mfem::out << "Creating Electrostatics solver..." << std::endl;
 
-   // Initialize GLVis visualization
-   if (visualization)
+   ElectrostaticsSolver RF_solver(pmesh, order, bcs, sigmaCoeff, verbose);
+   
+   // Set Assembly Level (by default we use LEGACY assembly)
+   if (pa)
+      RF_solver.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   else if (fa)
+      RF_solver.SetAssemblyLevel(AssemblyLevel::FULL);
+
+
+   if (Mpi::Root())
+      mfem::out << "done." << std::endl;
+
+   RF_solver.display_banner(std::cout);
+   
+   if (Mpi::Root())
    {
-      Volta.InitializeGLVis();
+      if (!fs::is_directory(outfolder) || !fs::exists(outfolder))
+      {                                      // Check if folder exists
+         fs::create_directories(outfolder); // create folder
+      } 
    }
 
-   if ((mkdir(outfolder, 0777) == -1) && Mpi::Root())
-   {
-      mfem::err << "Error :  " << strerror(errno) << std::endl;
-   }
-
-   // Initialize VisIt visualization
-   VisItDataCollection visit_dc("Volta-Parallel", pmesh.get());
-   visit_dc.SetPrefixPath(outfolder);
-
-   if (visit)
-   {
-      Volta.RegisterVisItFields(visit_dc);
-   }
+   if (Mpi::Root())
+      mfem::out << "\nCreating DataCollection...";
 
    // Initialize Paraview visualization
-   ParaViewDataCollection paraview_dc("Volta-Parallel", pmesh.get());
+   ParaViewDataCollection paraview_dc("RF_solver-Parallel", pmesh.get());
    paraview_dc.SetPrefixPath(outfolder);
 
    if (paraview)
@@ -282,13 +284,17 @@ int main(int argc, char *argv[])
          paraview_dc.SetHighOrderOutput(true);
          paraview_dc.SetPrefixPath(outfolder);
          paraview_dc.SetLevelsOfDetail(order);
-         Volta.RegisterParaviewFields(paraview_dc);
+         RF_solver.RegisterParaviewFields(paraview_dc);
    }
+
+   if (Mpi::Root())
+      mfem::out << "done." << endl;
 
    sw_initialization.Stop();
    real_t my_rt[1], rt_max[1];
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
+
 
    if (Mpi::Root())
    {
@@ -302,41 +308,30 @@ int main(int argc, char *argv[])
    }
 
    // Display the current number of DoFs in each finite element space
-   Volta.PrintSizes();
+   RF_solver.PrintSizes();
 
    // Setup solver and Assemble all forms
    int pl = 1;
-   Volta.EnablePA(pa);
+   //RF_solver.EnablePA(pa);
 
-   Volta.Setup(prec_type, pl);
+   RF_solver.Setup(prec_type, pl);
 
    // Solve the system and compute any auxiliary fields
-   Volta.Solve();
+   RF_solver.Solve();
 
    // Determine the current size of the linear system
-   int prob_size = Volta.GetProblemSize();
+   int prob_size = RF_solver.GetProblemSize();
 
-   // Write fields to disk for VisIt
-   if (visit || paraview)
+   // Write fields to disk for Paraview
+   if (paraview)
    {
-      Volta.WriteFields();
-   }
-
-   // Send the solution by socket to a GLVis server.
-   if (visualization)
-   {
-      Volta.DisplayToGLVis();
+      RF_solver.WriteFields();
    }
    
    // Get global time for setup and solve
-   Volta.PrintTimingData();
+   RF_solver.PrintTimingData();
 
    /// 8. Cleanup
-   // Delete the MatrixCoefficient objects at the end of main
-   for (int i = 0; i < coefs.Size(); i++)
-   {
-      delete coefs[i];
-   }
 
    delete sigmaCoeff;
    delete Id;

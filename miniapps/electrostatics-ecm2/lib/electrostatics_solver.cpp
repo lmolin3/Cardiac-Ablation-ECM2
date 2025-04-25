@@ -26,52 +26,52 @@ namespace mfem
                                                  BCHandler *bcs,
                                                  Coefficient *Sigma_,
                                                  bool verbose_)
-          : my_id(0),
-            num_procs(1),
-            order(order_),
+          : order(order_),
             bcs(bcs),
             pmesh(pmesh_),
             visit_dc(nullptr),
             paraview_dc(nullptr),
-            H1FESpace(nullptr),
-            HCurlFESpace(nullptr),
+            H1_fes(nullptr),
+            HCurl_fes(nullptr),
             divEpsGrad(nullptr),
             SigmaMass(nullptr),
             rhs_form(nullptr),
             prec(nullptr),
-            pa(false),
             SigmaQ(Sigma_), // Must be deleted outside solver
             SigmaMQ(nullptr),
             verbose(verbose_)
       {
          // Initialize MPI variables
-         MPI_Comm_size(pmesh->GetComm(), &num_procs);
-         MPI_Comm_rank(pmesh->GetComm(), &my_id);
-
          const int dim = pmesh->Dimension();
 
          // Define compatible parallel finite element spaces on the parallel
          // mesh. Here we use arbitrary order H1 for potential and ND for the electric field.
-         H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
-         HCurlFESpace = new ND_ParFESpace(pmesh.get(), order, pmesh->Dimension());
-         L2FESpace = new L2_ParFESpace(pmesh.get(), order-1, pmesh->Dimension());
+         H1_fec = new H1_FECollection(order, dim);
+         L2_fec = new L2_FECollection(order-1, dim);
+         HCurl_fec = new ND_FECollection(order, dim);
+
+         H1_fes = new ParFiniteElementSpace(pmesh.get(), H1_fec);
+         HCurl_fes = new ParFiniteElementSpace(pmesh.get(), HCurl_fec);
+         L2_fes = new ParFiniteElementSpace(pmesh.get(), L2_fec);
 
          // Discrete derivative operator
-         grad = new ParDiscreteGradOperator(H1FESpace, HCurlFESpace);
+         grad = new ParDiscreteGradOperator(H1_fes, HCurl_fes);
 
          // Build grid functions
-         phi = new ParGridFunction(H1FESpace);
+         phi = new ParGridFunction(H1_fes);
          *phi = 0.0;
 
-         E = new ParGridFunction(HCurlFESpace);
+         E = new ParGridFunction(HCurl_fes);
          *E = 0.0;
 
          // Define Joule Heating Coefficient
          w_coeff = new JouleHeatingCoefficient(SigmaQ, E);
 
          // Initialize vector/s
-         B.SetSize(H1FESpace->GetTrueVSize());
-         Phi.SetSize(H1FESpace->GetTrueVSize());
+         B.UseDevice(true);
+         B.SetSize(H1_fes->GetTrueVSize());
+         Phi.UseDevice(true);
+         Phi.SetSize(H1_fes->GetTrueVSize());
 
          tmp_domain_attr.SetSize(pmesh->attributes.Max());
       }
@@ -80,54 +80,54 @@ namespace mfem
                                                  BCHandler *bcs,
                                                  MatrixCoefficient *Sigma_,
                                                  bool verbose_)
-          : my_id(0),
-            num_procs(1),
-            order(order_),
+          : order(order_),
             bcs(bcs),
             pmesh(pmesh_),
             visit_dc(nullptr),
             paraview_dc(nullptr),
-            H1FESpace(nullptr),
-            HCurlFESpace(nullptr),
+            H1_fes(nullptr),
+            HCurl_fes(nullptr),
             divEpsGrad(nullptr),
             SigmaMass(nullptr),
             rhs_form(nullptr),
             prec(nullptr),
-            pa(false),
             SigmaQ(nullptr), // Must be deleted outside solver
             SigmaMQ(Sigma_),
             verbose(verbose_)
       {
          // Initialize MPI variables
-         MPI_Comm_size(pmesh->GetComm(), &num_procs);
-         MPI_Comm_rank(pmesh->GetComm(), &my_id);
-
          const int dim = pmesh->Dimension();
 
          // Define compatible parallel finite element spaces on the parallel
-         // mesh. Here we use arbitrary order H1 for potential and ND for the electric field.
-         H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
-         HCurlFESpace = new ND_ParFESpace(pmesh.get(), order, pmesh->Dimension());
-         L2FESpace = new L2_ParFESpace(pmesh.get(), order-1, pmesh->Dimension());
+         // mesh. Here we use arbitrary order H1 for potential and ND for the electric field.         
+         H1_fec = new H1_FECollection(order, dim);
+         L2_fec = new L2_FECollection(order-1, dim);
+         HCurl_fec = new ND_FECollection(order, dim);
+
+         H1_fes = new ParFiniteElementSpace(pmesh.get(), H1_fec);
+         HCurl_fes = new ParFiniteElementSpace(pmesh.get(), HCurl_fec);
+         L2_fes = new ParFiniteElementSpace(pmesh.get(), L2_fec);
 
          // Discrete derivative operator
-         grad = new ParDiscreteGradOperator(H1FESpace, HCurlFESpace);
+         grad = new ParDiscreteGradOperator(H1_fes, HCurl_fes);
 
          // Build grid functions
-         phi = new ParGridFunction(H1FESpace);
+         phi = new ParGridFunction(H1_fes);
          *phi = 0.0;
 
-         E = new ParGridFunction(HCurlFESpace);
+         E = new ParGridFunction(HCurl_fes);
          *E = 0.0;
 
          // Define Joule Heating Coefficient
          w_coeff = new JouleHeatingCoefficient(SigmaMQ, E);
 
          // Initialize vector/s
-         B.SetSize(H1FESpace->GetTrueVSize());
-         Phi.SetSize(H1FESpace->GetTrueVSize());
+         B.UseDevice(true);
+         B.SetSize(H1_fes->GetTrueVSize());
+         Phi.UseDevice(true);
+         Phi.SetSize(H1_fes->GetTrueVSize());
 
-         tmp_domain_attr.SetSize(pmesh->attributes.Max());
+         tmp_domain_attr.SetSize(pmesh->attributes.Max()); 
 
       }
 
@@ -143,9 +143,13 @@ namespace mfem
 
          delete grad;
 
-         delete H1FESpace;
-         delete HCurlFESpace;
-         delete L2FESpace;
+         delete H1_fec;
+         delete L2_fec;
+         delete HCurl_fec;
+
+         delete H1_fes;
+         delete HCurl_fes;
+         delete L2_fes;
 
          delete solver;
          delete prec;
@@ -164,30 +168,30 @@ namespace mfem
       HYPRE_BigInt
       ElectrostaticsSolver::GetProblemSize()
       {
-         return H1FESpace->GlobalTrueVSize();
+         return H1_fes->GlobalTrueVSize();
       }
 
       int
       ElectrostaticsSolver::GetLocalProblemSize()
       {
-         return H1FESpace->GetTrueVSize();
+         return H1_fes->GetTrueVSize();
       }
       
       void
       ElectrostaticsSolver::PrintSizes()
       {
-         HYPRE_BigInt size_h1 = H1FESpace->GlobalTrueVSize();
-         HYPRE_BigInt size_nd = HCurlFESpace->GlobalTrueVSize();
-         if (my_id == 0 && verbose)
+         HYPRE_BigInt size_h1 = H1_fes->GlobalTrueVSize();
+         HYPRE_BigInt size_nd = HCurl_fes->GlobalTrueVSize();
+         if (Mpi::Root() && verbose)
          {
-            cout << "Number of H1      unknowns: " << size_h1 << std::endl;
-            cout << "Number of H(Curl) unknowns: " << size_nd << std::endl;
+            mfem::out << "Number of H1      unknowns: " << size_h1 << std::endl;
+            mfem::out << "Number of H(Curl) unknowns: " << size_nd << std::endl;
          }
       }
 
-      void ElectrostaticsSolver::EnablePA(bool pa_)
+      void ElectrostaticsSolver::SetAssemblyLevel(AssemblyLevel level)
       {
-         pa = pa_;
+         assembly_level = level;
       }
 
       void ElectrostaticsSolver::Setup(int prec_type_, int pl)
@@ -196,38 +200,36 @@ namespace mfem
 
          sw_setup.Start();
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Setting up Electrostatics solver... " << std::endl;
+            mfem::out << "Setting up Electrostatics solver... " << std::endl;
          }
 
          /// 1. Check partial assembly
-         bool tensor = UsesTensorBasis(*H1FESpace);
+         bool tensor = UsesTensorBasis(*H1_fes);
 
-         MFEM_VERIFY(!(pa && !tensor), "Partial assembly is only supported for tensor elements.");
+         MFEM_VERIFY( (!((assembly_level == AssemblyLevel::PARTIAL) && !tensor)) , "Partial assembly is only supported for tensor elements.");
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            if (pa)
-            {
-               cout << "Using Partial Assembly. " << std::endl;
-            }
+            if (assembly_level == AssemblyLevel::PARTIAL)
+               mfem::out << "Using PARTIAL Assembly. " << std::endl;
+            else if (assembly_level == AssemblyLevel::FULL)
+               mfem::out << "Using FULL Assembly. " << std::endl;
             else
-            {
-               cout << "Using Full Assembly. " << std::endl;
-            }
+               mfem::out << "Using LEGACY Assembly. " << std::endl;
          }
 
          /// 1. Determine the essential BC degrees of freedom
          if ((bcs->GetDirichletDbcs()).size() > 0) // Applied potential
          {
-            H1FESpace->GetEssentialTrueDofs(bcs->GetDirichletAttr(), ess_bdr_phi_tdofs);
+            H1_fes->GetEssentialTrueDofs(bcs->GetDirichletAttr(), ess_bdr_phi_tdofs);
             ess_tdof_list.Append(ess_bdr_phi_tdofs);
          }
 
          if ((bcs->GetDirichletEFieldDbcs()).size() > 0) // Applied potential (uniform electric field)
          {
-            H1FESpace->GetEssentialTrueDofs(bcs->GetDirichletEFieldAttr(), ess_bdr_EField_tdofs);
+            H1_fes->GetEssentialTrueDofs(bcs->GetDirichletEFieldAttr(), ess_bdr_EField_tdofs);
             ess_tdof_list.Append(ess_bdr_EField_tdofs);
          }
 
@@ -239,7 +241,7 @@ namespace mfem
 #endif
 
          /// 2. Bilinear Forms, Linear Forms and Discrete Interpolators
-         divEpsGrad = new ParBilinearForm(H1FESpace);
+         divEpsGrad = new ParBilinearForm(H1_fes);
 
          if (SigmaQ)
             divEpsGrad->AddDomainIntegrator(new DiffusionIntegrator(*SigmaQ));
@@ -256,20 +258,29 @@ namespace mfem
             }
          }
 
-         SigmaMass = new ParBilinearForm(HCurlFESpace);
+         SigmaMass = new ParBilinearForm(HCurl_fes);
          if (SigmaQ)
             SigmaMass->AddDomainIntegrator(new VectorFEMassIntegrator(*SigmaQ));
          else
             SigmaMass->AddDomainIntegrator(new VectorFEMassIntegrator(*SigmaMQ));
 
-         if (pa)
+         if (assembly_level == AssemblyLevel::PARTIAL)
          {
             divEpsGrad->SetAssemblyLevel(AssemblyLevel::PARTIAL);
             SigmaMass->SetAssemblyLevel(AssemblyLevel::PARTIAL);
             grad->SetAssemblyLevel(AssemblyLevel::PARTIAL);
          }
+         else if (assembly_level == AssemblyLevel::FULL)
+         {
+            divEpsGrad->SetAssemblyLevel(AssemblyLevel::FULL);
+            SigmaMass->SetAssemblyLevel(AssemblyLevel::LEGACY); // Legacy assembly for HCurl mass matrix since not yet supported
+            //grad->SetAssemblyLevel(AssemblyLevel::FULL);
+            divEpsGrad->EnableSparseMatrixSorting(Device::IsEnabled());
+            //SigmaMass->EnableSparseMatrixSorting(Device::IsEnabled());
+         }
 
-         rhs_form = new ParLinearForm(H1FESpace);
+
+         rhs_form = new ParLinearForm(H1_fes);
 
          // Add Domain Integrators to rhs_form
          if (volumetric_terms.size() > 0)
@@ -316,13 +327,13 @@ namespace mfem
          Assemble();
 
 #ifdef MFEM_DEBUG
-         if (my_id == 0)
+         if (Mpi::Root())
             mfem::out << "global problem size: " << this->GetProblemSize() << std::endl;
          mfem::out << "local problem size: " << this->GetLocalProblemSize() << " on rank " << my_id << std::endl;
 #endif
 
          // Solver
-         if (pa)
+         if ( assembly_level == AssemblyLevel::PARTIAL )
          {
             switch (prec_type)
             {
@@ -354,9 +365,9 @@ namespace mfem
 
          const real_t rel_tol = 1e-8;
          if (symmetric)
-            solver = new CGSolver(H1FESpace->GetComm());
+            solver = new CGSolver(H1_fes->GetComm());
          else
-            solver = new GMRESSolver(H1FESpace->GetComm());
+            solver = new GMRESSolver(H1_fes->GetComm());
          solver->iterative_mode = false;
          solver->SetRelTol(rel_tol);
          solver->SetAbsTol(0.0);
@@ -380,7 +391,7 @@ namespace mfem
          MPI_Allreduce(&local_has_ess_tdof, &global_has_ess_tdof, 1, MPI_INT, MPI_LOR, pmesh->GetComm());
 
 #ifdef MFEM_DEBUG
-         if (my_id == 0)
+         if (Mpi::Root())
             mfem::out << "global_has_ess_tdof: " << global_has_ess_tdof << std::endl;
          mfem::out << "local_has_ess_tdof: " << local_has_ess_tdof << " on rank " << my_id << std::endl;
 #endif
@@ -388,7 +399,7 @@ namespace mfem
          if (global_has_ess_tdof == 0) // No Dirichlet BCs in the entire domain
          {
 #ifdef MFEM_DEBUG
-            if (my_id == 0)
+            if (Mpi::Root())
                mfem::out << "Fixing essential DoFs!" << std::endl;
 #endif
             // Determine the rank that will fix the solution
@@ -398,13 +409,13 @@ namespace mfem
             HYPRE_BigInt fixed_dof = INVALID_DOF + 1; // Use a large value for invalid DoFs
 
             // Each rank checks if it owns a valid DoF
-            if (H1FESpace->GetTrueVSize() > 0)
+            if (H1_fes->GetTrueVSize() > 0)
             {
-               int local_dof = H1FESpace->GetLocalTDofNumber(0); // Get the local index of the first DoF
+               int local_dof = H1_fes->GetLocalTDofNumber(0); // Get the local index of the first DoF
                if (local_dof >= 0)                               // Ensure the DoF is valid
                {
                   fixed_rank = my_id;
-                  fixed_dof = H1FESpace->GetGlobalTDofNumber(0); // Get the global index of the first DoF
+                  fixed_dof = H1_fes->GetGlobalTDofNumber(0); // Get the global index of the first DoF
                }
             }
 
@@ -453,9 +464,9 @@ namespace mfem
 
          sw_assemble.Start();
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Assembling ... " << flush;
+            mfem::out << "Assembling ... " << flush;
          }
 
          // Assemble the divEpsGrad operator
@@ -470,7 +481,7 @@ namespace mfem
 
          // Assemble the ParDiscreteGradOperator to compute gradient of Phi
          grad->Assemble();
-         if (!pa)
+         if (assembly_level != AssemblyLevel::PARTIAL)
          {
             grad->Finalize();
          }
@@ -478,9 +489,9 @@ namespace mfem
          // Assemble rhs
          AssembleRHS();
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "done." << std::endl
+            mfem::out << "done." << std::endl
                  << flush;
          }
 
@@ -513,16 +524,16 @@ namespace mfem
       void
       ElectrostaticsSolver::Update() // TODO: maybe for transient simulations we can add Update(real_t time) and update coeffs and bcs
       {
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Updating ..." << std::endl;
+            mfem::out << "Updating ..." << std::endl;
          }
 
          // Inform the spaces that the mesh has changed
          // Note: we don't need to interpolate any GridFunctions on the new mesh
          // so we pass 'false' to skip creation of any transformation matrices.
-         H1FESpace->Update(false);
-         HCurlFESpace->Update(false);
+         H1_fes->Update(false);
+         HCurl_fes->Update(false);
 
          // Inform the grid functions that the space has changed.
          phi->Update();
@@ -544,7 +555,7 @@ namespace mfem
 
          delete prec;
          prec = nullptr;
-         if (pa)
+         if (assembly_level == AssemblyLevel::PARTIAL)
          {
             switch (prec_type)
             {
@@ -581,9 +592,9 @@ namespace mfem
 
          sw_solve.Start();
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Running solver ... " << std::endl;
+            mfem::out << "Running solver ... " << std::endl;
          }
 
          /// 1. Project dirichlet BCs in the electric potential grid function
@@ -598,7 +609,7 @@ namespace mfem
          }
 
          /// 2. Apply essential boundary conditions
-         if (pa)
+         if (assembly_level == AssemblyLevel::PARTIAL)
          {
             auto *divEpsGrad_C = opA.As<ConstrainedOperator>();
             divEpsGrad_C->EliminateRHS(Phi, B);
@@ -620,9 +631,9 @@ namespace mfem
          grad->Mult(*phi, *E);
          *E *= -1.0;
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Solver done. " << std::endl;
+            mfem::out << "Solver done. " << std::endl;
          }
 
          sw_solve.Stop();
@@ -633,7 +644,7 @@ namespace mfem
       {
          volumetric_terms.emplace_back(attr, coeff);
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
             mfem::out << "Adding Volumetric heat term to domain attributes: ";
             for (int i = 0; i < attr.Size(); ++i)
@@ -652,7 +663,7 @@ namespace mfem
       {
          AddVolumetricTerm(new FunctionCoefficient(func), attr);
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
             mfem::out << "Adding  Volumetric term to domain attributes: ";
             for (int i = 0; i < attr.Size(); ++i)
@@ -693,7 +704,7 @@ namespace mfem
          // Compute E^T M1 E, where M1 is the HCurl mass matrix with conductivity
          real_t el = 0.0;
 
-         int true_vsize =  HCurlFESpace->GetTrueVSize(); 
+         int true_vsize =  HCurl_fes->GetTrueVSize(); 
 
          Vector x; x.SetSize(true_vsize);
          Vector y; y.SetSize(true_vsize);
@@ -736,9 +747,9 @@ namespace mfem
 
       void ElectrostaticsSolver::GetErrorEstimates(Vector &errors)
       {
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Estimating Error ... " << flush;
+            mfem::out << "Estimating Error ... " << flush;
          }
 
          // Space for the discontinuous (original) flux
@@ -760,9 +771,9 @@ namespace mfem
          L2ZZErrorEstimator(*flux_integrator, *phi,
                             smooth_flux_fes, flux_fes, errors, norm_p);
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "done." << std::endl;
+            mfem::out << "done." << std::endl;
          }
       }
 
@@ -811,9 +822,9 @@ namespace mfem
       {
          if (visit_dc)
          {
-            if (my_id == 0 && verbose)
+            if (Mpi::Root() && verbose)
             {
-               cout << "Writing VisIt files ..." << flush;
+               mfem::out << "Writing VisIt files ..." << flush;
             }
 
             HYPRE_BigInt prob_size = this->GetProblemSize();
@@ -821,17 +832,17 @@ namespace mfem
             visit_dc->SetTime(time);
             visit_dc->Save();
 
-            if (my_id == 0 && verbose)
+            if (Mpi::Root() && verbose)
             {
-               cout << " done." << std::endl;
+               mfem::out << " done." << std::endl;
             }
          }
 
          if (paraview_dc)
          {
-            if (my_id == 0 && verbose)
+            if (Mpi::Root() && verbose)
             {
-               cout << "Writing Paraview files ..." << flush;
+               mfem::out << "Writing Paraview files ..." << flush;
             }
 
             HYPRE_BigInt prob_size = this->GetProblemSize();
@@ -839,9 +850,9 @@ namespace mfem
             paraview_dc->SetTime(time);
             paraview_dc->Save();
 
-            if (my_id == 0 && verbose)
+            if (Mpi::Root() && verbose)
             {
-               cout << " done." << std::endl;
+               mfem::out << " done." << std::endl;
             }
          }
       }
@@ -849,9 +860,9 @@ namespace mfem
       void
       ElectrostaticsSolver::InitializeGLVis()
       {
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Opening GLVis sockets." << std::endl;
+            mfem::out << "Opening GLVis sockets." << std::endl;
          }
 
          socks["Phi"] = new socketstream;
@@ -864,9 +875,9 @@ namespace mfem
       void
       ElectrostaticsSolver::DisplayToGLVis()
       {
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << "Sending data to GLVis ..." << flush;
+            mfem::out << "Sending data to GLVis ..." << flush;
          }
 
          char vishost[] = "localhost";
@@ -887,9 +898,9 @@ namespace mfem
          Wx = 0;
          Wy += offy; // next line
 
-         if (my_id == 0 && verbose)
+         if (Mpi::Root() && verbose)
          {
-            cout << " done." << std::endl;
+            mfem::out << " done." << std::endl;
          }
       }
 
@@ -916,27 +927,27 @@ namespace mfem
           // Print the timing data in a table format
           if (Mpi::Root())
           {
-              cout << "-------------------------------------------------" << endl;
-              cout << "| " << std::setw(20) << "Timing" << " | " << std::setw(20) << "Value" << " |" << endl;
-              cout << "-------------------------------------------------" << endl;
-              cout << "| " << std::setw(20) << "Setup time" << " | " << std::setw(20) << setup_time_max[0] << " s |" << endl;
-              cout << "| " << std::setw(20) << "Assemble time" << " | " << std::setw(20) << assemble_time_max[0] << " s |" << endl;
-              cout << "| " << std::setw(20) << "Solve time" << " | " << std::setw(20) << solve_time_max[0] << " s |" << endl;
-              cout << "| " << std::setw(20) << "Total time" << " | " << std::setw(20) << setup_time_max[0] + assemble_time_max[0] + solve_time_max[0] << " s |" << endl;
-              cout << "| " << std::setw(20) << "Problem size" << " | " << std::setw(20) << this->GetProblemSize() << "   |" << endl;
-              cout << "-------------------------------------------------" << endl;
+              mfem::out << "-------------------------------------------------" << endl;
+              mfem::out << "| " << std::setw(20) << "Timing" << " | " << std::setw(20) << "Value" << " |" << endl;
+              mfem::out << "-------------------------------------------------" << endl;
+              mfem::out << "| " << std::setw(20) << "Setup time" << " | " << std::setw(20) << setup_time_max[0] << " s |" << endl;
+              mfem::out << "| " << std::setw(20) << "Assemble time" << " | " << std::setw(20) << assemble_time_max[0] << " s |" << endl;
+              mfem::out << "| " << std::setw(20) << "Solve time" << " | " << std::setw(20) << solve_time_max[0] << " s |" << endl;
+              mfem::out << "| " << std::setw(20) << "Total time" << " | " << std::setw(20) << setup_time_max[0] + assemble_time_max[0] + solve_time_max[0] << " s |" << endl;
+              mfem::out << "| " << std::setw(20) << "Problem size" << " | " << std::setw(20) << this->GetProblemSize() << "   |" << endl;
+              mfem::out << "-------------------------------------------------" << endl;
           }
       }
 
       void ElectrostaticsSolver::display_banner(ostream &os)
       {
-          if (my_id == 0)
-          {
+         if (Mpi::Root())
+         {
               os << " ____  ____     ____  ___  _  _  ____ " << std::endl
                  << "(  _ \\(  __)___(  __)/ __)( \\/ )(___ \\" << std::endl
                  << " )   / ) _)(___)) _)( (__ / \\/ \\ / __/" << std::endl
                  << "(__\\_)(__)     (____)\\___)\\_)(_/(____)" << std::endl
-                 << flush;
+                 << std::flush;
           }
       }
 

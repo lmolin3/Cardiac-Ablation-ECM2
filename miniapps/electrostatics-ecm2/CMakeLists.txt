@@ -60,4 +60,8 @@ if (MFEM_USE_MPI)
     ${ELECTROSTATICS_COMMON_FILES}
     LIBRARIES electrostatics_ecm2)
 
+  add_mfem_miniapp(test_spaces
+    MAIN tests/test_spaces.cpp
+    LIBRARIES mfem mfem-common)
+
 endif () #MFEM_USE_MPI
