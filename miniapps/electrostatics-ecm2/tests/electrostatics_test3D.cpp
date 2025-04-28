@@ -83,8 +83,8 @@ int main(int argc, char *argv[])
    bool paraview = false;
    const char *outfolder = "./Output/Test/";
    bool pa = false;
-   bool fa = false;
    const char *device_config = "cpu";
+   bool disable_hcurl_mass = false;
 
    Array<int> dbcs;
    Array<int> dbce;
@@ -103,10 +103,11 @@ int main(int argc, char *argv[])
                   "Number of parallel refinement levels.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
                   "--no-partial-assembly", "Enable Partial Assembly.");
-   args.AddOption(&fa, "-fa", "--full-assembly", "-no-fa",
-                  "--no-full-assembly", "Enable Full Assembly.");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
+   args.AddOption(&disable_hcurl_mass, "-no-hcurl-mass", "--no-hcurl-mass",
+                  "-with-hcurl-mass", "--with-hcurl-mass",
+                  "Disable HCurl mass matrix assembly.");
    args.AddOption(&prec_type, "-prec", "--preconditioner",
                   "Preconditioner type (full assembly): 0 - BoomerAMG, 1 - LOR, \n"
                   "Preconditioner type (partial assembly): 0 - Jacobi smoother, 1 - LOR");
@@ -137,12 +138,6 @@ int main(int argc, char *argv[])
                   "--output-folder",
                   "Output folder.");
    args.ParseCheck();
-
-   if ( pa && fa )
-   {
-      mfem::out << "Just one of --partial-assembly or --full-assembly can be selected." << endl;
-      return 1;
-   }
       
    //    Enable hardware devices such as GPUs, and programming models such as
    //    CUDA, OCCA, RAJA and OpenMP based on command line options.
@@ -254,8 +249,6 @@ int main(int argc, char *argv[])
    // Set Assembly Level (by default we use LEGACY assembly)
    if (pa)
       RF_solver.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   else if (fa)
-      RF_solver.SetAssemblyLevel(AssemblyLevel::FULL);
 
 
    if (Mpi::Root())
@@ -313,6 +306,9 @@ int main(int argc, char *argv[])
    // Setup solver and Assemble all forms
    int pl = 1;
    //RF_solver.EnablePA(pa);
+
+   if (disable_hcurl_mass)
+      RF_solver.DisableHCurlMass();
 
    RF_solver.Setup(prec_type, pl);
 

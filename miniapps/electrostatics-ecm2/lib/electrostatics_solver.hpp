@@ -75,6 +75,10 @@ namespace mfem
 
          void SetAssemblyLevel(AssemblyLevel level);
 
+         // In case Electric Losses are not needed, we can disable the HCurl mass matrix assembly
+         // Must be called before Setup()
+         void DisableHCurlMass() { hasHcurlMass = false; }
+
          void Setup(int prec_type = 1, int pl = 0);
 
          void Update();
@@ -127,6 +131,9 @@ namespace mfem
          ParFiniteElementSpace *GetFESpace() { return H1_fes; }
          ParFiniteElementSpace *GetL2FESpace() { return L2_fes; }
 
+         // Get matrix
+         OperatorHandle GetOperator() { return opA; }
+
       private:
          // Check if any essential BCs were applied and fix at least one point since solution is not unique
          void FixEssentialTDofs( Array<int> &ess_tdof_list);
@@ -169,6 +176,7 @@ namespace mfem
          Solver *prec;
          int prec_type;
          bool symmetric = true;
+         bool hasHcurlMass = true; // If true, assembles the HCurl mass matrix (used to compute electric losses)
 
          ParGridFunction *phi; // Electric Scalar Potential
          ParGridFunction *E;   // Electric Field

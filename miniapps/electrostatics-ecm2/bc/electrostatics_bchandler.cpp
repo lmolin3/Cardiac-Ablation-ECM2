@@ -29,6 +29,26 @@ BCHandler::BCHandler(std::shared_ptr<ParMesh> mesh, bool verbose)
     robin_attr_tmp = 0;
 }
 
+bool BCHandler::IsWellPosed()
+{
+    // Check if the problem is well-posed
+    // (i.e. if there is Dirichlet or Robin BCs)
+    int n_dirichlet = dirichlet_dbcs.size();
+    int n_dirichlet_EField = dirichlet_EField_dbcs.size();
+    int n_robin = robin_bcs.size();
+
+    bool well_posed_local = (n_dirichlet > 0 || n_dirichlet_EField > 0 || n_robin > 0);
+
+#ifdef MFEM_USE_MPI
+    bool well_posed_global = false;
+    MPI_Allreduce(&well_posed_local, &well_posed_global, 1, MPI_C_BOOL, MPI_LOR, pmesh->GetComm());
+#else
+    int well_posed_global = well_posed_local;
+#endif
+
+    return well_posed_global;
+}
+
 void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
 {
     // Check size of attributes provided

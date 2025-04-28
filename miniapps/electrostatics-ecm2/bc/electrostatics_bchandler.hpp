@@ -361,6 +361,10 @@ namespace mfem
                 return robin_attr;
             }
 
+            // Determine if the problem is well-posed
+            // (i.e. if there is Dirichlet or Robin BCs)
+            bool IsWellPosed();
+
         private:
             // Shared pointer to Mesh
             std::shared_ptr<ParMesh> pmesh;

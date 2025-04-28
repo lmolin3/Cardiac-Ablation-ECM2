@@ -64,4 +64,8 @@ if (MFEM_USE_MPI)
     MAIN tests/test_spaces.cpp
     LIBRARIES mfem mfem-common)
 
+  add_mfem_miniapp(test_welposedness
+    MAIN tests/electrostatics_wellposedness.cpp
+    LIBRARIES electrostatics_ecm2)
+
 endif () #MFEM_USE_MPI

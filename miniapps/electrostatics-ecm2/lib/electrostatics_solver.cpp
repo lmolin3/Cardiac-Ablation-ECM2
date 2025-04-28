@@ -214,8 +214,6 @@ namespace mfem
          {
             if (assembly_level == AssemblyLevel::PARTIAL)
                mfem::out << "Using PARTIAL Assembly. " << std::endl;
-            else if (assembly_level == AssemblyLevel::FULL)
-               mfem::out << "Using FULL Assembly. " << std::endl;
             else
                mfem::out << "Using LEGACY Assembly. " << std::endl;
          }
@@ -269,14 +267,6 @@ namespace mfem
             divEpsGrad->SetAssemblyLevel(AssemblyLevel::PARTIAL);
             SigmaMass->SetAssemblyLevel(AssemblyLevel::PARTIAL);
             grad->SetAssemblyLevel(AssemblyLevel::PARTIAL);
-         }
-         else if (assembly_level == AssemblyLevel::FULL)
-         {
-            divEpsGrad->SetAssemblyLevel(AssemblyLevel::FULL);
-            SigmaMass->SetAssemblyLevel(AssemblyLevel::LEGACY); // Legacy assembly for HCurl mass matrix since not yet supported
-            //grad->SetAssemblyLevel(AssemblyLevel::FULL);
-            divEpsGrad->EnableSparseMatrixSorting(Device::IsEnabled());
-            //SigmaMass->EnableSparseMatrixSorting(Device::IsEnabled());
          }
 
 
@@ -379,29 +369,18 @@ namespace mfem
 
       void ElectrostaticsSolver::FixEssentialTDofs(Array<int> &ess_tdof_list)
       {
+
+         bool well_posed = bcs->IsWellPosed();
+
+
          // In Parallel we need to check if any rank has essential DoFs and fix the solution on a suitable rank 
          // (e.g. rank 0 might not own any DoFs in the current domain)
 #ifdef MFEM_USE_MPI       
          // Synchronize MPI to avoid communication issues
          MPI_Barrier(pmesh->GetComm());
-         
-         // Perform a global reduction to check if any rank has essential DoFs
-         int local_has_ess_tdof = (ess_tdof_list.Size() > 0) ? 1 : 0;
-         int global_has_ess_tdof = 0;
-         MPI_Allreduce(&local_has_ess_tdof, &global_has_ess_tdof, 1, MPI_INT, MPI_LOR, pmesh->GetComm());
 
-#ifdef MFEM_DEBUG
-         if (Mpi::Root())
-            mfem::out << "global_has_ess_tdof: " << global_has_ess_tdof << std::endl;
-         mfem::out << "local_has_ess_tdof: " << local_has_ess_tdof << " on rank " << my_id << std::endl;
-#endif
-
-         if (global_has_ess_tdof == 0) // No Dirichlet BCs in the entire domain
+         if (!well_posed) // No Dirichlet BCs in the entire domain
          {
-#ifdef MFEM_DEBUG
-            if (Mpi::Root())
-               mfem::out << "Fixing essential DoFs!" << std::endl;
-#endif
             // Determine the rank that will fix the solution
             int fixed_rank = -1;
 
@@ -432,10 +411,6 @@ namespace mfem
             fixed_rank = global_data.rank;
             fixed_dof = global_data.dof;
 
-#ifdef MFEM_DEBUG
-            mfem::out << "fixed_dof: " << fixed_dof << " on rank " << fixed_rank << " (rank " << my_id << ")" << std::endl;
-#endif
-
             // Check if no valid DoF was found
             if (fixed_dof >= INVALID_DOF)
             {
@@ -451,7 +426,7 @@ namespace mfem
          }
 #else
          // Serial case: If no essential DoFs are provided, fix the first DoF on rank 0
-         if (ess_tdof_list.Size() == 0)
+         if (!well_posed)
          {
                ess_tdof_list.SetSize(1);
                ess_tdof_list[0] = 0; // Use the first DoF on rank 0 by default
@@ -476,8 +451,11 @@ namespace mfem
 
          // Assemble the mass matrix with conductivity
          Array<int> empty;
-         SigmaMass->Assemble();
-         SigmaMass->FormSystemMatrix(empty, opM);
+         if (hasHcurlMass)
+         {
+            SigmaMass->Assemble();
+            SigmaMass->FormSystemMatrix(empty, opM);
+         }
 
          // Assemble the ParDiscreteGradOperator to compute gradient of Phi
          grad->Assemble();
@@ -614,7 +592,7 @@ namespace mfem
             auto *divEpsGrad_C = opA.As<ConstrainedOperator>();
             divEpsGrad_C->EliminateRHS(Phi, B);
          }
-         else
+         else if (assembly_level == AssemblyLevel::LEGACY)
          {
             divEpsGrad->EliminateVDofsInRHS(ess_tdof_list, Phi, B);
          }
@@ -701,6 +679,8 @@ namespace mfem
 
       real_t ElectrostaticsSolver::ElectricLosses(ParGridFunction &E_gf) const
       {
+         MFEM_ASSERT( hasHcurlMass, "Electric losses not available for this problem." );
+
          // Compute E^T M1 E, where M1 is the HCurl mass matrix with conductivity
          real_t el = 0.0;
 

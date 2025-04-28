@@ -85,7 +85,6 @@ int main(int argc, char *argv[])
    bool paraview = false;
    const char *outfolder = "./Output/Test/";
    bool pa = false;
-   bool fa = false;
    const char *device_config = "cpu";
 
    Array<int> dbcs;
@@ -105,8 +104,6 @@ int main(int argc, char *argv[])
                   "Number of parallel refinement levels.");
    args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa",
                   "--no-partial-assembly", "Enable Partial Assembly.");
-   args.AddOption(&fa, "-fa", "--full-assembly", "-no-fa",
-                  "--no-full-assembly", "Enable Full Assembly.");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
    args.AddOption(&sigma_attr, "-sattr", "--sigma-attributes",
@@ -141,12 +138,6 @@ int main(int argc, char *argv[])
                   "--output-folder",
                   "Output folder.");
    args.ParseCheck();
-
-   if (pa && fa)
-   {
-      mfem::out << "Just one of --partial-assembly or --full-assembly can be selected." << endl;
-      return 1;
-   }
 
    //    Enable hardware devices such as GPUs, and programming models such as
    //    CUDA, OCCA, RAJA and OpenMP based on command line options.
@@ -286,8 +277,6 @@ int main(int argc, char *argv[])
    // Set Assembly Level (by default we use LEGACY assembly)
    if (pa)
       RF_solver.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-   else if (fa)
-      RF_solver.SetAssemblyLevel(AssemblyLevel::FULL);
 
    if (Mpi::Root())
       mfem::out << "done." << std::endl;
