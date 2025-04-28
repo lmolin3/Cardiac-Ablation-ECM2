@@ -25,7 +25,7 @@
 // mpirun -np 4 ./navier-backstep-monolithic -d 2 -rs 0 -rp 0 -ou 2 -op 1 -dt 1e-3 -tf 1e-1 -tp 1e-2 -kv 0.1 -u 1.0 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
 //
 
-#include "lib/navier_solver.hpp"
+#include "../lib/navier_solver.hpp"
 #include <fstream>
 #include <sys/stat.h>  // Include for mkdir
 

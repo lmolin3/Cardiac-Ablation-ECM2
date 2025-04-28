@@ -1,9 +1,9 @@
 #ifndef MFEM_CELLDEATH_SOLVER
 #define MFEM_CELLDEATH_SOLVER
 
-#include "mesh_extras.hpp"
-#include "pfem_extras.hpp"
-#include "utils.hpp"
+#include "../../common/mesh_extras.hpp"
+#include "../../common/pfem_extras.hpp"
+#include "../../common-ecm2/utils.hpp"
 #include "ThreeStateCellDeath.h"
 
 #ifdef MFEM_USE_MPI

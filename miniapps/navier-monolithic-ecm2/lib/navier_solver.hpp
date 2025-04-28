@@ -9,7 +9,7 @@
 #include "mfem.hpp"
 
 // From commons-ecm2
-#include "utils.hpp"
+#include "../../common-ecm2/utils.hpp"
 
 // From navier-monolithic-ecm2
 #include "navier_types.hpp"
@@ -17,11 +17,11 @@
 #include "schur_preconditioners.hpp"
 #include "time_adaptivity.hpp"
 #include "navier_qoi.hpp"
-#include "integrators/custom_bilinear_integrators.hpp"
-#include "integrators/custom_linear_integrators.hpp"
-#include "bc/navier_bchandler.hpp"
-#include "mesh_extras.hpp"
-#include "pfem_extras.hpp"
+#include "../integrators/custom_bilinear_integrators.hpp"
+#include "../integrators/custom_linear_integrators.hpp"
+#include "../bc/navier_bchandler.hpp"
+#include "../../common/mesh_extras.hpp"
+#include "../../common/pfem_extras.hpp"
 
 namespace mfem
 {

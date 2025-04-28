@@ -410,13 +410,13 @@ int main(int argc, char *argv[]){
    if (Mpi::Root())
       mfem::out << "\033[0mAssembling Fluid \033[0m";
 
-   RF_Fluid.EnablePA(RF_ctx.pa);
+   RF_Fluid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    RF_Fluid.Setup();   
 
    if (Mpi::Root())
       mfem::out << "\033[0m\nAssembling Solid \033[0m" << std::endl;
 
-   RF_Solid.EnablePA(RF_ctx.pa);
+   RF_Solid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    RF_Solid.Setup();
 
    chrono_assembly.Stop();

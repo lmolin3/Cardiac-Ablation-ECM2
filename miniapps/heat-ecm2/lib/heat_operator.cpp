@@ -10,7 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "heat_operator.hpp"
-#include "../../general/forall.hpp"
+#include "../../../general/forall.hpp"
 
 #ifdef MFEM_USE_MPI
 

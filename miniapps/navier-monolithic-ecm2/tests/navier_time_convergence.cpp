@@ -26,7 +26,7 @@
 // mpirun -np 4 ./navier-time-convergence-monolithic -d 2 -e 1 -n 10 -r 3 -ou 2 -op 1 -f 1 -bcs 1 --preconditioner 4 --schur-preconditioner 5 --stiff-strain
 //
 
-#include "lib/navier_solver.hpp"
+#include "../lib/navier_solver.hpp"
 #include <fstream>
 #include <sys/stat.h>  // Include for mkdir
 

@@ -25,7 +25,7 @@
 #define BCHANDLER_HEAT_HPP
 
 #include <mfem.hpp>
-#include "utils.hpp"
+#include "../../common-ecm2/utils.hpp"
 
 namespace mfem
 {

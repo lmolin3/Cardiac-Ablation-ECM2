@@ -775,10 +775,10 @@ int main(int argc, char *argv[])
 
    chrono_assembly.Clear();
    chrono_assembly.Start();
-   RF_Solid.EnablePA(RF_ctx.pa);
+   RF_Solid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    RF_Solid.Setup();
 
-   RF_Fluid.EnablePA(RF_ctx.pa);
+   RF_Fluid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
    RF_Fluid.Setup();
    chrono_assembly.Stop();
 

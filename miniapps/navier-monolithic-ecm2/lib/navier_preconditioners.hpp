@@ -9,7 +9,7 @@
 #define PRECONDITIONERS_NAVIER_HPP
 
 #include <mfem.hpp>
-#include "utils.hpp"
+#include "../../common-ecm2/utils.hpp"
 #include "pressure_correction.hpp"
 
 namespace mfem

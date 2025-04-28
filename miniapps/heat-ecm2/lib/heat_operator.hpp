@@ -40,11 +40,11 @@
 #ifndef MFEM_HEAT_OPERATOR
 #define MFEM_HEAT_OPERATOR
 
-#include "mesh_extras.hpp"
-#include "pfem_extras.hpp"
-#include "bc/heat_bchandler.hpp"
+#include "../../common/mesh_extras.hpp"
+#include "../../common/pfem_extras.hpp"
+#include "../bc/heat_bchandler.hpp"
 #include "implicit_solver.hpp"
-#include "utils.hpp"
+#include "../../common-ecm2/utils.hpp"
 #include <deque>
 
 #ifdef MFEM_USE_MPI

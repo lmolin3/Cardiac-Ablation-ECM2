@@ -17,9 +17,9 @@
 
 #include "heat_solver.hpp"
 
-#ifdef MFEM_USE_MPI
-
 constexpr int max_bdf_order = 6;
+
+#ifdef MFEM_USE_MPI
 
 using namespace std;
 namespace mfem
@@ -620,7 +620,7 @@ namespace mfem
 
          int Wx = 0, Wy = 0;                 // window position
          int Ww = 350, Wh = 350;             // window size
-         int offx = Ww + 10, offy = Wh + 45; // window offsets
+         int offx = Ww + 10; // window offsets
 
          VisualizeField(*socks["T"], vishost, visport,
                         *T_gf, "Temperature (T)", Wx, Wy, Ww, Wh);

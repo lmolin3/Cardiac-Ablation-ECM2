@@ -2,7 +2,7 @@
 #define IMPLICIT_SOLVER_HPP
 
 #include <mfem.hpp>
-#include "bc/heat_bchandler.hpp"
+#include "../bc/heat_bchandler.hpp"
 
     // TODO:
     // - Add functions to handle re-assembly in case of changes in the mesh and/or coefficients

@@ -10,43 +10,32 @@
 # CONTRIBUTING.md for details.
 
 if (MFEM_USE_MPI)
-  #add_subdirectory(lib)
 
-  set(CELLDEATH_DIR ${CMAKE_SOURCE_DIR}/miniapps/celldeath-ecm2)
-
-  # Add the include directories
-  include_directories(
-    ${CMAKE_SOURCE_DIR}/miniapps/common
-    ${CMAKE_SOURCE_DIR}/miniapps/common-ecm2
-    ${CELLDEATH_DIR}
-  )
-
-  # Eigen version
-  list(APPEND CELLDEATH_SRCS
+  list(APPEND CELLDEATH_COMMON_SOURCES
     lib/celldeath_solver.cpp
     lib/ThreeStateCellDeath.cpp
   )
 
-  list(APPEND CELLDEATH_HDRS
+  list(APPEND CELLDEATH_COMMON_HEADERS
     lib/celldeath_solver.hpp
     lib/ThreeStateCellDeath.h
   )
 
-  convert_filenames_to_full_paths(CELLDEATH_SRCS)
-  convert_filenames_to_full_paths(CELLDEATH_HDRS)
+  set(CELLDEATH_COMMON_FILES
+  EXTRA_SOURCES ${CELLDEATH_COMMON_SOURCES}
+  EXTRA_HEADERS ${CELLDEATH_COMMON_HEADERS})
 
-  mfem_add_library(celldeath-ecm2 ${CELLDEATH_SRCS} ${CELLDEATH_HDRS})
+  convert_filenames_to_full_paths(CELLDEATH_COMMON_SOURCES)
+  convert_filenames_to_full_paths(CELLDEATH_COMMON_HEADERS)
+
+  mfem_add_library(celldeath-ecm2 ${CELLDEATH_COMMON_SOURCES} ${CELLDEATH_COMMON_HEADERS})
     
-  target_link_libraries(celldeath-ecm2
-    mfem
-    mfem-common-ecm2
-    mfem-common
-    ${TPL_LIBRARIES})
+  target_link_libraries(celldeath-ecm2 mfem mfem-common-ecm2 mfem-common)
     
 add_mfem_miniapp(test_celldeath
     MAIN tests/test_celldeath.cpp
-    EXTRA_HEADERS ${MFEM_MINIAPPS_COMMON_HEADERS}
-    LIBRARIES mfem mfem-common celldeath-ecm2)
+    ${CELLDEATH_COMMON_FILES}
+    LIBRARIES celldeath-ecm2)
 
 add_mfem_miniapp(test_transfer
     MAIN tests/test_transfer.cpp

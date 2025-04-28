@@ -42,7 +42,7 @@
 //
 
 
-#include "lib/heat_solver.hpp"
+#include "../lib/heat_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>
