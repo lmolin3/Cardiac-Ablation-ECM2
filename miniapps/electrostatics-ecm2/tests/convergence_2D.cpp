@@ -10,7 +10,7 @@
 // CONTRIBUTING.md for details.
 //
 //            -----------------------------------------------------
-//            Volta Miniapp:  Simple Electrostatics Simulation Code
+//            RF Miniapp:  Simple Electrostatics Simulation Code
 //            -----------------------------------------------------
 //
 // This miniapp solves a sconvergence analysis for the 2D electrostatic problem (Quasi-static Maxwell).
@@ -33,8 +33,9 @@
 //      mpirun -np 4 ./convergence_2D -e 1 -o 1 -sattr '1' -sval '1.0' -r 7 --partial-assembly
 //
 
+#include <mfem.hpp>
 
-#include "lib/electrostatics_solver.hpp"
+#include "../lib/electrostatics_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -219,25 +220,25 @@ int main(int argc, char *argv[])
 
       // Create the Electrostatic solver
       verbose = false;
-      ElectrostaticsSolver Volta(pmesh, order, bcs, sigmaCoeff, verbose);
-      //Volta.display_banner(std::cout);
+      ElectrostaticsSolver RF_solver(pmesh, order, bcs, sigmaCoeff, verbose);
+      //RF_solver.display_banner(std::cout);
 
       mkdir(outfolder, 0777);
 
-      // Get reference to the potential vector and gridfunction internal to Volta
-      ParFiniteElementSpace *fespace = Volta.GetFESpace();
+      // Get reference to the potential vector and gridfunction internal to RF_solver
+      ParFiniteElementSpace *fespace = RF_solver.GetFESpace();
 
       FunctionCoefficient Phiex_coeff(Phi_exact);
       VectorFunctionCoefficient gradPhiex_coeff(sdim, Phi_grad_exact);
 
-      ParGridFunction &Phi_gf = Volta.GetPotential();
+      ParGridFunction &Phi_gf = RF_solver.GetPotential();
       ParGridFunction *Phi_exact_gf = new ParGridFunction(fespace);
 
       Phi_gf.ProjectCoefficient(Phiex_coeff);
       Phi_exact_gf->ProjectCoefficient(Phiex_coeff);
 
       // Initialize Paraview visualization
-      std::string name = "Volta-MMS-ref" + std::to_string(serial_ref_levels);
+      std::string name = "RF_solver-MMS-ref" + std::to_string(serial_ref_levels);
       ParaViewDataCollection paraview_dc(name, pmesh.get());
 
       if (paraview)
@@ -246,8 +247,8 @@ int main(int argc, char *argv[])
          paraview_dc.SetHighOrderOutput(true);
          paraview_dc.SetPrefixPath(outfolder);
          paraview_dc.SetLevelsOfDetail(order);
-         Volta.RegisterParaviewFields(paraview_dc);
-         Volta.AddParaviewField("Phi_exact", Phi_exact_gf);
+         RF_solver.RegisterParaviewFields(paraview_dc);
+         RF_solver.AddParaviewField("Phi_exact", Phi_exact_gf);
       }
 
       ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -255,16 +256,16 @@ int main(int argc, char *argv[])
       ///////////////////////////////////////////////////////////////////////////////////////////////
 
       // Add the volumetric term to the right-hand side
-      auto *f_exact_coeff = new FunctionCoefficient(f_exact); // Note: VoltaSolver uses CoeffContainer which takes ownership of f_exact_coeff, so it should be created with new()
+      auto *f_exact_coeff = new FunctionCoefficient(f_exact); // Note: RF_solverSolver uses CoeffContainer which takes ownership of f_exact_coeff, so it should be created with new()
       int attr_volumetric = 1;
-      Volta.AddVolumetricTerm(f_exact_coeff, attr_volumetric);
+      RF_solver.AddVolumetricTerm(f_exact_coeff, attr_volumetric);
 
       StopWatch sw_setup;
       sw_setup.Start();
 
       // Setup solver and Assemble all forms
-      Volta.EnablePA(pa);
-      Volta.Setup();
+      //RF_solver.EnablePA(pa);
+      RF_solver.Setup();
 
       sw_setup.Stop();
 
@@ -276,20 +277,20 @@ int main(int argc, char *argv[])
       sw_solve.Start();
 
       // Solve the system and compute any auxiliary fields
-      Volta.Solve();
+      RF_solver.Solve();
 
       sw_solve.Stop();
 
-      ParGridFunction E_gf = Volta.GetElectricField();
-      real_t el = Volta.ElectricLosses(E_gf);
+      ParGridFunction E_gf = RF_solver.GetElectricField();
+      real_t el = RF_solver.ElectricLosses(E_gf);
 
       // Determine the current size of the linear system
-      int prob_size = Volta.GetProblemSize();
+      int prob_size = RF_solver.GetProblemSize();
 
       // Write fields to disk for VisIt
       if (paraview)
       {
-         Volta.WriteFields();
+         RF_solver.WriteFields();
       }
 
       ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -326,7 +327,7 @@ int main(int argc, char *argv[])
 
       if (Mpi::Root())
       {
-         cout << setw(16) << Volta.GetProblemSize() << setw(16) << h_min << setw(16) << l2_err << setw(16) << l2_rate;
+         cout << setw(16) << RF_solver.GetProblemSize() << setw(16) << h_min << setw(16) << l2_err << setw(16) << l2_rate;
          cout << setw(16) << h1_err << setw(16) << h1_rate << endl;
       }
 

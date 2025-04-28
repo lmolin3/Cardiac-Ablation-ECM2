@@ -2,7 +2,7 @@
 #define BCHANDLER_ELECTROSTATICS_HPP
 
 #include <mfem.hpp>
-#include "utils.hpp"
+#include "../../common-ecm2/utils.hpp"
 
 namespace mfem
 {
@@ -360,6 +360,10 @@ namespace mfem
             {
                 return robin_attr;
             }
+
+            // Determine if the problem is well-posed
+            // (i.e. if there is Dirichlet or Robin BCs)
+            bool IsWellPosed();
 
         private:
             // Shared pointer to Mesh

@@ -1,18 +1,16 @@
+#ifndef MFEM_ECM2_UTILS_HPP
+#define MFEM_ECM2_UTILS_HPP
+
+#pragma once
+
+#include "mfem.hpp"
+
 #include <algorithm>
 #include <assert.h>
 #include <cstdlib>
 #include <memory>
 
-#ifdef MFEM_USE_MPI
-#include <mpi.h>
-#endif // MFEM_USE_MPI
-
-#include "mfem.hpp"
-
 #include "../../linalg/dtensor.hpp"
-
-#ifndef MFEM_ECM2_UTILS_HPP
-#define MFEM_ECM2_UTILS_HPP
 
 namespace mfem
 {

@@ -23,19 +23,18 @@
 // * Neumann: selected current density
 //
 // We discretize the electric potential with H1 finite elements.
-// The electric field E is discretized with H1 finite elements (just for visualization/postprocessing).
+// The electric field E is discretized with HCurl finite elements (just for visualization/postprocessing).
 //
 // Sample runs:
 //
 //   1. A cylinder at constant RF_solverge in a square, grounded metal pipe (Legacy assembly):
-//      mpirun -np 2 ./electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -rs 1 -rp 1 -o 4
+//      mpirun -np 4 ./electrostatics_test3D_aniso_rotated -m ../multidomain/multidomain-hex.mesh -rs 1 -rp 1 -o 4 -sattr '1 2' -sval '1.0 1.0' -ar '1.0 3.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' 
 //
 //   2. Same as above, but with partial assembly:
-//      mpirun -np 2 ./electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -rs 1 -rp 1 -o 4 -pa
+//      mpirun -np 4 ./electrostatics_test3D_aniso_rotated -m ../multidomain/multidomain-hex.mesh -rs 1 -rp 1 -o 4 -sattr '1 2' -sval '1.0 1.0' -ar '1.0 3.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -pa
 //
 //   3. Same as above, but using CUDA backend:
-//      ./electrostatics_test3D -m ../multidomain/multidomain-hex.mesh -sattr '1 2' -sval '1.0 1.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -rs 1 -rp 1 -o 4 -pa -d cuda
-//
+//      ./electrostatics_test3D_aniso_rotated -m ../multidomain/multidomain-hex.mesh -rs 1 -rp 1 -o 4 -sattr '1 2' -sval '1.0 1.0' -ar '1.0 3.0' -dbcs '6 7 8' -dbcv '1.0 0.0 0.0' -pa -d cuda
 
 #include <mfem.hpp>
 
@@ -44,7 +43,6 @@
 #include <iostream>
 #include <vector>
 #include <sys/stat.h> // Include for mkdir
-#include <iomanip> // Include for std::setw
 
 #include "../../common-ecm2/FilesystemHelper.hpp"
 
@@ -53,23 +51,27 @@ using namespace mfem;
 using namespace mfem::electrostatics;
 
 
+// Forward declarations of functions
+
+// Conductivity Matrix
+void EulerAngles(const Vector &x, Vector &e);
+std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix( const Vector &d);
+
 // Boundary Conditions
 void SetupBCHandler(BCHandler *bcs, Array<int> &dbcs, Vector &dbcv, Array<int> &dbce, Array<int> &nbcs, Vector &nbcv, std::vector<Vector> &e_uniform);
 
-static Vector pw_sigma(0);   // Piecewise conductivity values
-static Vector sigma_attr(0); // Domain attributes associated to piecewise Conductivity
+static Vector pw_sigma(0);    // Piecewise conductivity values
+static Vector aniso_ratio(0); // Piecewise anisotropy ratio for conductivity
+static Vector sigma_attr(0);  // Domain attributes associated to piecewise Conductivity
 
 // Phi Boundary Condition
 std::vector<Vector> e_uniform(0);
 static Vector dbce_val(0);
 bool uebc_const = true;
 
-IdentityMatrixCoefficient *Id = NULL;
-
 
 int main(int argc, char *argv[])
 {
-
    /// 1. Initialize MPI and Hypre
    Mpi::Init(argc, argv);
    Hypre::Init();
@@ -84,7 +86,6 @@ int main(int argc, char *argv[])
    const char *outfolder = "./Output/Test/";
    bool pa = false;
    const char *device_config = "cpu";
-   bool disable_hcurl_mass = false;
 
    Array<int> dbcs;
    Array<int> dbce;
@@ -105,16 +106,12 @@ int main(int argc, char *argv[])
                   "--no-partial-assembly", "Enable Partial Assembly.");
    args.AddOption(&device_config, "-d", "--device",
                   "Device configuration string, see Device::Configure().");
-   args.AddOption(&disable_hcurl_mass, "-no-hcurl-mass", "--no-hcurl-mass",
-                  "-with-hcurl-mass", "--with-hcurl-mass",
-                  "Disable HCurl mass matrix assembly.");
-   args.AddOption(&prec_type, "-prec", "--preconditioner",
-                  "Preconditioner type (full assembly): 0 - BoomerAMG, 1 - LOR, \n"
-                  "Preconditioner type (partial assembly): 0 - Jacobi smoother, 1 - LOR");
    args.AddOption(&sigma_attr, "-sattr", "--sigma-attributes",
                   "Domain attributes associated to piecewise Conductivity");
    args.AddOption(&pw_sigma, "-sval", "--piecewise-sigma",
                   "Piecewise values of Conductivity");
+   args.AddOption(&aniso_ratio, "-ar", "--anisotropy-ratio",
+                  "Piecewise values of Anisotropy Ratio");
    args.AddOption(&dbcs, "-dbcs", "--dirichlet-bc-surf",
                   "Dirichlet Boundary Condition Surfaces");
    args.AddOption(&dbcv, "-dbcv", "--dirichlet-bc-vals",
@@ -131,6 +128,9 @@ int main(int argc, char *argv[])
                   "Neumann Boundary Condition Surfaces");
    args.AddOption(&nbcv, "-nbcv", "--neumann-bc-vals",
                   "Neumann Boundary Condition Values");
+   args.AddOption(&prec_type, "-prec", "--preconditioner",
+                  "Preconditioner type (full assembly): 0 - BoomerAMG, 1 - LOR, \n"
+                  "Preconditioner type (partial assembly): 0 - Jacobi smoother, 1 - LOR");
    args.AddOption(&paraview, "-paraview", "--paraview", "-no-paraview", "--no-paraview",
                   "Enable or disable Paraview visualization.");
    args.AddOption(&outfolder,
@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
                   "--output-folder",
                   "Output folder.");
    args.ParseCheck();
-      
+
    //    Enable hardware devices such as GPUs, and programming models such as
    //    CUDA, OCCA, RAJA and OpenMP based on command line options.
    Device device(device_config);
@@ -149,7 +149,7 @@ int main(int argc, char *argv[])
    // Read the (serial) mesh from the given mesh file on all processors.  We
    // can handle triangular, quadrilateral, tetrahedral, hexahedral, surface
    // and volume meshes with the same code.
-    StopWatch sw_initialization;
+   StopWatch sw_initialization;
    sw_initialization.Start();
    if (Mpi::Root())
    {
@@ -162,9 +162,12 @@ int main(int argc, char *argv[])
       serial_mesh->UniformRefinement();
    }
 
+
    auto pmesh = make_shared<ParMesh>(MPI_COMM_WORLD, *serial_mesh);
    delete serial_mesh;
    int sdim = pmesh->SpaceDimension();
+
+
 
    // Refine this mesh in parallel to increase the resolution.
    int par_ref_levels = parallel_ref_levels;
@@ -176,9 +179,33 @@ int main(int argc, char *argv[])
    pmesh->Finalize(true);
 
    /// 4. Set up conductivity coefficient
+
    int d = pmesh->Dimension();
 
-   PWConstCoefficient *sigmaCoeff = new PWConstCoefficient(pw_sigma);
+   Array<int> attr(0);
+   Array<MatrixCoefficient *> coefs(0);
+
+   MFEM_ASSERT(pw_sigma.Size() == sigma_attr.Size(), "Size mismatch between conductivity values and attributes");
+
+   for (int i = 0; i < pw_sigma.Size(); i++)
+   {
+      MFEM_ASSERT(sigma_attr[i] <= pmesh->attributes.Max(), "Attribute value out of range");
+
+      real_t sigma_val = pw_sigma[i];
+      real_t sigma_ratio = aniso_ratio[i];
+      // Create vector of conductivity values
+      Vector sigma_vec(d);
+      sigma_vec(0) = sigma_val;
+      sigma_vec(1) = sigma_val / sigma_ratio;
+      sigma_vec(2) = sigma_val / sigma_ratio;
+   
+      MatrixCoefficient *tmp = pw_sigma[i] != 0 ? new MatrixFunctionCoefficient(3, ConductivityMatrix(sigma_vec)) : NULL;
+
+      coefs.Append(tmp);
+      attr.Append(sigma_attr[i]);
+   }
+
+   PWMatrixCoefficient *sigmaCoeff = new PWMatrixCoefficient(d, attr, coefs);
 
    /// 5. Set up boundary conditions
 
@@ -227,15 +254,16 @@ int main(int argc, char *argv[])
       nbcv = 0.0;
    }
 
-   // Create BCHandler and parse bcs
-   // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
-   bool verbose = true;
+
    if (Mpi::Root())
       mfem::out << "Creating BC handler..." << std::endl;
 
+   // Create BCHandler and parse bcs
+   // Create the BC handler (bcs need to be setup before calling Solver::Setup() )
+   bool verbose = true;
    BCHandler *bcs = new BCHandler(pmesh, verbose); // Boundary conditions handler
    SetupBCHandler(bcs, dbcs, dbcv, dbce, nbcs, nbcv, e_uniform);
-   
+
    if (Mpi::Root())
       mfem::out << "done." << std::endl;
 
@@ -245,17 +273,20 @@ int main(int argc, char *argv[])
       mfem::out << "Creating Electrostatics solver..." << std::endl;
 
    ElectrostaticsSolver RF_solver(pmesh, order, bcs, sigmaCoeff, verbose);
-   
+
    // Set Assembly Level (by default we use LEGACY assembly)
    if (pa)
       RF_solver.SetAssemblyLevel(AssemblyLevel::PARTIAL);
-
 
    if (Mpi::Root())
       mfem::out << "done." << std::endl;
 
    RF_solver.display_banner(std::cout);
-   
+
+
+   if (Mpi::Root())
+      mfem::out << "\nCreating DataCollection...";
+
    if (Mpi::Root())
    {
       if (!fs::is_directory(outfolder) || !fs::exists(outfolder))
@@ -264,12 +295,8 @@ int main(int argc, char *argv[])
       } 
    }
 
-   if (Mpi::Root())
-      mfem::out << "\nCreating DataCollection...";
-
    // Initialize Paraview visualization
    ParaViewDataCollection paraview_dc("RF_solver-Parallel", pmesh.get());
-   paraview_dc.SetPrefixPath(outfolder);
 
    if (paraview)
    {
@@ -288,7 +315,6 @@ int main(int argc, char *argv[])
    my_rt[0] = sw_initialization.RealTime();
    MPI_Reduce(my_rt, rt_max, 1, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
-
    if (Mpi::Root())
    {
       cout << "Initialization done.  Elapsed time " << my_rt[0] << " s." << endl;
@@ -306,10 +332,6 @@ int main(int argc, char *argv[])
    // Setup solver and Assemble all forms
    int pl = 1;
    //RF_solver.EnablePA(pa);
-
-   if (disable_hcurl_mass)
-      RF_solver.DisableHCurlMass();
-
    RF_solver.Setup(prec_type, pl);
 
    // Solve the system and compute any auxiliary fields
@@ -323,14 +345,18 @@ int main(int argc, char *argv[])
    {
       RF_solver.WriteFields();
    }
-   
-   // Get global time for setup and solve
+
    RF_solver.PrintTimingData();
 
+
    /// 8. Cleanup
+   // Delete the MatrixCoefficient objects at the end of main
+   for (int i = 0; i < coefs.Size(); i++)
+   {
+      delete coefs[i];
+   }
 
    delete sigmaCoeff;
-   delete Id;
 
    return 0;
 }
@@ -356,4 +382,86 @@ void SetupBCHandler(BCHandler *bcs, Array<int> &dbcs, Vector &dbcv, Array<int> &
    {
       bcs->AddNeumannBC(nbcv[i], nbcs[i]);
    }
+}
+
+
+std::function<void(const Vector &, DenseMatrix &)> ConductivityMatrix( const Vector &d)
+{
+   return [d](const Vector &x, DenseMatrix &m)
+   {
+      // Define dimension of problem
+      const int dim = x.Size();
+
+      // Compute Euler angles
+      Vector e(3);
+      EulerAngles(x,e);
+      real_t e1 = e(0);
+      real_t e2 = e(1);
+      real_t e3 = e(2);
+
+      // Compute rotated matrix
+      if (dim == 3)
+      {
+         // Compute cosine and sine of the angles e1, e2, e3
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         const real_t c2 = cos(e2);
+         const real_t s2 = sin(e2);
+         const real_t c3 = cos(e3);
+         const real_t s3 = sin(e3);
+
+         // Fill the rotation matrix R with the Euler angles.
+         DenseMatrix R(3, 3);
+         R(0, 0) = c1 * c3 - c2 * s1 * s3;
+         R(0, 1) = -c1 * s3 - c2 * c3 * s1;
+         R(0, 2) = s1 * s2;
+         R(1, 0) = c3 * s1 + c1 * c2 * s3;
+         R(1, 1) = c1 * c2 * c3 - s1 * s3;
+         R(1, 2) = -c1 * s2;
+         R(2, 0) = s2 * s3;
+         R(2, 1) = c3 * s2;
+         R(2, 2) = c2;
+
+         // Multiply the rotation matrix R with the diffusivity vector.
+         Vector l(3);
+         l(0) = d[0];
+         l(1) = d[1];
+         l(2) = d[2];
+
+         // Compute m = R^t diag(l) R
+         R.Transpose();
+         MultADBt(R, l, R, m);
+      }
+      else if (dim == 2)
+      {
+         const real_t c1 = cos(e1);
+         const real_t s1 = sin(e1);
+         DenseMatrix Rt(2, 2);
+         Rt(0, 0) =  c1;
+         Rt(0, 1) =  s1;
+         Rt(1, 0) = -s1;
+         Rt(1, 1) =  c1;
+         Vector l(2);
+         l(0) = d[0];
+         l(1) = d[1];
+         MultADAt(Rt,l,m);
+      }
+      else
+      {
+         m(0, 0) = d[0];
+      }
+
+   };
+}
+
+void EulerAngles(const Vector &x, Vector &e)
+{
+    const int dim = x.Size();
+
+    e(0) = -60.0 * M_PI / 180.0; // convert to radians
+    e(1) = 0.0;
+    if( dim == 3)
+    {
+        e(2) = 0.0;
+    }
 }

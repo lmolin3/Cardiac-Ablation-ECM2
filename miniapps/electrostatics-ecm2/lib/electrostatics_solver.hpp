@@ -9,13 +9,14 @@
 // terms of the BSD-3 license. We welcome feedback and contributions, see file
 // CONTRIBUTING.md for details.
 
-#ifndef MFEM_ELECTROSTATICS_SOLVER
-#define MFEM_ELECTROSTATICS_SOLVER
+#ifndef MFEM_ELECTROSTATICS_SOLVER_HPP
+#define MFEM_ELECTROSTATICS_SOLVER_HPP
 
-#include "../common/pfem_extras.hpp"
-#include "../common/mesh_extras.hpp"
+#include "mfem.hpp"
+#include "../../common/pfem_extras.hpp"
+#include "../../common/mesh_extras.hpp"
 #include "electromagnetics.hpp"
-#include "bc/electrostatics_bchandler.hpp"
+#include "../bc/electrostatics_bchandler.hpp"
 
 #ifdef MFEM_USE_MPI
 
@@ -72,7 +73,11 @@ namespace mfem
 
          void PrintSizes();
 
-         void EnablePA(bool pa = false);
+         void SetAssemblyLevel(AssemblyLevel level);
+
+         // In case Electric Losses are not needed, we can disable the HCurl mass matrix assembly
+         // Must be called before Setup()
+         void DisableHCurlMass() { hasHcurlMass = false; }
 
          void Setup(int prec_type = 1, int pl = 0);
 
@@ -123,8 +128,11 @@ namespace mfem
          ParGridFunction &GetElectricField() { return *E; }
 
          // Getters for the FESpaces
-         ParFiniteElementSpace *GetFESpace() { return H1FESpace; }
-         ParFiniteElementSpace *GetL2FESpace() { return L2FESpace; }
+         ParFiniteElementSpace *GetFESpace() { return H1_fes; }
+         ParFiniteElementSpace *GetL2FESpace() { return L2_fes; }
+
+         // Get matrix
+         OperatorHandle GetOperator() { return opA; }
 
       private:
          // Check if any essential BCs were applied and fix at least one point since solution is not unique
@@ -145,9 +153,12 @@ namespace mfem
          VisItDataCollection *visit_dc;       // To prepare fields for VisIt viewing
          ParaViewDataCollection *paraview_dc; // To prepare fields for ParaView viewing
 
-         ParFiniteElementSpace *H1FESpace;    // Continuous space for phi
-         ParFiniteElementSpace *L2FESpace;    // Discontinuous space for w
-         ParFiniteElementSpace *HCurlFESpace; // Tangentially continuous space for E
+         FiniteElementCollection *H1_fec; // H1 finite element collection
+         FiniteElementCollection *L2_fec; // L2 finite element collection
+         FiniteElementCollection *HCurl_fec; // HCurl finite element collection
+         ParFiniteElementSpace *H1_fes;    // Continuous space for phi
+         ParFiniteElementSpace *L2_fes;    // Discontinuous space for w
+         ParFiniteElementSpace *HCurl_fes; // Tangentially continuous space for E
 
          ParBilinearForm *divEpsGrad; // Laplacian operator
          ParBilinearForm *SigmaMass;  // Mass matrix with conductivity
@@ -159,12 +170,13 @@ namespace mfem
          OperatorHandle opA, opM;
          Vector Phi, B;
 
+         AssemblyLevel assembly_level = AssemblyLevel::LEGACY;
+         
          IterativeSolver *solver;
          Solver *prec;
          int prec_type;
          bool symmetric = true;
-
-         bool pa; // Enable partial assembly
+         bool hasHcurlMass = true; // If true, assembles the HCurl mass matrix (used to compute electric losses)
 
          ParGridFunction *phi; // Electric Scalar Potential
          ParGridFunction *E;   // Electric Field
@@ -200,5 +212,5 @@ namespace mfem
 
 #endif // MFEM_USE_MPI
 
-#endif // MFEM_VOLTA_SOLVER
+#endif // MFEM_RF_solver_SOLVER
 
