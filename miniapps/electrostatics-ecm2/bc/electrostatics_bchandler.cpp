@@ -37,7 +37,9 @@ bool BCHandler::IsWellPosed()
     int n_dirichlet_EField = dirichlet_EField_dbcs.size();
     int n_robin = robin_bcs.size();
 
-    bool well_posed_local = (n_dirichlet > 0 || n_dirichlet_EField > 0 || n_robin > 0);
+    //bool well_posed_local = (n_dirichlet > 0 || n_dirichlet_EField > 0 || n_robin > 0);
+    bool well_posed_local = (n_dirichlet > 0 || n_dirichlet_EField > 0 );
+
 
 #ifdef MFEM_USE_MPI
     bool well_posed_global = false;
