@@ -351,7 +351,7 @@ int main(int argc, char *argv[]){
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
-   BidirectionalInterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB, parent_mesh.GetComm());
+   BidirectionalInterfaceTransfer finder_fluid_to_solid(fes_fluid, fes_solid, fluid_solid_interface_marker, TransferBackend::GSLIB, parent_mesh.GetComm());
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface

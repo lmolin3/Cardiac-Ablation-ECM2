@@ -1,5 +1,5 @@
 // Sample run:
-// mpirun -np 4 ./multidomain-one-domain-celldeath-rf-aniso -hex -pa-heat -pa-rf -oh 3 -or 4 -ode 1 -tf 1.0 -dt 0.01 -paraview -of ./Output/Solid/oh3_or4
+// mpirun -np 4 ./multidomain-one-domain-celldeath-rf-aniso -hex -pa-heat -pa-rf -oh 3 -or 3 -ode 1 -tf 1.0 -dt 0.01 -paraview -of ./Output/Solid/oh3_or3
 
 // MFEM library
 #include "mfem.hpp"
@@ -8,9 +8,6 @@
 #include "lib/heat_solver.hpp"
 #include "lib/celldeath_solver.hpp"
 #include "lib/electrostatics_solver.hpp"
-
-// Interface transfer
-#include "interface_transfer.hpp"
 
 // Physical and Domain-Decomposition parameters
 #include "contexts.hpp" 
@@ -26,9 +23,6 @@
 #include "FilesystemHelper.hpp"
 
 using namespace mfem;
-
-using InterfaceTransfer = ecm2_utils::InterfaceTransfer;
-using TransferBackend = InterfaceTransfer::Backend;
 
 IdentityMatrixCoefficient *Id = NULL;
 std::function<void(const Vector &, Vector &)> EulerAngles(real_t zmax, real_t zmin);
@@ -462,7 +456,7 @@ int main(int argc, char *argv[])
 
    chrono_assembly.Clear();
    chrono_assembly.Start();
-   RF_Solid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   RF_Solid.SetAssemblyLevel(RF_ctx.pa ? AssemblyLevel::PARTIAL : AssemblyLevel::LEGACY);
    RF_Solid.Setup();
    chrono_assembly.Stop();
 

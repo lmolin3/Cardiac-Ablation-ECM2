@@ -441,7 +441,7 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
-   BidirectionalInterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_solid(fes_fluid, fes_solid, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
@@ -489,10 +489,10 @@ int main(int argc, char *argv[])
 
    StopWatch chrono_assembly;
    chrono_assembly.Start();
-   RF_Solid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   RF_Solid.SetAssemblyLevel(RF_ctx.pa ? AssemblyLevel::PARTIAL : AssemblyLevel::LEGACY);
    RF_Solid.Setup();
 
-   RF_Fluid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   RF_Fluid.SetAssemblyLevel(RF_ctx.pa ? AssemblyLevel::PARTIAL : AssemblyLevel::LEGACY);
    RF_Fluid.Setup();
    chrono_assembly.Stop();
    real_t assembly_time = chrono_assembly.RealTime();

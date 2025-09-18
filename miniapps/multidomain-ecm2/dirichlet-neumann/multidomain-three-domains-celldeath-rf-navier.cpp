@@ -20,15 +20,15 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -tet -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -tet -oh 2 -or 3 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
 // 2. Hexahedral mesh  
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -oh 2 -or 3 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
 // 3. Hexahedral mesh with partial assembly for RF
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 3 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
 // 4. Hexahedral mesh with partial assembly for RF and Heat
-//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
+//    mpirun -np 4 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 3 -dt 0.01 -tf 0.05 -ta 1 --preload-ns 2.0
 // 5. Hexahedral mesh with partial assembly for RF and Heat, and anisotropic conductivity
-//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 4 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5 -ta 1 --preload-ns 2.0
+//    mpirun -np 10 ./multidomain-three-domains-celldeath-rf-navier -hex -pa-heat -pa-rf -oh 2 -or 3 -dt 0.01 -tf 0.05 --aniso-ratio-rf 5.0 --aniso-ratio-heat 5.0 -omegat 0.8 -omegarf 0.5 -ta 1 --preload-ns 2.0
 
 // MFEM library
 #include "mfem.hpp"
@@ -202,7 +202,7 @@ int main(int argc, char *argv[])
    }
    else
    {
-      serial_mesh = new Mesh("../../../data/three-domains-navier.msh");
+      serial_mesh = new Mesh("../../../data/three-domains-navier-tet.e");
    }
 
    int sdim = serial_mesh->SpaceDimension();
@@ -725,10 +725,10 @@ int main(int argc, char *argv[])
 
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer for Heat Transfer... \033[0m" << std::endl;
-      
-   BidirectionalInterfaceTransfer finder_solid_to_cylinder_heat(*temperature_solid_gf, *temperature_cylinder_gf, solid_cylinder_interface_marker, TransferBackend::GSLIB);
-   BidirectionalInterfaceTransfer finder_fluid_to_cylinder_heat(*temperature_fluid_gf, *temperature_cylinder_gf, fluid_cylinder_interface_marker, TransferBackend::GSLIB);
-   BidirectionalInterfaceTransfer finder_fluid_to_solid_heat(*temperature_fluid_gf, *temperature_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+
+   BidirectionalInterfaceTransfer finder_solid_to_cylinder_heat(heat_fes_solid, heat_fes_cylinder, solid_cylinder_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_cylinder_heat(heat_fes_fluid, heat_fes_cylinder, fluid_cylinder_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_solid_heat(heat_fes_fluid, heat_fes_solid, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
@@ -789,7 +789,7 @@ int main(int argc, char *argv[])
    //               RF                //
    /////////////////////////////////////
 
-   BidirectionalInterfaceTransfer finder_fluid_to_solid_rf(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_solid_rf(rf_fes_fluid, rf_fes_solid, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Define QoI (current density) on the source meshes (cylinder, solid, fluid)
 
@@ -848,10 +848,10 @@ int main(int argc, char *argv[])
 
    chrono_assembly.Clear();
    chrono_assembly.Start();
-   RF_Solid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   RF_Solid.SetAssemblyLevel(RF_ctx.pa ? AssemblyLevel::PARTIAL : AssemblyLevel::LEGACY);
    RF_Solid.Setup();
 
-   RF_Fluid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   RF_Fluid.SetAssemblyLevel(RF_ctx.pa ? AssemblyLevel::PARTIAL : AssemblyLevel::LEGACY);
    RF_Fluid.Setup();
    chrono_assembly.Stop();
 

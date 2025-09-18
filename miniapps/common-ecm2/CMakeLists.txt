@@ -10,7 +10,6 @@
 # CONTRIBUTING.md for details.
 
 
-
 list(APPEND SRCS
   utils.cpp
   interface_transfer.cpp
@@ -38,8 +37,30 @@ if (CMAKE_CXX_STANDARD LESS 17)
     target_link_libraries(mfem-common-ecm2 stdc++fs)
 endif()
 
-add_mfem_miniapp(MeshUtils
-  MAIN MeshUtils.cpp
+# Add executable for Mesh Utilities
+add_mfem_miniapp(mesh-utils
+  MAIN mesh-utils.cpp
   ${MFEM_MINIAPPS_COMMON_HEADERS}
   LIBRARIES mfem-common mfem-common-ecm2)
 
+# Add tests for the interface transfer class
+add_mfem_miniapp(transfer2d
+  MAIN tests/transfer2d.cpp
+  ${MFEM_MINIAPPS_COMMON_HEADERS}
+  LIBRARIES mfem-common mfem-common-ecm2)
+
+add_mfem_miniapp(transfer3d
+  MAIN tests/transfer3d.cpp
+  ${MFEM_MINIAPPS_COMMON_HEADERS}
+  LIBRARIES mfem-common mfem-common-ecm2)
+
+# Copy mesh data files
+set(MESH_GF_FILES
+    multidomain2d-tri.e
+    multidomain2d-quad.e
+)
+add_custom_command(OUTPUT data_is_copied
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${MESH_GF_FILES} .
+  COMMAND ${CMAKE_COMMAND} -E touch data_is_copied
+  COMMENT "Copying common-fsi miniapps data files ...")
+add_custom_target(copy_miniapps_common_fsi_data DEPENDS data_is_copied)

@@ -7,12 +7,13 @@
 //
 // Sample run:
 // 1. Tetrahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 1.0 -alpha '1e3 1e-3'
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -tet --relaxation-parameter 0.8 -alpha '1e3 1e-3'
 // 2. Hexahedral mesh
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 1.0 -alpha '1e3 1e-3'
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex --relaxation-parameter 0.8 -alpha '1e3 1e-3'
 // 3. Hexahedral mesh with partial assembly
-//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 1.0 -alpha '1e3 1e-3'
-
+//    mpirun -np 4 ./multidomain-two-domains-rf-osm -o 3 -hex -pa --relaxation-parameter 0.8 -alpha '1e3 1e-3'
+//
+// TODO: Check what's the bottleneck in high order setup
 
 // MFEM library
 #include "mfem.hpp"
@@ -469,7 +470,7 @@ int main(int argc, char *argv[])
    if (Mpi::Root())
       mfem::out << "\033[34m\nSetting up interface transfer... \033[0m" << std::endl;
 
-   BidirectionalInterfaceTransfer finder_fluid_to_solid(*phi_fluid_gf, *phi_solid_gf, fluid_solid_interface_marker, TransferBackend::GSLIB);
+   BidirectionalInterfaceTransfer finder_fluid_to_solid(fes_fluid, fes_solid, fluid_solid_interface_marker, TransferBackend::GSLIB);
 
    // Extract the indices of elements at the interface and convert them to markers
    // Useful to restrict the computation of the L2 error to the interface
@@ -517,10 +518,10 @@ int main(int argc, char *argv[])
 
    StopWatch chrono_assembly;
    chrono_assembly.Start();
-   RF_Solid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   RF_Solid.SetAssemblyLevel(RF_ctx.pa ? AssemblyLevel::PARTIAL : AssemblyLevel::LEGACY);
    RF_Solid.Setup();
 
-   RF_Fluid.SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   RF_Fluid.SetAssemblyLevel(RF_ctx.pa ? AssemblyLevel::PARTIAL : AssemblyLevel::LEGACY);
    RF_Fluid.Setup();
    chrono_assembly.Stop();
    real_t assembly_time = chrono_assembly.RealTime();
