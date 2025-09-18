@@ -1178,6 +1178,25 @@ int main(int argc, char *argv[])
       {
       }
 
+
+      ////////////////////////////////////////////////////
+      //           Solve CELL DEATH     (tn,tn+1/2)     //
+      ////////////////////////////////////////////////////
+
+      {
+         chrono.Clear();
+         chrono.Start();
+         if (Mpi::Root())
+            mfem::out << "\033[32mSolving CellDeath problem on solid ... \033[0m";
+
+         CellDeath_Solid->Solve(t, Sim_ctx.dt/2);
+
+         if (Mpi::Root())
+            mfem::out << "\033[32mdone.\033[0m" << std::endl;
+         chrono.Stop();
+         t_solve_celldeath = chrono.RealTime();
+      }
+
       /////////////////////////////////////////
       //         Solve HEAT TRANSFER         //
       /////////////////////////////////////////
@@ -1417,9 +1436,9 @@ int main(int argc, char *argv[])
          }
       }
 
-      /////////////////////////////////////////
-      //           Solve CELL DEATH          //
-      /////////////////////////////////////////
+      //////////////////////////////////////////////////////
+      //           Solve CELL DEATH     (tn+1/2,tn+1)     //
+      //////////////////////////////////////////////////////
 
       {
          chrono.Clear();
@@ -1427,7 +1446,7 @@ int main(int argc, char *argv[])
          if (Mpi::Root())
             mfem::out << "\033[32mSolving CellDeath problem on solid ... \033[0m";
 
-         CellDeath_Solid->Solve(t, Sim_ctx.dt);
+         CellDeath_Solid->Solve(t+Sim_ctx.dt/2, Sim_ctx.dt/2);
 
          if (Mpi::Root())
             mfem::out << "\033[32mdone.\033[0m" << std::endl;
