@@ -49,8 +49,8 @@ namespace mfem
             return stress;
          }
 
-         real_t nu = 0.3; // Poisson's ratio
-         real_t E = 1.0e6;  // Young's modulus
+         real_t nu; // Poisson's ratio
+         real_t E;  // Young's modulus
       };
 
       // Saint-Venant Kirchhoff
@@ -73,8 +73,8 @@ namespace mfem
             return (I + dudX) * stress;
          }
 
-         real_t nu = 0.3; // Poisson's ratio
-         real_t E = 1.0e6;  // Young's modulus
+         real_t nu; // Poisson's ratio
+         real_t E;  // Young's modulus
       };
 
 
@@ -95,8 +95,8 @@ namespace mfem
             return mu * F + (kappa * logJ - mu) * inv(transpose(F));
          }
 
-         real_t kappa = 1.0e6;  // Bulk modulus
-         real_t mu = 1.0e3;     // Shear modulus
+         real_t kappa;  // Bulk modulus
+         real_t mu;     // Shear modulus
       };
 
       // Mooney-Rivlin material with two material constants
@@ -113,17 +113,20 @@ namespace mfem
             auto J = det(F);
             auto Cinv = inv(C);
 
-            // Mooney-Rivlin: W = c1(I1-3) + c2(I2-3) + bulk_term
+            // Mooney-Rivlin: W = c1(I1-3) + c2(I2-3) + (kappa/2)(ln(J))^2
             const real_t I1 = tr(C);
             const real_t I2 = 0.5 * (I1 * I1 - tr(C * C));
 
-            auto S = 2.0 * c1 * I + 2.0 * c2 * (I1 * I - C) + kappa * (J - 1) * J * Cinv;
+            // Second Piola-Kirchhoff stress
+            auto S = 2.0 * c1 * I + 2.0 * c2 * (I1 * I - C) + kappa * log(J) * Cinv;
+            
+            // Convert to first Piola-Kirchhoff stress
             return F * S;
          }
 
-         real_t kappa = 1e6; 
-         real_t c1 = 0.8; // c1 = c1_ratio * mu
-         real_t c2 = 0.2; // c2 = c2_ratio * mu
+         real_t kappa; 
+         real_t c1; // First Mooney-Rivlin parameter
+         real_t c2; // Second Mooney-Rivlin parameter
       };
 
       

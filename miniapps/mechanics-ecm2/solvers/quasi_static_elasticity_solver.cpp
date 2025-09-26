@@ -5,19 +5,39 @@ using namespace mfem::elasticity_ecm2;
 
 template <int dim>
 ElasticitySolver<dim>::ElasticitySolver(ParMesh *pmesh_, int order, bool verbose_)
-    : op(std::make_unique<ElasticityOperator<dim>>(pmesh_, order, verbose_))
 {
-   zero = std::make_unique<Vector>(op->GetFESpace()->GetTrueVSize());
-   U = std::make_unique<Vector>(op->GetFESpace()->GetTrueVSize());
-   *zero = 0.0;
+
+   // Create the finite element space and set height/width of Operator
+   fec = new H1_FECollection(order, dim);
+   fes = new ParFiniteElementSpace(pmesh_, fec, dim);
+
+   // Create the operator
+   op = std::make_unique<ElasticityOperator<dim>>(fes, verbose_);
+
+   // Initialize gfs
+   u_gf.SetSpace(fes);
+   u_gf = 0.0;
+
+   //zero = std::make_unique<Vector>(fes->GetTrueVSize());
+   U = std::make_unique<Vector>(fes->GetTrueVSize());
+   //*zero = 0.0;
    *U = 0.0;
+}
+
+
+template <int dim>ElasticitySolver<dim>::~ElasticitySolver()
+{
+   delete fec;
+   fec = nullptr;
+   delete fes;
+   fes = nullptr;
 }
 
 template <int dim>
 HYPRE_BigInt
 ElasticitySolver<dim>::GetProblemSize()
 {
-   return op->GetFESpace()->GlobalTrueVSize();
+   return fes->GlobalTrueVSize();
 }
 
 template <int dim>
@@ -31,25 +51,23 @@ void ElasticitySolver<dim>::Setup()
    //j_prec->SetOperator(*op); // Should be called already inside the NewtonSolver-->GMRESolver
 
    j_solver = std::make_unique<GMRESSolver>(MPI_COMM_WORLD);
+   j_solver->iterative_mode = false;
    j_solver->SetAbsTol(0.0);
    j_solver->SetRelTol(1e-4);
    // j_solver->SetKDim(500);
    j_solver->SetMaxIter(500);
-   j_solver->SetPrintLevel(0);
+   j_solver->SetPrintLevel(2);
    j_solver->SetPreconditioner(*j_prec);
 
    nonlinear_solver = std::make_unique<NewtonSolver>(MPI_COMM_WORLD);
+   nonlinear_solver->iterative_mode = true;
    nonlinear_solver->SetOperator(*op);
-#ifdef MFEM_USE_SINGLE
-   nonlinear_solver->SetRelTol(1e-4);
-#elif defined MFEM_USE_DOUBLE
+   nonlinear_solver->SetAbsTol(0.0);
    nonlinear_solver->SetRelTol(1e-6);
-#else
-   MFEM_ABORT("Floating point type undefined");
-#endif
-   nonlinear_solver->SetMaxIter(50);
+   nonlinear_solver->SetMaxIter(500);
    nonlinear_solver->SetSolver(*j_solver);
    nonlinear_solver->SetPrintLevel(1);
+   //nonlinear_solver->SetAdaptiveLinRtol(2, 0.5, 0.9);
 }
 
 
@@ -58,11 +76,22 @@ void ElasticitySolver<dim>::Solve()
 {
    // Apply bcs to displacement vector, and update the operator (re-assemble the rhs)
    op->Update();
-   op->ProjectEssentialBCs(*U);
 
+   for (auto &prescribed_disp : op->prescribed_displacements)
+   {
+      u_gf.ProjectBdrCoefficient(*prescribed_disp.coeff, prescribed_disp.attr);
+   }
+   u_gf.GetTrueDofs(*U);
+   U->SetSubVector(op->fixed_tdof_list, 0.0);
+      
    // Solve F(x) = 0 --> F(x) = H(x) - b = 0
-   nonlinear_solver->Mult(*zero, *U);
+   //nonlinear_solver->Mult(*zero, *U);
+   Vector zero;
+   nonlinear_solver->Mult(zero, *U);
+   MFEM_ASSERT(nonlinear_solver->GetConverged(), "Nonlinear solver did not converge");
 
+   // Update the displacement grid function
+   u_gf.SetFromTrueDofs(*U);
 }
 
 // Expose the interface for adding bcs to the operator

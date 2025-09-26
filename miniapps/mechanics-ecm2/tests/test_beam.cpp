@@ -23,7 +23,17 @@ using namespace std;
 using namespace mfem;
 using namespace mfem::elasticity_ecm2;
 
+
+enum class ProblemType : int
+{
+  PrescribedDisplacement = 0,
+  PrescribedTraction = 1,
+  BodyForce = 2
+};
+
 void prescribed_displacement_fun(const Vector &x, real_t time, Vector &v);
+void prescribed_load_fun(const Vector &x, real_t time, Vector &v);
+void body_force_fun(const Vector &x, real_t time, Vector &v);
 
 int main(int argc, char *argv[])
 {
@@ -38,8 +48,12 @@ int main(int argc, char *argv[])
    int num_procs = Mpi::WorldSize();
    int myid = Mpi::WorldRank();
 
+   const char *mesh_file = "../../data/beam-hex.mesh";
+
    int order = 1;
    int material_type = 0; // 0: linear elastic, 1: Saint-Venant-Kirchoff, 2: Neo-Hookean, 3: Mooney-Rivlin
+   ProblemType problem_type = ProblemType::PrescribedDisplacement;
+
    //const char *device_config = "cpu";
    const char *outfolder = "./Output/TestBeam";
    int serial_refinement_levels = 0;
@@ -52,9 +66,14 @@ int main(int argc, char *argv[])
    OptionsParser args(argc, argv);
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
+   args.AddOption(&mesh_file, "-m", "--mesh",
+                  "Mesh file to use.");
    args.AddOption(&material_type, "-mt", "--material-type",
                   "Material type: 0 - linear elastic, 1 - Saint-Venant-Kirchoff, "
                   "2 - Neo-Hookean, 3 - Mooney-Rivlin.");
+   args.AddOption((int *)&problem_type, "-pt", "--problem-type",
+                  "Problem type: 0 - prescribed displacement, "
+                  "1 - prescribed traction, 2 - body force.");
    //args.AddOption(&device_config, "-d", "--device",
    //               "Device configuration string, see Device::Configure().");
    args.AddOption(&serial_refinement_levels, "-rs", "--ref-serial",
@@ -77,8 +96,7 @@ int main(int argc, char *argv[])
    ///////////////////////////////////////////////////////////////////////////////////////////////
 
 
-   auto mesh =
-       Mesh::MakeCartesian3D(8, 2, 2, Element::HEXAHEDRON, 8.0, 1.0, 1.0); 
+   auto mesh = Mesh(mesh_file, 1, 1);
    mesh.EnsureNodes();
 
    for (int l = 0; l < serial_refinement_levels; l++)
@@ -107,49 +125,68 @@ int main(int argc, char *argv[])
    // Define all essential boundaries. In this specific example, this includes
    // all fixed and statically displaced degrees of freedom on mesh entities in
    // the defined attributes.
+   // Boundaries: 0 = beam left side, 1 = beam right side, 2 = beam lateral
    Array<int> fixed_attr(pmesh.bdr_attributes.Max());
    fixed_attr = 0;
-   fixed_attr[4] = 1;
+   fixed_attr[1] = 1;
 
    Array<int> displaced_attr(pmesh.bdr_attributes.Max());
    displaced_attr = 0;
-   displaced_attr[2] = 1;
+   displaced_attr[0] = 1;
 
+   Array<int> domain_attr(pmesh.attributes.Max());
+   domain_attr = 1;
+
+   switch (problem_type)
+   {
+      case ProblemType::PrescribedDisplacement:
+         solver.AddPrescribedDisplacement(prescribed_displacement_fun, displaced_attr);
+         break;
+      case ProblemType::PrescribedTraction:
+         solver.AddBoundaryLoad(prescribed_load_fun, displaced_attr);
+         break;
+      case ProblemType::BodyForce:
+         solver.AddBodyForce(body_force_fun, domain_attr);
+         break;
+      default:
+         mfem_error("Unknown problem type");
+   }
+      
    solver.AddFixedConstraint(fixed_attr);
-   solver.AddPrescribedDisplacement(prescribed_displacement_fun, displaced_attr);
 
-// Material selection
+   // Material selection
+   // Parameters trying to match the hooke miniapp
    switch (material_type)
    {
    case 0: // Linear elastic
    {
-      real_t E = 1e6;  // Young's modulus
-      real_t nu = 0.3; // Poisson's ratio
+      real_t E = 2e4/150;  // Young's modulus  ~ 133.33
+      real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333 
       auto material = make_linear_elastic<3>(E, nu);
       solver.SetMaterial(material);
       break;
    }
    case 1: // Saint-Venant-Kirchoff
    {
-      real_t E = 1e6;  // Young's modulus
-      real_t nu = 0.3; // Poisson's ratio
+      real_t E = 2e4/150;  // Young's modulus  ~ 133.33
+      real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333
       auto material = make_saint_venant_kirchoff<3>(E, nu);
       solver.SetMaterial(material);
       break;
    }
    case 2: // Neo-Hookean
    {
-      real_t kappa = 5e5; // Bulk modulus
-      real_t c = 2e5;     // Shear parameter
+      real_t kappa = 13.07; // Bulk modulus (matches linear elastic K)
+      real_t c = 5.0;       // Shear parameter (matches linear elastic G)
       auto material = make_neo_hookean<3>(kappa, c);
       solver.SetMaterial(material);
       break;
    }
    case 3: // Mooney-Rivlin
-   {
-      real_t kappa = 5e5; // Bulk modulus
-      real_t c1 = 1.6e5;  // First Mooney-Rivlin parameter
-      real_t c2 = 4e4;    // Second Mooney-Rivlin parameter
+   { // NOTE: there's something wrong with this material either parameter or implementation
+      real_t kappa = 13.07; // Bulk modulus (matches Neo-Hookean)
+      real_t c1 = 5.0;      // First Mooney-Rivlin parameter
+      real_t c2 = 5.0;      // Second Mooney-Rivlin parameter (c1 + c2 = 10.0 = mu)
       auto material = make_mooney_rivlin<3>(kappa, c1, c2);
       solver.SetMaterial(material);
       break;
@@ -197,5 +234,18 @@ int main(int argc, char *argv[])
 void prescribed_displacement_fun(const Vector &x, real_t time, Vector &v)
 {
    v = 0.0;
-   v[0] = 1e-1; // constant displacement in x-direction
+   v[1] = -0.8; // constant displacement in y-direction
+}
+
+
+void prescribed_load_fun(const Vector &x, real_t time, Vector &v)
+{
+   v = 0.0;
+   v[1] = -1e-2; // constant load in y-direction
+}
+
+void body_force_fun(const Vector &x, real_t time, Vector &v)
+{
+   v = 0.0;
+   v[1] = -3e-3; // constant body force in y-direction
 }

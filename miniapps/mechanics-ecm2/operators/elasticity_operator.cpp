@@ -4,15 +4,12 @@ using namespace mfem;
 using namespace mfem::elasticity_ecm2;
 
 template <int dim>
-ElasticityOperator<dim>::ElasticityOperator(ParMesh *pmesh_, int order, bool verbose_)
-    : pmesh(pmesh_),
-      sdim(pmesh_->Dimension()),
+ElasticityOperator<dim>::ElasticityOperator(ParFiniteElementSpace *fes_, bool verbose_)
+    : fes(fes_),
+      pmesh(fes_->GetParMesh()),
+      sdim(pmesh->Dimension()),
       verbose(verbose_)
 {
-   // Create the finite element space and set height/width of Operator
-   fec = new H1_FECollection(order, dim);
-   fes = new ParFiniteElementSpace(pmesh_, fec, dim);
-
    fes_truevsize = fes->GetTrueVSize();
    this->height = fes_truevsize;
    this->width = fes_truevsize;
@@ -43,16 +40,6 @@ ElasticityOperator<dim>::ElasticityOperator(ParMesh *pmesh_, int order, bool ver
    // Initialize vectors
    B.SetSize(fes_truevsize);
    B = 0.0;
-
-   // Initialize gfs
-   u_gf.SetSpace(fes);
-   u_gf = 0.0;
-}
-
-template <int dim>
-ParFiniteElementSpace *ElasticityOperator<dim>::GetFESpace()
-{
-   return fes;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -378,19 +365,6 @@ void ElasticityOperator<dim>::Update()
    Fform->ParallelAssemble(B);
 }
 
-template <int dim>
-void ElasticityOperator<dim>::ProjectEssentialBCs(Vector &X) const
-{
-   // Enforce essential boundary conditions
-   u_gf = 0.0;
-   for (auto &prescribed_disp : prescribed_displacements)
-   {
-      u_gf.ProjectBdrCoefficient(*prescribed_disp.coeff, prescribed_disp.attr);
-   }
-   u_gf.GetTrueDofs(X);
-   X.SetSubVector(fixed_tdof_list, 0.0);
-}
-
 // --------------------------------------------------------------------------------- //
 //// ----- Mult() and GetGradient() methods -----
 // --------------------------------------------------------------------------------- //
@@ -399,6 +373,7 @@ template <int dim>
 void ElasticityOperator<dim>::Mult(const Vector &U, Vector &Y) const
 {
    // residual->SetParameters({mesh_nodes});
+   // Do we need to update this if we do pseudo-timestepping?
 
    // Compute the residual R(U) = K(U) - F
    residual->Mult(U, Y);
@@ -415,15 +390,6 @@ Operator& ElasticityOperator<dim>::GetGradient(const Vector &U) const
    // Update the cached state and create/update the Jacobian operator
    jacobian_op = std::make_unique<ElasticityJacobianOperator<dim>>(this, U);
    return *jacobian_op;
-}
-
-template <int dim>
-ElasticityOperator<dim>::~ElasticityOperator()
-{
-   delete fec;
-   fec = nullptr;
-   delete fes;
-   fes = nullptr;
 }
 
 

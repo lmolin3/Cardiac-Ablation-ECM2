@@ -27,6 +27,8 @@ namespace mfem
           */
          ElasticitySolver(ParMesh *pmesh_, int order, bool verbose_ = true);
 
+         ~ElasticitySolver();
+
          /// Setup the underlying solver with the operator.
          void Setup();
          
@@ -40,10 +42,10 @@ namespace mfem
          void Solve();
 
          /// Get the FE space used by the operator.
-         ParFiniteElementSpace *GetFESpace() { return op->GetFESpace(); }
+         ParFiniteElementSpace *GetFESpace() { return fes; }
 
          /// Get the displacement grid function
-         ParGridFunction *GetDisplacementGridFunction() { return &(op->u_gf); }
+         ParGridFunction *GetDisplacementGridFunction() { return &u_gf; }
 
          HYPRE_BigInt GetProblemSize();
 
@@ -67,6 +69,14 @@ namespace mfem
          void AddBodyForce(VecFuncT func, int attr); 
       
       private:
+
+         ParMesh *pmesh;                                                //< NOT OWNED
+
+         FiniteElementCollection *fec = nullptr;                        //< OWNED
+         ParFiniteElementSpace *fes = nullptr;                          //< OWNED
+
+         mutable ParGridFunction u_gf;   ///< Grid function for displacement field.
+
          std::unique_ptr<ElasticityOperator<dim>> op;                   //< OWNED
 
          std::unique_ptr<NewtonSolver> nonlinear_solver;                //< OWNED

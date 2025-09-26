@@ -86,21 +86,10 @@ namespace mfem
       public:
          /**
           * @brief Construct a new ElasticityOperator.
-          * @param mesh The parallel mesh to use.
-          * @param polynomial_order The polynomial order of the finite element basis.
+          * @param fes_ The ParFiniteElementSpace to use (not owned).
+          * @param verbose_ Verbosity flag for debugging (default false).
           */
-         ElasticityOperator(ParMesh *pmesh_, int order, bool verbose_ = true);
-
-         /**
-          * @brief Get the parallel finite element space used by the solver.
-          * @return Reference to the ParFiniteElementSpace.
-          */
-         ParFiniteElementSpace *GetFESpace();
-
-         /**
-          * @brief Destructor.
-          */
-         virtual ~ElasticityOperator();
+         ElasticityOperator(ParFiniteElementSpace *fes_, bool verbose_ = true);
 
          //////////////////////////////////////////////////////
          //---/ BC interface /-------------------------------//
@@ -211,18 +200,19 @@ namespace mfem
           */
          const Array<int>& GetEssTdofList() const { return ess_tdof_list; }
 
+         /// Get the FE space used by the operator.
+         ParFiniteElementSpace *GetFESpace() { return fes; }
+
       private:
          ParMesh *pmesh; ///< Reference to the parallel mesh.     // NOT OWNED
          const int sdim;  ///< Spatial dimension.
+         int fes_truevsize;
+
+         ParFiniteElementSpace *fes;               ///< NOT OWNED
 
          bool setup = false;   ///< Flag indicating if the system is set up.
          bool verbose = false; ///< Verbosity flag for debugging.
 
-         FiniteElementCollection *fec; ///< Finite element collection.   // OWNED
-         ParFiniteElementSpace *fes;   ///< Parallel finite element space. // OWNED
-         int fes_truevsize;
-
-         mutable ParGridFunction u_gf;   ///< Grid function for displacement field.
          mutable Vector B;       ///< rhs t-vector.
 
          // Linear form for rhs and bcs

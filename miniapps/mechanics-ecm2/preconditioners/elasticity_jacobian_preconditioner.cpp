@@ -28,8 +28,6 @@ void ElasticityJacobianPreconditioner<dim>::SetOperator(const Operator &op)
 
    const Array<int>& ess_tdof_list = elasticity_jacobian->elasticity->ess_tdof_list; 
 
-   //NOTE: this will fail because the Jacobian operator is not assembled
-   //      should be implemented in this PR https://github.com/mfem/mfem/pull/5022
    elasticity_jacobian->jacobian->Assemble(A); 
    auto Ae = A->EliminateRowsCols(ess_tdof_list);
    delete Ae;
@@ -40,7 +38,16 @@ void ElasticityJacobianPreconditioner<dim>::SetOperator(const Operator &op)
    amg = std::make_unique<HypreBoomerAMG>();
    amg->SetOperator(*A);
    amg->SetPrintLevel(0);
-   amg->SetSystemsOptions(mesh_nodes->ParFESpace()->GetMesh()->Dimension(), true);
+
+   bool amg_elast = false;
+   if (amg_elast)
+   {
+      amg->SetElasticityOptions(elasticity_jacobian->elasticity->fes);
+   }
+   else
+   {
+      amg->SetSystemsOptions(mesh_nodes->ParFESpace()->GetMesh()->Dimension(), true);
+   }
 }
 
 template <int dim>
