@@ -188,20 +188,20 @@ int main(int argc, char *argv[])
    case 1: // Saint-Venant-Kirchoff
    {
       real_t E = 2e4/150;  // Young's modulus  ~ 133.33
-      real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333
-      
-      // Calculate proper material parameters to match linear elastic behavior
-      real_t kappa = E / (3.0 * (1.0 - 2.0*nu)); // Bulk modulus ~ 200.0
-      real_t mu = E / (2.0 * (1.0 + nu));         // Shear modulus ~ 50.0
-      real_t c = mu / 2.0;   
+      real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333 
       auto material = make_saint_venant_kirchoff<3>(E, nu);
       solver.SetMaterial(material);
       break;
    }
    case 2: // Neo-Hookean
    {
-      real_t kappa = 13.07; // Bulk modulus (matches linear elastic K)
-      real_t c = 5.0;       // Shear parameter (matches linear elastic G)
+      real_t E = 2e4/150;  // Young's modulus  ~ 133.33
+      real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333
+      
+      // Calculate proper material parameters to match linear elastic behavior
+      real_t kappa = E / (3.0 * (1.0 - 2.0*nu)); // Bulk modulus ~ 200.0
+      real_t mu = E / (2.0 * (1.0 + nu));         // Shear modulus ~ 50.0
+      real_t c = mu / 2.0;   
       auto material = make_neo_hookean<3>(kappa, c);
       solver.SetMaterial(material);
       break;
