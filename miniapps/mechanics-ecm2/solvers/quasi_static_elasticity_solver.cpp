@@ -8,6 +8,7 @@ ElasticitySolver<dim>::ElasticitySolver(ParMesh *pmesh_, int order, bool verbose
 {
 
    // Create the finite element space and set height/width of Operator
+   comm = pmesh_->GetComm();
    fec = new H1_FECollection(order, dim);
    fes = new ParFiniteElementSpace(pmesh_, fec, dim);
 
@@ -38,43 +39,6 @@ HYPRE_BigInt
 ElasticitySolver<dim>::GetProblemSize()
 {
    return fes->GlobalTrueVSize();
-}
-
-template <int dim>
-void ElasticitySolver<dim>::Setup(int k_grad_update, PreconditionerType prec_type)
-{
-   // Setup the operator
-   op->Setup();
-
-   // Setup the nonlinear solver and jacobian solver
-   switch (prec_type)
-   {
-      case PreconditionerType::AMG:
-            j_prec = std::make_unique<AMGElasticityPreconditioner<dim>>();
-         break;
-      default:
-         MFEM_ABORT("Unknown PreconditionerType");
-   }
-   //j_prec->SetOperator(*op); // Should be called already inside the NewtonSolver-->GMRESolver
-
-   j_solver = std::make_unique<GMRESSolver>(MPI_COMM_WORLD);
-   j_solver->iterative_mode = false;
-   j_solver->SetAbsTol(0.0);
-   j_solver->SetRelTol(1e-4);
-   // j_solver->SetKDim(500);
-   j_solver->SetMaxIter(500);
-   j_solver->SetPrintLevel(2);
-   j_solver->SetPreconditioner(*j_prec);
-
-   nonlinear_solver = std::make_unique<FrozenNewtonSolver>(MPI_COMM_WORLD, k_grad_update);
-   nonlinear_solver->iterative_mode = true;
-   nonlinear_solver->SetOperator(*op);
-   nonlinear_solver->SetAbsTol(0.0);
-   nonlinear_solver->SetRelTol(1e-6);
-   nonlinear_solver->SetMaxIter(500);
-   nonlinear_solver->SetSolver(*j_solver);
-   nonlinear_solver->SetPrintLevel(1);
-   //nonlinear_solver->SetAdaptiveLinRtol(2, 0.5, 0.9);
 }
 
 
@@ -170,7 +134,7 @@ void ElasticitySolver<dim>::AddBoundaryLoad(VecFuncT func, int attr, real_t scal
 /**
  * @brief Set the body force (volumetric load) on specified domain attributes.
  * API allows setting the BodyForce:
- * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, double t, Vector &u))
+ * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, real_t t, Vector &u))
  * 2. Specifying single domain attribute or an array of attributes.
  */
 template <int dim>
@@ -203,5 +167,6 @@ namespace mfem {
 namespace elasticity_ecm2 {
 template class ElasticitySolver<2>;
 template class ElasticitySolver<3>;
+
 } // namespace elasticity_ecm2
 } // namespace mfem

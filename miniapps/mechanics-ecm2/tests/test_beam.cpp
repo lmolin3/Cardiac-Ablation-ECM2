@@ -26,7 +26,7 @@
 // 2. Neo-Hookean material, prescribed displacement, full Jacobian update
 //    mpirun -np 4 ./test_beam -o 2 -rs 1 -mt 2 -pt 0 -of ./Output/TestBeam
 // 3. Linear elastic material, prescribed displacement, reduced Jacobian update (every 10 iters)
-//    mpirun -np 4 ./test_beam -o 2 -rs 1 -mt 0 -pt 0 -kgu 10 -of ./Output/TestBeam
+//    mpirun -np 4 ./test_beam -o 2 -rs 1 -mt 0 -pt 0 -kju 10 -of ./Output/TestBeam
 
 #include "../materials.hpp"
 #include "../solvers/quasi_static_elasticity_solver.hpp"
@@ -66,6 +66,7 @@ int main(int argc, char *argv[])
    int material_type = 0; // 0: linear elastic, 1: Saint-Venant-Kirchoff, 2: Neo-Hookean, 3: Mooney-Rivlin
    ProblemType problem_type = ProblemType::PrescribedDisplacement;
    int k_grad_update = 1; // Gradient update frequency for FrozenNewtonSolver, k=1 corresponds to standard NewtonSolver
+   PreconditionerType prec_type = PreconditionerType::AMG;
 
    //const char *device_config = "cpu";
    const char *outfolder = "./Output/TestBeam";
@@ -87,9 +88,11 @@ int main(int argc, char *argv[])
    args.AddOption((int *)&problem_type, "-pt", "--problem-type",
                   "Problem type: 0 - prescribed displacement, "
                   "1 - prescribed traction, 2 - body force.");
-   args.AddOption(&k_grad_update, "-kgu", "--k-grad-update",
+   args.AddOption(&k_grad_update, "-kju", "--k-jacobian-update",
                   "Gradient update frequency for the FrozenNewtonSolver. "
                   "k=1 corresponds to the standard NewtonSolver.");
+   args.AddOption((int *)&prec_type, "-jpc", "--jacobian-preconditioner",
+                  "Jacobian preconditioner type: 0 - AMG, 1 - Nested.");
    //args.AddOption(&device_config, "-d", "--device",
    //               "Device configuration string, see Device::Configure().");
    args.AddOption(&serial_refinement_levels, "-rs", "--ref-serial",
@@ -216,7 +219,25 @@ int main(int argc, char *argv[])
       mfem_error("Unknown material type");
    }
 
-   solver.Setup(k_grad_update);
+   switch (prec_type)
+   {
+      case PreconditionerType::AMG:
+         {
+            bool amg_elast = false;
+            solver.Setup<AMG>(k_grad_update, amg_elast);
+         }
+         break;
+      case PreconditionerType::NESTED:
+         {
+            int inner_max_iter = 10;
+            real_t inner_rel_tol = 1e-3;
+            solver.Setup<NESTED>(k_grad_update, inner_max_iter, inner_rel_tol);
+         }
+         break;
+
+      default:
+         mfem_error("Unknown preconditioner type");
+   }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Set up output

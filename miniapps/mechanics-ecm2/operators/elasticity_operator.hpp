@@ -28,6 +28,8 @@ namespace mfem
       template<int dim> class ElasticitySolver;
       template<int dim> class ElasticityJacobianOperator;
       template<int dim> class ElasticityJacobianPreconditioner;
+      template<int dim> class AMGElasticityPreconditioner;
+      template<int dim> class NestedElasticityPreconditioner;
 
       // CRTP Base class for QFunction
       template <typename Derived, int dim>
@@ -83,6 +85,7 @@ namespace mfem
          friend class ElasticityJacobianOperator<dim>; 
          //friend class ElasticityJacobianPreconditioner<dim>;
          friend class AMGElasticityPreconditioner<dim>;
+         friend class NestedElasticityPreconditioner<dim>;
       public:
          /**
           * @brief Construct a new ElasticityOperator.
@@ -106,7 +109,7 @@ namespace mfem
          /**
           * @brief Set the prescribed an analytic (time-dependent) displacement (Dirichlet BC) on specified boundary attributes.
           * API allows setting the prescribed displacement:
-          * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, double t, Vector &u))
+          * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, real_t t, Vector &u))
           * 2. Specifying single boundary attribute or an array of attributes.
           * 3. Velocity and acceleration should also be specified.
           */
@@ -118,7 +121,7 @@ namespace mfem
          /**
           * @brief Set the BoundaryLoad (Traction BC) on specified boundary attributes.
           * API allows setting the BoundaryLoad:
-          * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, double t, Vector &u))
+          * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, real_t t, Vector &u))
           * 2. Specifying single boundary attribute or an array of attributes.
           */
          void AddBoundaryLoad(VectorCoefficient *coeff, Array<int> &attr, real_t scaling = 1.0, bool own = true);
@@ -128,7 +131,7 @@ namespace mfem
          /**
           * @brief Set the body force (volumetric load) on specified domain attributes.
           * API allows setting the BodyForce:
-          * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, double t, Vector &u))
+          * 1. Using either VectorCoefficient/VecFuncT (alias for void(const Vector &x, real_t t, Vector &u))
           * 2. Specifying single domain attribute or an array of attributes.
           */
          void AddBodyForce(VectorCoefficient *coeff, Array<int> &attrs, real_t scaling = 1.0, bool own = true);

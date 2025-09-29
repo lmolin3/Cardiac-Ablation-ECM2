@@ -20,6 +20,8 @@ namespace mfem
       class ElasticityJacobianPreconditioner;
       template <int dim>
       class AMGElasticityPreconditioner;
+      template <int dim>
+      class NestedElasticityPreconditioner;
 
       template <int dim>
       class ElasticityJacobianOperator : public Operator
@@ -27,6 +29,7 @@ namespace mfem
 
          //friend class ElasticityJacobianPreconditioner<dim>; // Allow Preconditioner to access private members
          friend class AMGElasticityPreconditioner<dim>;
+         friend class NestedElasticityPreconditioner<dim>;
       public:
          ElasticityJacobianOperator(const ElasticityOperator<dim> *elasticity, const Vector &x);
 

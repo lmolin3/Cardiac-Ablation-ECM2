@@ -33,7 +33,53 @@ namespace mfem
          /// @param k_grad_update The gradient update frequency for the FrozenNewtonSolver.
          /// k_grad_update = 1 corresponds to the standard NewtonSolver.
          /// @param prec_type The type of preconditioner to use for the Jacobian solver (default AMG).
-         void Setup(int k_grad_update, PreconditionerType prec_type = PreconditionerType::AMG);
+         /// @param Args Additional arguments to pass to the preconditioner.
+         template <typename PrecTag, typename... Args>
+         void Setup(int k_grad_update, Args &&...args)
+         {
+            op->Setup();
+
+            if constexpr (std::is_same_v<PrecTag, AMG>)
+            {
+               j_prec = std::make_unique<AMGElasticityPreconditioner<dim>>(std::forward<Args>(args)...);
+            }
+            else if constexpr (std::is_same_v<PrecTag, NESTED>)
+            {
+               j_prec = std::make_unique<NestedElasticityPreconditioner<dim>>(comm, std::forward<Args>(args)...);
+            }
+            else
+            {
+               MFEM_ABORT("Unknown PreconditionerType in ElasticitySolver::Setup");
+            }
+
+            // j_prec->SetOperator(*op); // Should be called already inside the NewtonSolver-->GMRESolver
+
+            if constexpr (std::is_same_v<PrecTag, AMG>)
+               j_solver = std::make_unique<GMRESSolver>(comm);
+            else if constexpr (std::is_same_v<PrecTag, NESTED>)
+               j_solver = std::make_unique<FGMRESSolver>(comm);
+            else
+            {
+               MFEM_ABORT("Unknown PreconditionerType in ElasticitySolver::Setup");
+            }
+            j_solver->iterative_mode = false;
+            j_solver->SetAbsTol(0.0);
+            j_solver->SetRelTol(1e-4);
+            // j_solver->SetKDim(500);
+            j_solver->SetMaxIter(500);
+            j_solver->SetPrintLevel(2);
+            j_solver->SetPreconditioner(*j_prec);
+
+            nonlinear_solver = std::make_unique<FrozenNewtonSolver>(comm, k_grad_update);
+            nonlinear_solver->iterative_mode = true;
+            nonlinear_solver->SetOperator(*op);
+            nonlinear_solver->SetAbsTol(0.0);
+            nonlinear_solver->SetRelTol(1e-6);
+            nonlinear_solver->SetMaxIter(500);
+            nonlinear_solver->SetSolver(*j_solver);
+            nonlinear_solver->SetPrintLevel(1);
+            // nonlinear_solver->SetAdaptiveLinRtol(2, 0.5, 0.9);
+         }
 
          /// Set the material model for the elasticity operator.
          void SetMaterial(const MaterialVariant<dim> &material)
@@ -73,6 +119,7 @@ namespace mfem
       
       private:
 
+         MPI_Comm comm;                                                //< NOT OWNED
          ParMesh *pmesh;                                                //< NOT OWNED
 
          FiniteElementCollection *fec = nullptr;                        //< OWNED
