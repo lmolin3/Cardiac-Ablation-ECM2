@@ -186,6 +186,11 @@ int main(int argc, char *argv[])
    {
       real_t E = 2e4/150;  // Young's modulus  ~ 133.33
       real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333
+      
+      // Calculate proper material parameters to match linear elastic behavior
+      real_t kappa = E / (3.0 * (1.0 - 2.0*nu)); // Bulk modulus ~ 200.0
+      real_t mu = E / (2.0 * (1.0 + nu));         // Shear modulus ~ 50.0
+      real_t c = mu / 2.0;   
       auto material = make_saint_venant_kirchoff<3>(E, nu);
       solver.SetMaterial(material);
       break;

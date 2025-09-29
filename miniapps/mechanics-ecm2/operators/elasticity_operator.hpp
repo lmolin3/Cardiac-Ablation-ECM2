@@ -81,8 +81,8 @@ namespace mfem
 
          friend class ElasticitySolver<dim>; // Allow these classes to access private members
          friend class ElasticityJacobianOperator<dim>; 
-         friend class ElasticityJacobianPreconditioner<dim>;
-
+         //friend class ElasticityJacobianPreconditioner<dim>;
+         friend class AMGElasticityPreconditioner<dim>;
       public:
          /**
           * @brief Construct a new ElasticityOperator.

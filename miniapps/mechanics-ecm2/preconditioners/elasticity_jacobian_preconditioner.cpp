@@ -5,20 +5,20 @@ using namespace mfem;
 using namespace mfem::elasticity_ecm2;
 
 template <int dim>
-ElasticityJacobianPreconditioner<dim>::ElasticityJacobianPreconditioner() 
-   : Solver() 
+AMGElasticityPreconditioner<dim>::AMGElasticityPreconditioner() 
+   : ElasticityJacobianPreconditioner<dim>() 
 {
 }
 
 // destructor
 template <int dim>
-ElasticityJacobianPreconditioner<dim>::~ElasticityJacobianPreconditioner()
+AMGElasticityPreconditioner<dim>::~AMGElasticityPreconditioner()
 {
    delete A; A = nullptr;
 }
 
 template <int dim>
-void ElasticityJacobianPreconditioner<dim>::SetOperator(const Operator &op)
+void AMGElasticityPreconditioner<dim>::SetOperator(const Operator &op)
 {
    this->height = op.Height();
    this->width = op.Width();
@@ -51,7 +51,7 @@ void ElasticityJacobianPreconditioner<dim>::SetOperator(const Operator &op)
 }
 
 template <int dim>
-void ElasticityJacobianPreconditioner<dim>::Mult(const Vector &x, Vector &y) const
+void AMGElasticityPreconditioner<dim>::Mult(const Vector &x, Vector &y) const
 {
    amg->Mult(x, y);
 }
@@ -60,7 +60,9 @@ void ElasticityJacobianPreconditioner<dim>::Mult(const Vector &x, Vector &y) con
 // Explicit template instantiation
 namespace mfem {
 namespace elasticity_ecm2 {
-template class ElasticityJacobianPreconditioner<2>;
-template class ElasticityJacobianPreconditioner<3>;   
+//template class ElasticityJacobianPreconditioner<2>;
+//template class ElasticityJacobianPreconditioner<3>;
+template class AMGElasticityPreconditioner<2>;
+template class AMGElasticityPreconditioner<3>;   
 } // namespace elasticity_ecm2
 } // namespace mfem

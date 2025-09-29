@@ -32,7 +32,8 @@ namespace mfem
          /// Setup the underlying solver with the operator.
          /// @param k_grad_update The gradient update frequency for the FrozenNewtonSolver.
          /// k_grad_update = 1 corresponds to the standard NewtonSolver.
-         void Setup(int k_grad_update);
+         /// @param prec_type The type of preconditioner to use for the Jacobian solver (default AMG).
+         void Setup(int k_grad_update, PreconditionerType prec_type = PreconditionerType::AMG);
 
          /// Set the material model for the elasticity operator.
          void SetMaterial(const MaterialVariant<dim> &material)

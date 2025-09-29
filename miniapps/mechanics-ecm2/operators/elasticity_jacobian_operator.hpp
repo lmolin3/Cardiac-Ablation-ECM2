@@ -18,13 +18,15 @@ namespace mfem
       // Forward declaration of templated ElasticityJacobianPreconditioner
       template <int dim>
       class ElasticityJacobianPreconditioner;
+      template <int dim>
+      class AMGElasticityPreconditioner;
 
       template <int dim>
       class ElasticityJacobianOperator : public Operator
       {
 
-         friend class ElasticityJacobianPreconditioner<dim>; // Allow Preconditioner to access private members
-         
+         //friend class ElasticityJacobianPreconditioner<dim>; // Allow Preconditioner to access private members
+         friend class AMGElasticityPreconditioner<dim>;
       public:
          ElasticityJacobianOperator(const ElasticityOperator<dim> *elasticity, const Vector &x);
 

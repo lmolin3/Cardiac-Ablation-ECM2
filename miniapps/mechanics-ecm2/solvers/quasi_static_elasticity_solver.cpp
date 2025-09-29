@@ -41,13 +41,20 @@ ElasticitySolver<dim>::GetProblemSize()
 }
 
 template <int dim>
-void ElasticitySolver<dim>::Setup(int k_grad_update)
+void ElasticitySolver<dim>::Setup(int k_grad_update, PreconditionerType prec_type)
 {
    // Setup the operator
    op->Setup();
 
    // Setup the nonlinear solver and jacobian solver
-   j_prec = std::make_unique<ElasticityJacobianPreconditioner<dim>>();
+   switch (prec_type)
+   {
+      case PreconditionerType::AMG:
+            j_prec = std::make_unique<AMGElasticityPreconditioner<dim>>();
+         break;
+      default:
+         MFEM_ABORT("Unknown PreconditionerType");
+   }
    //j_prec->SetOperator(*op); // Should be called already inside the NewtonSolver-->GMRESolver
 
    j_solver = std::make_unique<GMRESSolver>(MPI_COMM_WORLD);
