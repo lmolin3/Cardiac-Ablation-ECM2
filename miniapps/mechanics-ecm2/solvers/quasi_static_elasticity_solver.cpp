@@ -41,7 +41,7 @@ ElasticitySolver<dim>::GetProblemSize()
 }
 
 template <int dim>
-void ElasticitySolver<dim>::Setup()
+void ElasticitySolver<dim>::Setup(int k_grad_update)
 {
    // Setup the operator
    op->Setup();
@@ -59,7 +59,7 @@ void ElasticitySolver<dim>::Setup()
    j_solver->SetPrintLevel(2);
    j_solver->SetPreconditioner(*j_prec);
 
-   nonlinear_solver = std::make_unique<NewtonSolver>(MPI_COMM_WORLD);
+   nonlinear_solver = std::make_unique<FrozenNewtonSolver>(MPI_COMM_WORLD, k_grad_update);
    nonlinear_solver->iterative_mode = true;
    nonlinear_solver->SetOperator(*op);
    nonlinear_solver->SetAbsTol(0.0);

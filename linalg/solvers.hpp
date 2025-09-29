@@ -782,6 +782,29 @@ public:
                            const real_t gamma = 1.0);
 };
 
+
+/** Frozen Newton method for solving F(x)=b for a given operator F.
+    Wrapper for NewtonSolver that only re-assembles the gradient every
+    k iterations. 
+ */
+class FrozenNewtonSolver : public NewtonSolver
+{
+protected:
+   int k = 1; // re-assemble gradient every k iterations
+   bool enable_grad_update = false; // enable updating the gradient
+   mutable bool update_grad = true;
+
+public:
+   FrozenNewtonSolver(int k_ = 1);
+
+#ifdef MFEM_USE_MPI
+   FrozenNewtonSolver(MPI_Comm comm_, int k_ = 1);
+#endif
+
+   // Overridden Mult method
+   void Mult(const Vector &b, Vector &x) const override;
+};
+
 /** L-BFGS method for solving F(x)=b for a given operator F, by minimizing
     the norm of F(x) - b. Requires only the action of the operator F. */
 class LBFGSSolver : public NewtonSolver

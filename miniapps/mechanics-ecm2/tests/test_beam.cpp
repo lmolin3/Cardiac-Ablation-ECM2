@@ -13,8 +13,20 @@
 //
 // This miniapp uses an elasticity operator that allows for a custom material,
 // defined through the DifferentiableOperator interface.
-// By default the NeoHookeanMaterial is used. 
+// Available materials include:
+//   - Linear elastic
+//   - Saint-Venant-Kirchoff
+//   - Neo-Hookean
+//   - Mooney-Rivlin
+// default: linear elastic
 //
+// Sample runs:
+// 1. Linear elastic material, prescribed displacement, full Jacobian update
+//    mpirun -np 4 ./test_beam -o 2 -rs 1 -mt 0 -pt 0 -of ./Output/TestBeam
+// 2. Neo-Hookean material, prescribed displacement, full Jacobian update
+//    mpirun -np 4 ./test_beam -o 2 -rs 1 -mt 2 -pt 0 -of ./Output/TestBeam
+// 3. Linear elastic material, prescribed displacement, reduced Jacobian update (every 10 iters)
+//    mpirun -np 4 ./test_beam -o 2 -rs 1 -mt 0 -pt 0 -kgu 10 -of ./Output/TestBeam
 
 #include "../materials.hpp"
 #include "../solvers/quasi_static_elasticity_solver.hpp"
@@ -53,6 +65,7 @@ int main(int argc, char *argv[])
    int order = 1;
    int material_type = 0; // 0: linear elastic, 1: Saint-Venant-Kirchoff, 2: Neo-Hookean, 3: Mooney-Rivlin
    ProblemType problem_type = ProblemType::PrescribedDisplacement;
+   int k_grad_update = 1; // Gradient update frequency for FrozenNewtonSolver, k=1 corresponds to standard NewtonSolver
 
    //const char *device_config = "cpu";
    const char *outfolder = "./Output/TestBeam";
@@ -74,6 +87,9 @@ int main(int argc, char *argv[])
    args.AddOption((int *)&problem_type, "-pt", "--problem-type",
                   "Problem type: 0 - prescribed displacement, "
                   "1 - prescribed traction, 2 - body force.");
+   args.AddOption(&k_grad_update, "-kgu", "--k-grad-update",
+                  "Gradient update frequency for the FrozenNewtonSolver. "
+                  "k=1 corresponds to the standard NewtonSolver.");
    //args.AddOption(&device_config, "-d", "--device",
    //               "Device configuration string, see Device::Configure().");
    args.AddOption(&serial_refinement_levels, "-rs", "--ref-serial",
@@ -195,7 +211,7 @@ int main(int argc, char *argv[])
       mfem_error("Unknown material type");
    }
 
-   solver.Setup();
+   solver.Setup(k_grad_update);
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Set up output
