@@ -78,8 +78,8 @@ namespace mfem
       {
 
          // Field identifiers for dfem
-         static constexpr int Displacement = 0;
-         static constexpr int Coordinates = 1;
+         static constexpr int Displacement = 1;
+         static constexpr int Coordinates = 2;
 
          friend class ElasticitySolver<dim>; // Allow these classes to access private members
          friend class ElasticityJacobianOperator<dim>; 

@@ -32,6 +32,7 @@ void AMGElasticityPreconditioner<dim>::SetOperator(const Operator &op)
    {
       mfem::out << "Assembling Jacobian" << std::endl;
    }
+   delete A; A = nullptr;
    elasticity_jacobian->jacobian->Assemble(A); 
    auto Ae = A->EliminateRowsCols(ess_tdof_list);
    delete Ae;

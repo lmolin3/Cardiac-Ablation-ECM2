@@ -71,7 +71,7 @@ namespace mfem
             j_solver->SetPreconditioner(*j_prec);
 
             nonlinear_solver = std::make_unique<FrozenNewtonSolver>(comm, k_grad_update);
-            nonlinear_solver->iterative_mode = true;
+            //nonlinear_solver->iterative_mode = false;
             nonlinear_solver->SetOperator(*op);
             nonlinear_solver->SetAbsTol(0.0);
             nonlinear_solver->SetRelTol(1e-6);

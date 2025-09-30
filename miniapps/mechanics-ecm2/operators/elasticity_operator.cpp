@@ -286,7 +286,7 @@ void ElasticityOperator<dim>::Setup(int ir_order)
 
    Array<int> empty;
 
-   //// 1. Extract the essential dof list
+   ///----- 1. Extract the essential dof list
    // For now we include only fixed constraints, but we can extend to prescribed displacements, velocity and acceleration
    for (auto &fixed_constraint : fixed_constraints)
    {
@@ -307,33 +307,45 @@ void ElasticityOperator<dim>::Setup(int ir_order)
    ess_tdof_list.Sort();
    ess_tdof_list.Unique();
 
-   //// 2. Create DifferentiableOperator for stiffness matrix
+   ///----- 2. Create DifferentiableOperator for stiffness matrix
    auto pmesh = fes->GetParMesh();
    auto mesh_nodes = static_cast<ParGridFunction *>(pmesh->GetNodes());
    ParFiniteElementSpace &mesh_fes = *mesh_nodes->ParFESpace();
 
-   auto solutions = std::vector{
-       FieldDescriptor{Displacement, fes}};
-   auto parameters = std::vector{
-       FieldDescriptor{Coordinates, &mesh_fes}};
+   // Field descriptors for the solution and parameter fields
+   std::vector<FieldDescriptor> solutions, parameters;
+   solutions.push_back(FieldDescriptor{Displacement, fes});
+   parameters.push_back(FieldDescriptor{Coordinates, &mesh_fes});
 
+   // Create the DifferentiableOperator
    residual = std::make_unique<DifferentiableOperator>(solutions, parameters, *pmesh);
    // residual->DisableTensorProductStructure();
 
-   tuple inputs{Gradient<Displacement>{}, Gradient<Coordinates>{}, Weight{}};
-   tuple outputs{Gradient<Displacement>{}};
+   // Input, Output operators, and what derivatives to form
+   auto input_operators = tuple
+   {
+      Gradient<Displacement>{},
+      Gradient<Coordinates>{},
+      Weight{}
+   };
+   auto output_operators = tuple
+   {
+      Gradient<Displacement>{}
+   };
 
    auto derivatives = std::integer_sequence<size_t, Displacement>{};
 
-   Array<int> solid_domain_attr(pmesh->attributes.Max());
-   solid_domain_attr = 1;
+   Array<int> solid_domain_attr(pmesh->attributes.Max());  solid_domain_attr = 1;
    const IntegrationRule &displacement_ir =
        IntRules.Get(fes->GetTypicalFE()->GetGeomType(),
                     2 * ir_order + fes->GetTypicalFE()->GetOrder());
-   residual->AddDomainIntegrator(*qfunction, inputs, outputs, displacement_ir, solid_domain_attr, derivatives);
+   residual->AddDomainIntegrator(*qfunction, input_operators, output_operators, displacement_ir, solid_domain_attr, derivatives);
+
+   // Set parameters (mesh nodes): this must be updated if the mesh moves
    residual->SetParameters({mesh_nodes});
 
-   /// 3. Assemble linear form for the rhs
+   
+   ///----- 3. Assemble linear form for the rhs
    Fform = std::make_unique<ParLinearForm>(fes);
 
    // 3.1 Boundary loads
@@ -372,8 +384,8 @@ void ElasticityOperator<dim>::Update()
 template <int dim>
 void ElasticityOperator<dim>::Mult(const Vector &U, Vector &Y) const
 {
+   // This needs to be called if the mesh has moved
    // residual->SetParameters({mesh_nodes});
-   // Do we need to update this if we do pseudo-timestepping?
 
    // Compute the residual R(U) = K(U) - F
    residual->Mult(U, Y);

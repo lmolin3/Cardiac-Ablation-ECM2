@@ -34,10 +34,11 @@ void ElasticityJacobianOperator<dim>::Mult(const Vector &x, Vector &y) const
    jacobian->Mult(z, y);
 
    // Restore essential DOFs in output
-   for (int i = 0; i < elasticity->ess_tdof_list.Size(); i++)
-   {
-      y[elasticity->ess_tdof_list[i]] = x[elasticity->ess_tdof_list[i]];
-   }
+   auto d_y = y.ReadWrite();
+   const auto d_x = x.Read();
+   const auto d_dofs = elasticity->ess_tdof_list.Read();
+   mfem::forall(elasticity->ess_tdof_list.Size(), [=] MFEM_HOST_DEVICE(int i)
+                { d_y[d_dofs[i]] = d_x[d_dofs[i]]; });
 }
 
 

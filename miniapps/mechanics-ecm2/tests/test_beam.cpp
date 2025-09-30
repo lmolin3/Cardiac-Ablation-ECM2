@@ -276,18 +276,18 @@ int main(int argc, char *argv[])
 void prescribed_displacement_fun(const Vector &x, real_t time, Vector &v)
 {
    v = 0.0;
-   v[1] = -0.8; // constant displacement in y-direction
+   v[1] = -0.1; // constant displacement in y-direction
 }
 
 
 void prescribed_load_fun(const Vector &x, real_t time, Vector &v)
 {
    v = 0.0;
-   v[1] = -1e-2; // constant load in y-direction
+   v[1] = -5e-2; // constant load in y-direction
 }
 
 void body_force_fun(const Vector &x, real_t time, Vector &v)
 {
    v = 0.0;
-   v[1] = -3e-3; // constant body force in y-direction
+   v[1] = -6e-3; // constant body force in y-direction
 }
