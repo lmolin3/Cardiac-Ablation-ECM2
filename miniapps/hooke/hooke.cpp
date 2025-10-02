@@ -76,6 +76,8 @@ int main(int argc, char *argv[])
       display_banner(out);
    }
 
+   int nls_type = 0;
+
    OptionsParser args(argc, argv);
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
@@ -89,6 +91,10 @@ int main(int argc, char *argv[])
    args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                   "--no-visualization",
                   "Enable or disable GLVis visualization.");
+   args.AddOption(&nls_type, "-nls", "--nls",
+                  "Nonlinear solver type:\n"
+                  " 0: Newton,\n"
+                  " 1: (Kinsolver) Newton,\n");
    args.AddOption(&paraview, "-pv", "--paraview", "-no-pv",
                   "--no-paraview",
                   "Enable or disable ParaView DataCollection output.");
@@ -174,21 +180,33 @@ int main(int argc, char *argv[])
    cg.SetPrintLevel(2);
    cg.SetPreconditioner(diagonal_pc);
 
-   NewtonSolver newton(MPI_COMM_WORLD);
-   newton.SetSolver(cg);
-   newton.SetOperator(elasticity_op);
+   NewtonSolver* newton = nullptr;
+   if (nls_type == 0)
+   {
+      newton = new NewtonSolver(MPI_COMM_WORLD);
+   }
+   else if (nls_type == 1)
+   {
+      newton = new KINSolver(MPI_COMM_WORLD, KIN_NONE, true);
+   }
+   else if (nls_type == 2)
+   {
+      newton = new KINSolver(MPI_COMM_WORLD, KIN_LINESEARCH, true);
+   }
+   newton->SetOperator(elasticity_op);
+   newton->SetSolver(cg);
 #ifdef MFEM_USE_SINGLE
-   newton.SetRelTol(1e-4);
+   newton->SetRelTol(1e-4);
 #elif defined MFEM_USE_DOUBLE
-   newton.SetRelTol(1e-6);
+   newton->SetRelTol(1e-6);
 #else
    MFEM_ABORT("Floating point type undefined");
 #endif
-   newton.SetMaxIter(10);
-   newton.SetPrintLevel(1);
+   newton->SetMaxIter(10);
+   newton->SetPrintLevel(1);
 
    Vector zero;
-   newton.Mult(zero, U);
+   newton->Mult(zero, U);
 
    U_gf.Distribute(U);
 

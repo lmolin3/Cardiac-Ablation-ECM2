@@ -115,7 +115,7 @@ namespace mfem
 
             // Mooney-Rivlin: W = c1(I1-3) + c2(I2-3) + (kappa/2)(ln(J))^2
             const real_t I1 = tr(C);
-            const real_t I2 = 0.5 * (I1 * I1 - tr(C * C));
+            //const real_t I2 = 0.5 * (I1 * I1 - tr(C * C));
 
             // Second Piola-Kirchhoff stress
             auto S = 2.0 * c1 * I + 2.0 * c2 * (I1 * I - C) + kappa * log(J) * Cinv;

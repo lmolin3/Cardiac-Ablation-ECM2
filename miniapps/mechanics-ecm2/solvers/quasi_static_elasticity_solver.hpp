@@ -2,7 +2,7 @@
 
 #include "../operators/elasticity_operator.hpp" 
 #include "../preconditioners/elasticity_jacobian_preconditioner.hpp" 
-
+#include "../definitions/materials.hpp"
 
 namespace mfem
 {
@@ -12,7 +12,17 @@ namespace mfem
 
       // Forward declaration of templated ElasticityOperator
       template <int dim> class ElasticityOperator;
-      
+
+#ifdef MFEM_USE_SUNDIALS
+      enum class ElasticityKINSolverType : int
+      {
+         NONE = KIN_NONE,
+         LINESEARCH = KIN_LINESEARCH,
+         PICARD = KIN_PICARD,
+         FIXEDPOINT = KIN_FP
+      };
+#endif
+
       /** @brief A wrapper class for second order ODE solvers for elasticity problems.
           This class holds a pointer to a SecondOrderODESolver, which is selected at runtime,
           and delegates all solver-related calls to it.
@@ -29,39 +39,29 @@ namespace mfem
 
          ~ElasticitySolver();
 
-         /// Setup the underlying solver with the operator.
-         /// @param k_grad_update The gradient update frequency for the FrozenNewtonSolver.
-         /// k_grad_update = 1 corresponds to the standard NewtonSolver.
+         /// Setup the jacobian preconditioner
          /// @param prec_type The type of preconditioner to use for the Jacobian solver (default AMG).
          /// @param Args Additional arguments to pass to the preconditioner.
          template <typename PrecTag, typename... Args>
-         void Setup(int k_grad_update, Args &&...args)
+         void SetupJacobianPreconditioner(Args &&...args)
          {
-            op->Setup();
-
             if constexpr (std::is_same_v<PrecTag, AMG>)
             {
+               prec_type = PreconditionerType::AMG;
                j_prec = std::make_unique<AMGElasticityPreconditioner<dim>>(std::forward<Args>(args)...);
-            }
-            else if constexpr (std::is_same_v<PrecTag, NESTED>)
-            {
-               j_prec = std::make_unique<NestedElasticityPreconditioner<dim>>(comm, std::forward<Args>(args)...);
-            }
-            else
-            {
-               MFEM_ABORT("Unknown PreconditionerType in ElasticitySolver::Setup");
-            }
-
-            // j_prec->SetOperator(*op); // Should be called already inside the NewtonSolver-->GMRESolver
-
-            if constexpr (std::is_same_v<PrecTag, AMG>)
                j_solver = std::make_unique<GMRESSolver>(comm);
+            }
             else if constexpr (std::is_same_v<PrecTag, NESTED>)
+            {
+               prec_type = PreconditionerType::NESTED;
+               j_prec = std::make_unique<NestedElasticityPreconditioner<dim>>(comm, std::forward<Args>(args)...);
                j_solver = std::make_unique<FGMRESSolver>(comm);
+            }
             else
             {
                MFEM_ABORT("Unknown PreconditionerType in ElasticitySolver::Setup");
             }
+
             j_solver->iterative_mode = false;
             j_solver->SetAbsTol(0.0);
             j_solver->SetRelTol(1e-4);
@@ -69,16 +69,30 @@ namespace mfem
             j_solver->SetMaxIter(500);
             j_solver->SetPrintLevel(2);
             j_solver->SetPreconditioner(*j_prec);
+         }
 
-            nonlinear_solver = std::make_unique<FrozenNewtonSolver>(comm, k_grad_update);
-            //nonlinear_solver->iterative_mode = false;
-            nonlinear_solver->SetOperator(*op);
-            nonlinear_solver->SetAbsTol(0.0);
-            nonlinear_solver->SetRelTol(1e-6);
-            nonlinear_solver->SetMaxIter(500);
-            nonlinear_solver->SetSolver(*j_solver);
-            nonlinear_solver->SetPrintLevel(1);
-            // nonlinear_solver->SetAdaptiveLinRtol(2, 0.5, 0.9);
+         /// @brief Configure the nonlinear solver for the elasticity problem.
+         void SetupNonlinearSolver(int k_grad_update = 1);
+#ifdef MFEM_USE_SUNDIALS
+         // Setup for KINSOL nonlinear solver
+         // kinsol_nls_type: Type of KINSOL solver (NONE = full Newton, LINESEARCH = newton with globalization, PICARD = Picard, FIXEDPOINT = Fixed Point)
+         // enable_jfnk: Whether to use JFNK (Jacobian-Free Newton-Krylov). Only works if kinsol_nls_type is not PICARD. 
+         // kinsol_aa_n: Number of previous solutions to use for Anderson Acceleration (only for PICARD and FIXEDPOINT)
+         // kinsol_damping: Damping factor for the update (only for PICARD and FIXEDPOINT)
+         // max_setup_calls: Maximum number of times to call Setup(), i.e. how frequently to rebuild the Jacobian.
+         //
+         // TODO: 
+         // 1. For now it fails in some cases, need to check if it's due to need for load ramping
+         // (unlikely tho as MFEM Newton converges). One failing example is -pt 0, with prescribed displacement -0.1.
+         // Also not sure why in those cases with JFNK it converges.
+         // 2. Add more overloads to SetupNonlinearSolver for specific solver types (ensure safer selection of parameters)
+         void SetupNonlinearSolver(ElasticityKINSolverType kinsol_nls_type, bool enable_jfnk = false, real_t kinsol_aa_n = 0.0, real_t kinsol_damping = 0.0, int max_setup_calls = 4);
+#endif
+
+         void Setup()
+         {
+            ///----- Setup the operator
+            op->Setup();
          }
 
          /// Set the material model for the elasticity operator.
@@ -118,6 +132,7 @@ namespace mfem
          void AddBodyForce(VecFuncT func, int attr); 
       
       private:
+         void SetupNonlinearSolverCommon(int pl = 0);
 
          MPI_Comm comm;                                                //< NOT OWNED
          ParMesh *pmesh;                                                //< NOT OWNED
@@ -130,6 +145,8 @@ namespace mfem
          std::unique_ptr<ElasticityOperator<dim>> op;                   //< OWNED
 
          std::unique_ptr<NewtonSolver> nonlinear_solver;                //< OWNED
+
+         PreconditionerType prec_type;
          std::unique_ptr<IterativeSolver> j_solver;                     //< OWNED
          std::unique_ptr<ElasticityJacobianPreconditioner<dim>> j_prec; //< OWNED
 

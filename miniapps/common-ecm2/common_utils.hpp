@@ -255,7 +255,7 @@ namespace mfem
         {
         public:
             GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, Coefficient *u2_, VectorCoefficient *grad_u2_, Coefficient *mu2_, bool own = true)
-                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), mu2(mu2_), grad_u2(grad_u2_), u2(u2_), own(own)
+                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), grad_u2(grad_u2_), mu2(mu2_), u2(u2_), own(own)
             {
                 alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
                 mu2_grad_u2 = new ScalarVectorProductCoefficient(*mu2, *grad_u2);
@@ -316,8 +316,8 @@ namespace mfem
                 Array<int> attr;
                 Coefficient *alpha1;                                   // May be OWNED
                 Coefficient *alpha2;                                   // May be OWNED
-                Coefficient *mu2;                                      // May be OWNED
                 VectorCoefficient *grad_u2;                            // May be OWNED
+                Coefficient *mu2;                                      // May be OWNED
                 Coefficient *u2;                                       // May be OWNED
                 ScalarVectorProductCoefficient *mu2_grad_u2 = nullptr; // OWNED
                 Coefficient *alpha2_u2 = nullptr;                      // OWNED

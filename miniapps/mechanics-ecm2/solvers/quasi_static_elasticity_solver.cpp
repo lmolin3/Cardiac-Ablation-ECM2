@@ -3,6 +3,10 @@
 using namespace mfem;
 using namespace mfem::elasticity_ecm2;
 
+#ifndef MFEM_USE_ENZYME 
+#error "mechanics-ecm2 miniapp requires MFEM to be built with Enzyme support."
+#endif
+
 template <int dim>
 ElasticitySolver<dim>::ElasticitySolver(ParMesh *pmesh_, int order, bool verbose_)
 {
@@ -41,6 +45,77 @@ ElasticitySolver<dim>::GetProblemSize()
    return fes->GlobalTrueVSize();
 }
 
+template <int dim>
+void ElasticitySolver<dim>::SetupNonlinearSolverCommon(int pl)
+{
+   MFEM_VERIFY(j_solver != nullptr, "Jacobian solver must be setup before the nonlinear solver.");
+
+   // Common settings for the nonlinear solver
+   nonlinear_solver->iterative_mode = true;
+   nonlinear_solver->SetOperator(*op);
+   nonlinear_solver->SetAbsTol(0.0);
+   nonlinear_solver->SetRelTol(1e-6);
+   nonlinear_solver->SetMaxIter(500);
+   nonlinear_solver->SetSolver(*j_solver);
+   nonlinear_solver->SetPrintLevel(pl);
+   // nonlinear_solver->SetAdaptiveLinRtol(2, 0.9, 0.5, 1.5);
+}
+
+template <int dim>
+void ElasticitySolver<dim>::SetupNonlinearSolver(int k_grad_update)
+{
+   nonlinear_solver = std::make_unique<FrozenNewtonSolver>(comm, k_grad_update);
+   SetupNonlinearSolverCommon(1);
+}
+
+#ifdef MFEM_USE_SUNDIALS
+template <int dim>
+void ElasticitySolver<dim>::SetupNonlinearSolver(ElasticityKINSolverType kinsol_nls_type, bool enable_jfnk, real_t kinsol_aa_n, real_t kinsol_damping, int max_setup_calls)
+{
+
+   // Check for valid kinsol type
+   if (kinsol_nls_type < ElasticityKINSolverType::NONE || kinsol_nls_type > ElasticityKINSolverType::FIXEDPOINT)
+   {
+      MFEM_ABORT("Invalid ElasticityKINSolverType specified.");
+   }
+
+   nonlinear_solver = std::make_unique<KINSolver>(comm, static_cast<int>(kinsol_nls_type), true);
+   KINSolver *kinsolver = dynamic_cast<KINSolver *>(nonlinear_solver.get());
+
+   // Set damping and Anderson Acceleration
+   // Effective only for KIN_FP and KIN_PICARD
+   bool is_fp_or_picard = (kinsol_nls_type == ElasticityKINSolverType::FIXEDPOINT || kinsol_nls_type == ElasticityKINSolverType::PICARD);
+
+   if ( (kinsol_nls_type != ElasticityKINSolverType::PICARD) && enable_jfnk)
+   {
+      kinsolver->SetJFNK(true);
+      kinsolver->SetLSMaxIter(100);
+   }
+   if (kinsol_aa_n > 0)
+   {
+      kinsolver->EnableAndersonAcc(kinsol_aa_n);
+      if (!is_fp_or_picard)
+         MFEM_ABORT("Anderson Acceleration is effective only for KIN_FP and KIN_PICARD.");
+   }
+
+   kinsolver->SetOperator(*op);
+   nonlinear_solver->SetAbsTol(0.0);
+   nonlinear_solver->SetRelTol(1e-6);
+   nonlinear_solver->SetMaxIter(500);
+   nonlinear_solver->SetPrintLevel(1);
+   kinsolver->SetMaxSetupCalls(max_setup_calls);
+
+   if (kinsol_damping > 0.0)
+   {
+      kinsolver->SetDamping(kinsol_damping);
+      if (!is_fp_or_picard)
+         MFEM_ABORT("Damping is effective only for KIN_FP and KIN_PICARD.");
+   }
+
+   nonlinear_solver->SetSolver(*j_solver);
+   nonlinear_solver->iterative_mode = true;
+}
+#endif
 
 template <int dim>
 void ElasticitySolver<dim>::Solve()

@@ -28,7 +28,6 @@
 // 3. Linear elastic material, prescribed displacement, reduced Jacobian update (every 10 iters)
 //    mpirun -np 4 ./test_beam -o 2 -rs 1 -mt 0 -pt 0 -kju 10 -of ./Output/TestBeam
 
-#include "../materials.hpp"
 #include "../solvers/quasi_static_elasticity_solver.hpp"
 
 using namespace std;
@@ -57,9 +56,6 @@ int main(int argc, char *argv[])
    Mpi::Init(argc, argv);
    Hypre::Init();
 
-   int num_procs = Mpi::WorldSize();
-   int myid = Mpi::WorldRank();
-
    const char *mesh_file = "../../data/beam-hex.mesh";
 
    int order = 1;
@@ -67,6 +63,7 @@ int main(int argc, char *argv[])
    ProblemType problem_type = ProblemType::PrescribedDisplacement;
    int k_grad_update = 1; // Gradient update frequency for FrozenNewtonSolver, k=1 corresponds to standard NewtonSolver
    PreconditionerType prec_type = PreconditionerType::AMG;
+   int nls_type = -1; // -1: MFEM Newton, 0: KIN_NONE, 1: KIN_LINESEARCH, 2: KIN_PICARD, 3: KIN_FP
 
    //const char *device_config = "cpu";
    const char *outfolder = "./Output/TestBeam";
@@ -93,6 +90,9 @@ int main(int argc, char *argv[])
                   "k=1 corresponds to the standard NewtonSolver.");
    args.AddOption((int *)&prec_type, "-jpc", "--jacobian-preconditioner",
                   "Jacobian preconditioner type: 0 - AMG, 1 - Nested.");
+   args.AddOption(&nls_type, "-nls", "--nonlinear-solver",
+                  "Nonlinear solver type: -1 - MFEM Newton, 0 - KIN_NONE, "
+                  "1 - KIN_LINESEARCH, 2 - KIN_PICARD, 3 - KIN_FP.");
    //args.AddOption(&device_config, "-d", "--device",
    //               "Device configuration string, see Device::Configure().");
    args.AddOption(&serial_refinement_levels, "-rs", "--ref-serial",
@@ -195,9 +195,8 @@ int main(int argc, char *argv[])
    }
    case 2: // Neo-Hookean
    {
-      real_t E = 2e4/150;  // Young's modulus  ~ 133.33
-      real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333
-      
+      real_t E = 257.14;    // Young's modulus
+      real_t nu = 0.2857;   // Poisson's ratio
       // Calculate proper material parameters to match linear elastic behavior
       real_t kappa = E / (3.0 * (1.0 - 2.0*nu)); // Bulk modulus ~ 200.0
       real_t mu = E / (2.0 * (1.0 + nu));         // Shear modulus ~ 50.0
@@ -224,20 +223,27 @@ int main(int argc, char *argv[])
       case PreconditionerType::AMG:
          {
             bool amg_elast = false;
-            solver.Setup<AMG>(k_grad_update, amg_elast);
+            solver.SetupJacobianPreconditioner<AMG>(amg_elast);
          }
          break;
       case PreconditionerType::NESTED:
          {
             int inner_max_iter = 10;
             real_t inner_rel_tol = 1e-3;
-            solver.Setup<NESTED>(k_grad_update, inner_max_iter, inner_rel_tol);
+            solver.SetupJacobianPreconditioner<NESTED>(inner_max_iter, inner_rel_tol);
          }
          break;
 
       default:
          mfem_error("Unknown preconditioner type");
    }
+
+   if (nls_type < 0)
+      solver.SetupNonlinearSolver(k_grad_update);
+   else
+      solver.SetupNonlinearSolver((ElasticityKINSolverType)nls_type);
+
+   solver.Setup();
 
    ///////////////////////////////////////////////////////////////////////////////////////////////
    /// 6. Set up output
@@ -276,14 +282,14 @@ int main(int argc, char *argv[])
 void prescribed_displacement_fun(const Vector &x, real_t time, Vector &v)
 {
    v = 0.0;
-   v[1] = -0.1; // constant displacement in y-direction
+   v[1] = -1e-2; // constant displacement in y-direction
 }
 
 
 void prescribed_load_fun(const Vector &x, real_t time, Vector &v)
 {
    v = 0.0;
-   v[1] = -5e-2; // constant load in y-direction
+   v[1] = -1e-2; // constant load in y-direction
 }
 
 void body_force_fun(const Vector &x, real_t time, Vector &v)

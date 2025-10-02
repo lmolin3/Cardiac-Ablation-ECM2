@@ -5,9 +5,9 @@ using namespace mfem::elasticity_ecm2;
 
 template <int dim>
 ElasticityOperator<dim>::ElasticityOperator(ParFiniteElementSpace *fes_, bool verbose_)
-    : fes(fes_),
-      pmesh(fes_->GetParMesh()),
+    : pmesh(fes_->GetParMesh()),
       sdim(pmesh->Dimension()),
+      fes(fes_),
       verbose(verbose_)
 {
    fes_truevsize = fes->GetTrueVSize();

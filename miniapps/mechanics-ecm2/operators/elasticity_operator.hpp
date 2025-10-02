@@ -7,7 +7,7 @@
 #include "../../common-ecm2/common_utils.hpp"
 
 // Elasticity specific dependencies
-#include "../materials.hpp"
+#include "../definitions/materials.hpp"
 #include "elasticity_utils.hpp"
 #include "../solvers/quasi_static_elasticity_solver.hpp"
 #include "elasticity_jacobian_operator.hpp"
