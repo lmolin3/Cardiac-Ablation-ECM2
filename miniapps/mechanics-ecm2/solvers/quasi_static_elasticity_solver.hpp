@@ -148,7 +148,7 @@ namespace mfem
 
          PreconditionerType prec_type;
          std::unique_ptr<IterativeSolver> j_solver;                     //< OWNED
-         std::unique_ptr<ElasticityJacobianPreconditioner<dim>> j_prec; //< OWNED
+         std::unique_ptr<Solver> j_prec; //< OWNED
 
          std::unique_ptr<Vector> zero, U;                               //< OWNED
       };

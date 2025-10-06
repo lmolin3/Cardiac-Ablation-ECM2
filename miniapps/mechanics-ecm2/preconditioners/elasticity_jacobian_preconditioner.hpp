@@ -24,23 +24,11 @@ namespace mfem
       struct AMG {};
       struct NESTED {};
 
-      /// Abstract base class for Jacobian preconditioners
-      template <int dim>
-      class ElasticityJacobianPreconditioner : public Solver
-      {
-      public:
-         ElasticityJacobianPreconditioner() = default;
-         virtual ~ElasticityJacobianPreconditioner() = default;
-
-         virtual void SetOperator(const Operator &op) override = 0;
-         virtual void Mult(const Vector &x, Vector &y) const override = 0;
-      };
-
       /// AMG preconditioner for the elasticity Jacobian
       /// Uses HypreBoomerAMG internally, requiring the Jacobian to be assembled
       /// into a HypreParMatrix.
       template <int dim>
-      class AMGElasticityPreconditioner : public ElasticityJacobianPreconditioner<dim>
+      class AMGElasticityPreconditioner : public Solver
       {
       public:
          AMGElasticityPreconditioner(bool amg_elast = false);
@@ -60,7 +48,7 @@ namespace mfem
       /// Uses an iterative solver for the inner solves (GMRES).
       /// This triggers the outer solver to be a flexible solver (FGMRES).
       template <int dim>
-      class NestedElasticityPreconditioner : public ElasticityJacobianPreconditioner<dim>
+      class NestedElasticityPreconditioner : public Solver
       {
       public:
          NestedElasticityPreconditioner(int inner_iter_max_ = 5, real_t inner_tol_ = 1e-2);

@@ -6,7 +6,6 @@ using namespace mfem::elasticity_ecm2;
 
 template <int dim>
 AMGElasticityPreconditioner<dim>::AMGElasticityPreconditioner(bool amg_elast) 
-   : ElasticityJacobianPreconditioner<dim>() 
 {
 }
 
@@ -64,8 +63,7 @@ void AMGElasticityPreconditioner<dim>::Mult(const Vector &x, Vector &y) const
 
 template <int dim>
 NestedElasticityPreconditioner<dim>::NestedElasticityPreconditioner(int inner_iter_max_, real_t inner_tol_)
-   : ElasticityJacobianPreconditioner<dim>(), 
-     inner_iter_max(inner_iter_max_), 
+   : inner_iter_max(inner_iter_max_), 
      inner_tol(inner_tol_)
 {
    inner_solver = std::make_unique<GMRESSolver>();
@@ -78,8 +76,7 @@ NestedElasticityPreconditioner<dim>::NestedElasticityPreconditioner(int inner_it
 #ifdef MFEM_USE_MPI
    template <int dim>
    NestedElasticityPreconditioner<dim>::NestedElasticityPreconditioner(MPI_Comm comm_, int inner_iter_max_, real_t inner_tol_)
-      : ElasticityJacobianPreconditioner<dim>(), 
-        inner_iter_max(inner_iter_max_), 
+      : inner_iter_max(inner_iter_max_), 
         inner_tol(inner_tol_)
    {
       inner_solver = std::make_unique<GMRESSolver>(comm_);
@@ -116,8 +113,6 @@ void NestedElasticityPreconditioner<dim>::Mult(const Vector &x, Vector &y) const
 // Explicit template instantiation
 namespace mfem {
 namespace elasticity_ecm2 {
-//template class ElasticityJacobianPreconditioner<2>;
-//template class ElasticityJacobianPreconditioner<3>;
 template class AMGElasticityPreconditioner<2>;
 template class AMGElasticityPreconditioner<3>;   
 template class NestedElasticityPreconditioner<2>;
