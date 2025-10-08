@@ -64,6 +64,7 @@ int main(int argc, char *argv[])
    int k_grad_update = 1; // Gradient update frequency for FrozenNewtonSolver, k=1 corresponds to standard NewtonSolver
    PreconditionerType prec_type = PreconditionerType::AMG;
    int nls_type = -1; // -1: MFEM Newton, 0: KIN_NONE, 1: KIN_LINESEARCH, 2: KIN_PICARD, 3: KIN_FP
+   int load_ramp_steps = 1;
 
    //const char *device_config = "cpu";
    const char *outfolder = "./Output/TestBeam";
@@ -86,7 +87,7 @@ int main(int argc, char *argv[])
                   "Problem type: 0 - prescribed displacement, "
                   "1 - prescribed traction, 2 - body force.");
    args.AddOption(&k_grad_update, "-kju", "--k-jacobian-update",
-                  "Gradient update frequency for the FrozenNewtonSolver. "
+                  "Gradient update frequency for the MFEM NewtonSolver. "
                   "k=1 corresponds to the standard NewtonSolver.");
    args.AddOption((int *)&prec_type, "-jpc", "--jacobian-preconditioner",
                   "Jacobian preconditioner type: 0 - AMG, 1 - Nested.");
@@ -97,6 +98,8 @@ int main(int argc, char *argv[])
    //               "Device configuration string, see Device::Configure().");
    args.AddOption(&serial_refinement_levels, "-rs", "--ref-serial",
                   "Number of uniform refinements on the serial mesh.");
+   args.AddOption(&load_ramp_steps, "-lrs", "--load-ramp-steps",
+                  "Number of load ramp steps.");
    args.AddOption(&paraview, "-pv", "--paraview", "-no-pv",
                   "--no-paraview",
                   "Enable or disable ParaView DataCollection output.");
@@ -195,8 +198,8 @@ int main(int argc, char *argv[])
    }
    case 2: // Neo-Hookean
    {
-      real_t E = 257.14;    // Young's modulus
-      real_t nu = 0.2857;   // Poisson's ratio
+      real_t E = 2e4/150;  // Young's modulus  ~ 133.33
+      real_t nu = 1.0/3.0; // Poisson's ratio  ~ 0.333 
       // Calculate proper material parameters to match linear elastic behavior
       real_t kappa = E / (3.0 * (1.0 - 2.0*nu)); // Bulk modulus ~ 200.0
       real_t mu = E / (2.0 * (1.0 + nu));         // Shear modulus ~ 50.0
@@ -242,6 +245,10 @@ int main(int argc, char *argv[])
       solver.SetupNonlinearSolver(k_grad_update);
    else
       solver.SetupNonlinearSolver((ElasticityKINSolverType)nls_type);
+
+
+   if (load_ramp_steps > 1)
+      solver.EnableLoadRamping(load_ramp_steps);
 
    solver.Setup();
 

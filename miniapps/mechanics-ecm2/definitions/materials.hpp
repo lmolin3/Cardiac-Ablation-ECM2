@@ -88,7 +88,7 @@ namespace mfem
          {
             constexpr auto I = IsotropicIdentity<dim>();
 
-            // Neo-Hookean: W = (mu/2)(I1 - 3) - mu*ln(J) + (kappa/2)(ln(J))^2
+            // Neo-Hookean: P = mu*(F - F^{-T}) + kappa*ln(J)*F^{-T}
             auto F = dudX + I;
             auto J = det(F);
             auto logJ = log(J);
@@ -144,9 +144,9 @@ namespace mfem
       }
 
       template <int dim>
-      auto make_neo_hookean(real_t kappa, real_t c)
+      auto make_neo_hookean(real_t kappa, real_t mu)
       {
-         return NeoHookean<dim>{.kappa = kappa, .mu = 2.0 * c};
+         return NeoHookean<dim>{.kappa = kappa, .mu = mu};
       }
 
       template <int dim>

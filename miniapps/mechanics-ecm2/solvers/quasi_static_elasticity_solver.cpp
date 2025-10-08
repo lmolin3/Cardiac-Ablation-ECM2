@@ -10,7 +10,7 @@ using namespace mfem::elasticity_ecm2;
 template <int dim>
 ElasticitySolver<dim>::ElasticitySolver(ParMesh *pmesh_, int order, bool verbose_)
 {
-
+   
    // Create the finite element space and set height/width of Operator
    comm = pmesh_->GetComm();
    fec = new H1_FECollection(order, dim);
@@ -27,6 +27,8 @@ ElasticitySolver<dim>::ElasticitySolver(ParMesh *pmesh_, int order, bool verbose
    U = std::make_unique<Vector>(fes->GetTrueVSize());
    //*zero = 0.0;
    *U = 0.0;
+
+   verbose = verbose_;
 }
 
 
@@ -118,26 +120,57 @@ void ElasticitySolver<dim>::SetupNonlinearSolver(ElasticityKINSolverType kinsol_
 #endif
 
 template <int dim>
+void ElasticitySolver<dim>::EnableLoadRamping(int num_steps)
+{
+   if (num_steps <= 1)
+      return;
+
+   load_ramping = true;
+   load_ramping_steps = num_steps;
+
+   op->load_ramping = true;
+   op->load_ramping_steps = load_ramping_steps;
+}
+
+template <int dim>
 void ElasticitySolver<dim>::Solve()
 {
-   // Apply bcs to displacement vector, and update the operator (re-assemble the rhs)
-   op->Update();
-
-   for (auto &prescribed_disp : op->prescribed_displacements)
+   while (cached_step <= load_ramping_steps)
    {
-      u_gf.ProjectBdrCoefficient(*prescribed_disp.coeff, prescribed_disp.attr);
+      cached_step = SolveCurrentStep();
    }
-   u_gf.GetTrueDofs(*U);
-   U->SetSubVector(op->fixed_tdof_list, 0.0);
-      
-   // Solve F(x) = 0 --> F(x) = H(x) - b = 0
-   //nonlinear_solver->Mult(*zero, *U);
-   Vector zero;
-   nonlinear_solver->Mult(zero, *U);
-   MFEM_ASSERT(nonlinear_solver->GetConverged(), "Nonlinear solver did not converge");
+}
 
-   // Update the displacement grid function
-   u_gf.SetFromTrueDofs(*U);
+template <int dim>
+int ElasticitySolver<dim>::SolveCurrentStep()
+{
+      if (Mpi::Root() && verbose)
+      {
+         mfem::out << "\n----------------------------------------" << std::endl;
+         mfem::out << "Solving load ramping step " << cached_step << " / " << load_ramping_steps << std::endl;
+         mfem::out << "----------------------------------------" << std::endl;
+      }
+
+      // If load ramping is enabled, set the current step in the operator
+      op->SetRampingStep(cached_step);
+
+      // Apply bcs to displacement vector, and update the operator (re-assemble the rhs)
+      op->ProjectEssentialBCs(*U, u_gf);
+      op->UpdateRHS();
+
+      // Solve F(x) = 0 --> F(x) = H(x) - b = 0
+      // nonlinear_solver->Mult(*zero, *U);
+      Vector zero;
+      nonlinear_solver->Mult(zero, *U);
+      MFEM_ASSERT(nonlinear_solver->GetConverged(), "Nonlinear solver did not converge");
+
+      // Update the displacement grid function
+      u_gf.SetFromTrueDofs(*U);
+
+      // Increment the current step
+      cached_step++;
+
+      return cached_step;
 }
 
 // Expose the interface for adding bcs to the operator

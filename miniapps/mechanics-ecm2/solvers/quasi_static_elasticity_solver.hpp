@@ -95,14 +95,25 @@ namespace mfem
             op->Setup();
          }
 
+         /// @brief Enable load ramping for the simulation.
+         /// @param num_steps Number of load increments to use (default 10).
+         // This enables load ramping for all BCs applied (prescribed displacement, traction, body force).
+         // If you want to keep some BCs from being ramped, you can inform it when setting the BCs.
+         void EnableLoadRamping(int num_steps = 10);
+
          /// Set the material model for the elasticity operator.
          void SetMaterial(const MaterialVariant<dim> &material)
          {
             op->SetMaterial(material);
          }
 
-         /// Perform a single time step.
+         /// Perform the entire solve.
          void Solve();
+
+         /// Solve a single step of load ramping. Useful when user wants to control and save the load steps.
+         /// Returns the current step stored in the operator after solving
+         // (incremented by 1 from the input current step)
+         int SolveCurrentStep();
 
          /// Get the FE space used by the operator.
          ParFiniteElementSpace *GetFESpace() { return fes; }
@@ -134,12 +145,14 @@ namespace mfem
       private:
          void SetupNonlinearSolverCommon(int pl = 0);
 
-         MPI_Comm comm;                                                //< NOT OWNED
+         MPI_Comm comm;                                                 //< NOT OWNED
          ParMesh *pmesh;                                                //< NOT OWNED
 
          FiniteElementCollection *fec = nullptr;                        //< OWNED
          ParFiniteElementSpace *fes = nullptr;                          //< OWNED
 
+
+         bool verbose = true;
          mutable ParGridFunction u_gf;   ///< Grid function for displacement field.
 
          std::unique_ptr<ElasticityOperator<dim>> op;                   //< OWNED
@@ -151,8 +164,12 @@ namespace mfem
          std::unique_ptr<Solver> j_prec; //< OWNED
 
          std::unique_ptr<Vector> zero, U;                               //< OWNED
-      };
 
+         // Load ramping
+         bool load_ramping = false;
+         int load_ramping_steps = 1;                               //< Number of load increments (Default: 1, i.e. no ramping)
+         int cached_step = 1;                                   
+      };
 
       // Alias for 2D and 3D ElasticitySolver
       using ElasticitySolver2D = ElasticitySolver<2>;

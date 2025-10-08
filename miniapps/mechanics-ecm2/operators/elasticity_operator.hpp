@@ -92,6 +92,8 @@ namespace mfem
           */
          ElasticityOperator(ParFiniteElementSpace *fes_, bool verbose_ = true);
 
+         ~ElasticityOperator() override;
+
          //////////////////////////////////////////////////////
          //---/ BC interface /-------------------------------//
          //////////////////////////////////////////////////////
@@ -186,12 +188,22 @@ namespace mfem
          /**
           * @brief Project the essential boundary conditions onto the solution vector X.
           * @param X The solution T-vector to project the essential boundary conditions onto.
+          * @param u_gf The GridFunction representing the solution.
           */
-         void ProjectEssentialBCs(Vector &X) const;
+         void ProjectEssentialBCs(Vector &X, ParGridFunction &u_gf);
+
+         /**
+          * @brief Setup the current step for load ramping.
+          */
+         void SetRampingStep(int step);
+
+         /**
+          * @brief Setup the right-hand side vector for the linear system.
+          */
+         void UpdateRHS();
 
          /**
           * @brief Update the system after mesh and/or coefficient changes.
-          * For now it just updates the right-hand side vector.
           */
          void Update();
 
@@ -247,6 +259,14 @@ namespace mfem
          Array<int> fixed_tdof_list;           ///< List of true DOFs for fixed constraint (subset ess_tdof_list).
          Array<int> prescribed_disp_tdof_list; ///< List of true DOFs for prescribed displacements (subset ess_tdof_list).
          Array<int> ess_tdof_list;             ///< List of essential DOFs for essential BCs.
+
+         // Load ramping
+         bool load_ramping = false;    ///< Flag to enable load ramping.
+         int load_ramping_steps = 1;        ///< Number of steps for load ramping.
+         int current_ramping_step = 1; ///< Current step in load ramping.
+         real_t ramp_factor = 1.0;      ///< Current ramp factor (0 to 1).
+         std::vector<ScalarVectorProductCoefficient*> ramped_boundary_loads; ///< Scaled boundary loads for ramping.
+         std::vector<ScalarVectorProductCoefficient*> ramped_body_forces;    ///< Scaled body forces for ramping.
       };
 
       // Type aliases for convenience

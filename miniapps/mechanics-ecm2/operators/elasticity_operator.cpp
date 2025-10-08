@@ -42,6 +42,22 @@ ElasticityOperator<dim>::ElasticityOperator(ParFiniteElementSpace *fes_, bool ve
    B = 0.0;
 }
 
+
+template <int dim>
+ElasticityOperator<dim>::~ElasticityOperator()
+{
+   // Clean up allocated resources
+   for (auto &ramped_load : ramped_boundary_loads)
+   {
+      delete ramped_load;
+   }
+
+   for (auto &ramped_force : ramped_body_forces)
+   {
+      delete ramped_force;
+   }
+}
+
 ////////////////////////////////////////////////////////////////////////
 ///----------------------/ BC interface /-----------------------------//
 ////////////////////////////////////////////////////////////////////////
@@ -351,17 +367,20 @@ void ElasticityOperator<dim>::Setup(int ir_order)
    // 3.1 Boundary loads
    for (auto &boundary_load : boundary_loads)
    {
-      Fform->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(*boundary_load.coeff), boundary_load.attr);
+      // Create ramped coefficient
+      ramped_boundary_loads.push_back(new ScalarVectorProductCoefficient(1.0, *boundary_load.coeff));
+      Fform->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(*ramped_boundary_loads.back()), boundary_load.attr);
    }
 
    // 3.2 Body acceleration (volumetric terms)
    for (auto &body_force : body_forces)
    {
-      Fform->AddDomainIntegrator(new VectorDomainLFIntegrator(*body_force.coeff), body_force.attr);
+      // Create ramped coefficient
+      ramped_body_forces.push_back(new ScalarVectorProductCoefficient(1.0, *body_force.coeff));
+      Fform->AddDomainIntegrator(new VectorDomainLFIntegrator(*ramped_body_forces.back()), body_force.attr);
    }
 
-   Fform->Assemble();
-   Fform->ParallelAssemble(B); // Might be redundant, but ensures B is assembled even if SetTime is not called before Mult.
+   UpdateRHS();
 
    setup = true;
    tmp_bdr_attrs.DeleteAll();
@@ -370,12 +389,58 @@ void ElasticityOperator<dim>::Setup(int ir_order)
 
 template <int dim>
 void ElasticityOperator<dim>::Update()
+{}
+
+template <int dim>
+void ElasticityOperator<dim>::ProjectEssentialBCs(Vector &U, ParGridFunction &u_gf)
+{
+   ramp_factor = load_ramping ? ramp_factor : 1.0;
+
+   for (auto &prescribed_disp : prescribed_displacements)
+   {
+      ScalarVectorProductCoefficient scaled_coeff(ramp_factor, *prescribed_disp.coeff);
+      u_gf.ProjectBdrCoefficient(scaled_coeff, prescribed_disp.attr);
+   }
+   u_gf.GetTrueDofs(U);
+   U.SetSubVector(fixed_tdof_list, 0.0);
+}
+
+template <int dim>
+void ElasticityOperator<dim>::SetRampingStep(int step)
+{
+   if (!load_ramping)
+   {
+      return;
+   }
+
+   current_ramping_step = step;
+
+   // NOTE: here we could implement different ramping strategies, for now it's linear
+   ramp_factor = current_ramping_step < load_ramping_steps ? static_cast<real_t>(current_ramping_step) / static_cast<real_t>(load_ramping_steps) : 1.0;
+
+   // Update ramped coefficients for boundary loads (iterate over std::vector ramped_boundary_loads)
+   for (auto &ramped_boundary_load : ramped_boundary_loads)
+   {
+      ramped_boundary_load->SetAConst(ramp_factor);
+   }
+
+   // Update ramped coefficients for body forces (iterate over std::vector ramped_body_forces)
+   for (auto &ramped_body_force : ramped_body_forces)
+   {
+      ramped_body_force->SetAConst(ramp_factor);
+   }
+}
+
+template <int dim>
+void ElasticityOperator<dim>::UpdateRHS()
 {
    // TODO: check what else we need to do here. also the residual and jacobian?
    Fform->Update();
    Fform->Assemble();
    Fform->ParallelAssemble(B);
 }
+
+
 
 // --------------------------------------------------------------------------------- //
 //// ----- Mult() and GetGradient() methods -----
