@@ -460,3 +460,5 @@ TAGS
 
 # vs code
 .vscode
+miniapps/electrophysiology-ecm2/README.md
+.gitignore

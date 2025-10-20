@@ -4,6 +4,7 @@
 
 // Include all available ionic models here
 #include "../ionic_models/mitchell_schaeffer_2003.h"
+#include "../ionic_models/fenton_karma_1998.h"
 
 namespace mfem
 {
@@ -21,7 +22,8 @@ namespace mfem
 
         enum class IonicModelType : int
         {
-            MITCHELL_SCHAEFFER = 0
+            MITCHELL_SCHAEFFER = 0,
+            FENTON_KARMA = 1
         };
 
 

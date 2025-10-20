@@ -78,6 +78,7 @@ int main(int argc, char *argv[])
     bool paraview = true;
     const char *outfolder = "./Output/";
     int save_freq = 1; // save solution every save_freq time steps
+    bool verbose = true;
     // Timing
     real_t t_setup = 0.0;
     real_t t_diffusion = 0.0;
@@ -114,6 +115,8 @@ int main(int argc, char *argv[])
                    "Enable or disable Paraview output (default enabled)");
     args.AddOption(&outfolder, "-of", "--output-folder", "Output folder.");
     args.AddOption(&save_freq, "-sf", "--save-freq", "Save frequency (in time steps)");
+    args.AddOption(&verbose, "-v", "--verbose", "-q", "--quiet",
+                   "Enable or disable console output (default enabled)");
     args.ParseCheck();
 
     /////////////////////////////////////////////////////////////////////////////
@@ -221,8 +224,8 @@ int main(int argc, char *argv[])
 
     //<--- 5.2 Define the MonodomainDiffusionSolver
     int ode_solver_type = 21; // Backward Euler
-    bool verbose = true;
-    MonodomainDiffusionSolver *diff_solver = new MonodomainDiffusionSolver(&fespace, bc, &sigma_coeff, &chi_coeff, &Cm_coeff, ode_solver_type, verbose);
+    bool solver_verbose = true;
+    MonodomainDiffusionSolver *diff_solver = new MonodomainDiffusionSolver(&fespace, bc, &sigma_coeff, &chi_coeff, &Cm_coeff, ode_solver_type, solver_verbose);
 
     //<--- 5.3 Define the ReactionSolver
     IonicModelType model_type = IonicModelType::MITCHELL_SCHAEFFER;
@@ -369,14 +372,16 @@ int main(int argc, char *argv[])
         chrono.Start();
 
         //<--- Evaluate potential at the reference point
+        if (verbose)
+        {
+            // Only evaluate grid functions if the point was found on this rank
+            real_t potential_loc = (elem_ids[0] >= 0) ? u_gf->GetValue(elem_ids[0], ips[0]) : 0.0;
 
-        // Only evaluate grid functions if the point was found on this rank
-        real_t potential_loc = (elem_ids[0] >= 0) ? u_gf->GetValue(elem_ids[0], ips[0]) : 0.0;
+            // Reduce values across all ranks to get the result from whichever rank found the point
+            MPI_Allreduce(&potential_loc, &potential, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        }
 
-        // Reduce values across all ranks to get the result from whichever rank found the point
-        MPI_Allreduce(&potential_loc, &potential, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-
-        if (Mpi::Root())
+        if (Mpi::Root() && verbose)
         {
             out << std::left
                 << std::setw(8) << step
