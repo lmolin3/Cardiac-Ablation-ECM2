@@ -96,8 +96,9 @@ namespace mfem
             int NUM_PARAMS = -1;
             int NUM_MONITORED = -1;
 
-            int potential_idx = -1; // Index of the transmembrane potential in the states array
-            int stim_idx = -1;      // Index of the stimulation current in the parameters array
+            int potential_idx = -1;     // Index of the transmembrane potential in the states array
+            int stim_idx = -1;          // Index of the stimulation current in the parameters array
+            bool dimensionless = false; // Flag indicating if the model uses dimensionless potential
         };
 
     } // namespace electrophysiology

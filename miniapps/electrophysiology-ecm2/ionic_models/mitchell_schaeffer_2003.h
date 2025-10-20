@@ -20,6 +20,8 @@ namespace mfem
 
                 potential_idx = state_index("Vm");
                 stim_idx = parameter_index("IstimAmplitude");
+
+                dimensionless = true; // Mitchell-Schaeffer model uses dimensionless potential
             }
 
             // Set stimulation parameters - accepts variable number of parameters
@@ -308,7 +310,7 @@ namespace mfem
                 const double dh_dt_linearized = (V_gate > Vm) ? -1 / tau_open : -1 / tau_close;
                 values[0] = h + ((fabs(dh_dt_linearized) > 1e-08) ? (dh_dt * (exp(dh_dt_linearized * dt) - 1) / dh_dt_linearized)
                                                                   : (dh_dt * dt));
-                const double dVm_dt = J_stim_J_stim + (J_in_J_in + J_out_J_out);
+                const double dVm_dt = (J_stim_J_stim + (J_in_J_in + J_out_J_out));
                 values[1] = Vm + dVm_dt * dt;
             }
         };

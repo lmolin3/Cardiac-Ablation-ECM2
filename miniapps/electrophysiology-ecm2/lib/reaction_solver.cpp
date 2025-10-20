@@ -4,8 +4,8 @@
 using namespace mfem;
 using namespace mfem::electrophysiology;
 
-ReactionSolver::ReactionSolver(ParFiniteElementSpace &fes, IonicModelType model_type_, TimeIntegrationScheme scheme_type, int ode_substeps_)
-    : fes_truevsize(fes.GetTrueVSize()), model_type(model_type_), scheme(scheme_type), ode_substeps(ode_substeps_)
+ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, IonicModelType model_type_, TimeIntegrationScheme scheme_type, int ode_substeps_)
+    : fes(fes_), fes_truevsize(fes_->GetTrueVSize()), model_type(model_type_), scheme(scheme_type), ode_substeps(ode_substeps_)
 {
     switch (model_type)
     {
@@ -16,13 +16,28 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace &fes, IonicModelType model_
         mfem_error("Unsupported ionic model type");
     }
 
-    stimulation_gf.SetSpace(&fes); 
+    stimulation_gf.SetSpace(fes); 
     stimulation_gf = 0.0;
     stimulation_gf.GetTrueDofs(stimulation_vec);
 }
 
-void ReactionSolver::Setup(std::vector<double> initial_states, std::vector<double> params)
+ReactionSolver::~ReactionSolver()
 {
+    for (auto gf : registered_fields)
+    {
+        delete gf;
+    }
+    for (auto vec : registered_fields_vectors)
+    {
+        delete vec;
+    }
+}
+
+void ReactionSolver::Setup(const std::vector<double> &initial_states, const std::vector<double> &params)
+{
+    // Compute variables for conversion to/from dimensionless potential
+    Vrange = Vmax - Vmin;
+    invVrange = 1.0 / Vrange;
 
     // Get number of states and parameters from the model
     double num_states = model->GetNumStates();
@@ -72,7 +87,7 @@ void ReactionSolver::GetPotential(Vector &u)
     u.SetSize(fes_truevsize);
     for (int i = 0; i < fes_truevsize; i++)
     {
-        u[i] = states[i][model->potential_idx];
+        u[i] = model->dimensionless ? FromDimensionless(states[i][model->potential_idx]) : states[i][model->potential_idx];
     }
 }
 
@@ -81,7 +96,7 @@ void ReactionSolver::SetPotential(const Vector &u)
     MFEM_ASSERT(u.Size() == fes_truevsize, "Incompatible sizes in ReactionSolver::SetPotential");
     for (int i = 0; i < fes_truevsize; i++)
     {
-        states[i][model->potential_idx] = u[i];
+        states[i][model->potential_idx] = model->dimensionless ? ToDimensionless(u[i]) : u[i];
     }
 }
 
@@ -104,18 +119,40 @@ void ReactionSolver::SetStimulation(Coefficient *stim)
     stimulation_coeff = stim;
 }
 
+
+void ReactionSolver::RegisterFields(DataCollection &dc)
+{
+    // For each state variable, apart from potential, register a field
+    int num_states = model->GetNumStates();
+    for (int j = 0; j < num_states; j++)
+    {
+        if (j == model->potential_idx)
+            continue; // Skip potential, already registered elsewhere
+
+        // Create a ParGridFunction and its vector for update for the state variable and keep track of it in registered_fields
+        std::string field_name = "state_" + std::to_string(j);
+        ParGridFunction *state_gf = new ParGridFunction(fes);
+        Vector *state_vec = new Vector(fes_truevsize);
+        registered_fields.push_back(state_gf);
+        registered_fields_vectors.push_back(state_vec);
+
+        // Register the field with the DataCollection
+        dc.RegisterField(field_name.c_str(), state_gf);
+    }
+
+}
+
 void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
 {
     // Inner loop time step
     double dt_ode = dt / ode_substeps;
+    double current_time = t;
 
-    // Update potential (from MFEM Vector x to ODE states) and stimulation
+    // Initialize values of x (potential) from the input vector
     for (int i = 0; i < fes_truevsize; i++)
     {
-        states[i][model->potential_idx] = x[i];
+        values[i][model->potential_idx] = model->dimensionless ? ToDimensionless(x[i]) : x[i];
     }
-
-    double current_time = t;
 
     // Solve ODE on each FE dof
     // NOTE: for parallelization usign device we can use MFEM's forall
@@ -145,15 +182,27 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         // Project stimulation current
         if (stimulation_coeff)
         {
-            stimulation_coeff->SetTime(current_time);
+            stimulation_coeff->SetTime(current_time+dt_ode);
             stimulation_gf.ProjectCoefficient(*stimulation_coeff);
             stimulation_gf.GetTrueDofs(stimulation_vec);
         }
 
-        for (int j = 0; j < fes_truevsize; j++) // Loop on FE dofs 
+        // Placeholder for physical constants
+        const double chi = 2e3;
+        const double Cm = 1e-3;
+        double Jscaling = model->dimensionless ? (chi * Cm * Vrange) : 1.0;
+        int num_states = model->GetNumStates();
+
+        for (int j = 0; j < fes_truevsize; j++) // Loop on FE dofs
         {
+            // Update states from current values
+            for (size_t k = 0; k < num_states; k++)
+            {
+                states[j][k] = values[j][k];
+            }
+
             // Update stimulation current in parameters
-            parameters[j][model->stim_idx] = stimulation_vec[j];
+            parameters[j][model->stim_idx] = model->dimensionless ? stimulation_vec[j] / Jscaling : stimulation_vec[j];
 
             // Call the appropriate time integration scheme
             switch (scheme)
@@ -180,10 +229,27 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         current_time += dt_ode;
     }
 
-    // Update potential (MFEM Vector) from ODE solution
+    // Update potential (MFEM Vector) from ODE solution, and all registered fields
+    // If uses dimensionless potential, convert back to [Vmin, Vmax] range
+    // @note: this can be optimized by combining with the previous loop,
+    //       but we'd require a vector for each registered field
     for (int i = 0; i < fes_truevsize; i++)
     {
-        x[i] = values[i][model->potential_idx];
+        x[i] = model->dimensionless ? FromDimensionless(values[i][model->potential_idx]) : values[i][model->potential_idx];
+        x[i] = std::clamp(x[i], Vmin, Vmax);
+        //  Update vector for each registered field
+        for (size_t k = 0; k < registered_fields_vectors.size(); k++)
+        {
+            // Find the corresponding state index (accounting for skipped potential)
+            int state_idx = (k >= model->potential_idx) ? k + 1 : k;
+            (*registered_fields_vectors[k])[i] = values[i][state_idx];
+        }
+    }
+
+    // Update all registered ParGridFunctions from their vectors
+    for (size_t k = 0; k < registered_fields.size(); k++)
+    {
+        registered_fields[k]->SetFromTrueDofs(*registered_fields_vectors[k]);
     }
 
     t = provisional ? t : current_time;
