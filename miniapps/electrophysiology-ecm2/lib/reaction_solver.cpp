@@ -12,6 +12,9 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, IonicModelType model
     case IonicModelType::MITCHELL_SCHAEFFER:
         model = std::make_unique<MitchellSchaeffer>();
         break;
+    case IonicModelType::FENTON_KARMA:
+        model = std::make_unique<FentonKarma>();
+        break;
     default:
         mfem_error("Unsupported ionic model type");
     }
@@ -78,7 +81,7 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
         }
 
         // Initialize stimulation to default value from model
-        stimulation_vec = parameters[i][model->stim_idx]; 
+        stimulation_vec = parameters[i][model->stim_ampl_idx]; 
     }
 }
 
@@ -190,7 +193,7 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         // Placeholder for physical constants
         const double chi = 2e3;
         const double Cm = 1e-3;
-        double Jscaling = model->dimensionless ? (chi * Cm * Vrange) : 1.0;
+        double Jscaling = model->dimensionless ? model->stim_sign * (chi * Cm * Vrange) : model->stim_sign;
         int num_states = model->GetNumStates();
 
         for (int j = 0; j < fes_truevsize; j++) // Loop on FE dofs
@@ -202,7 +205,7 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
             }
 
             // Update stimulation current in parameters
-            parameters[j][model->stim_idx] = model->dimensionless ? stimulation_vec[j] / Jscaling : stimulation_vec[j];
+            parameters[j][model->stim_ampl_idx] = model->dimensionless ? stimulation_vec[j] / Jscaling : stimulation_vec[j];
 
             // Call the appropriate time integration scheme
             switch (scheme)

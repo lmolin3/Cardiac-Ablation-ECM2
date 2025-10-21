@@ -9,15 +9,12 @@
 //
 // Sample runs:
 //
-// 2D example:
-//   mpirun -np 4 ./test_monodomain -o 1 -sf 10 -of ./Output/
+// Use internal time management of gotranx:
+//   mpirun -np 4 ./test_stimulation -no-dgm -of ./Output/GotranxTime
 //
-// 3D example:
-//   mpirun -np 8 ./test_monodomain -d 3 -o 2 -rs 1 -sf 1 -of ./Output/
+// Disable internal time management of gotranx, and manage time from provided function:
+//   mpirun -np 8 ./test_stimulation -dgm -of ./Output/MFEMTime
 //
-// Different stimulation types can be selected with -st option:
-//   0 - Corner stimulation (default)
-//   1 - Plane wave stimulation
 
 #include "mfem.hpp"
 #include "../lib/reaction_solver.hpp"
@@ -31,16 +28,10 @@ using namespace mfem;
 using namespace electrophysiology;
 
 real_t stimulation_corner(const Vector &x);
-real_t stimulation_plane_wave(const Vector &x);
-real_t stimulation_spiral_wave(const Vector &x, real_t t);
+real_t stimulation_corner_td(const Vector &x, real_t t);
 
 void conductivity_function(const Vector &x, DenseMatrix &Sigma);
 
-enum class StimulationType : int
-{
-    CORNER = 0,
-    PLANE_WAVE = 1,
-};
 
 struct s_MeshContext // mesh
 {
@@ -57,15 +48,13 @@ struct ep_Context
     real_t chi = 2e3; // surface-to-volume ratio [cm^-1]
     real_t Cm = 1e-3; // membrane capacitance [uF/cm^2]
     real_t matrix_factor = 1.0;
-    IonicModelType model_type = IonicModelType::MITCHELL_SCHAEFFER; // FENTON_KARMA;ss
 } ep_ctx;
 
 struct stim_Context
 {
     real_t t_start = 0.0;    // stimulation start time [ms]
     real_t t_duration = 1.0; // stimulation duration [ms]
-    real_t Iampl = 2000;     // stimulation current amplitude  [mA/cm^3] = 1 [mA/mm^3]
-    StimulationType stim_type = StimulationType::CORNER;
+    real_t Iampl = 1000;     // stimulation current amplitude  [mA/cm^3] = 1 [mA/mm^3]
 } stim_ctx;
 
 int main(int argc, char *argv[])
@@ -81,17 +70,17 @@ int main(int argc, char *argv[])
     /////////////////////////////////////////////////////////////////////////////
 
     // Finite element
-    int order = 1;
+    int order = 2;
     // Timestepping
     bool last_step = false;
     real_t dt = 0.05;       // Time step (ms)
     real_t t = 0.0;         // Current time (ms)
-    real_t t_final = 500.0; // Final time (ms)
+    real_t t_final = 50.0; // Final time (ms)
     int dt_ode = 1;         // number of ODE substeps for the reaction solver
     // Output
     bool paraview = true;
     const char *outfolder = "./Output/";
-    int save_freq = 1; // save solution every save_freq time steps
+    int save_freq = 2; // save solution every save_freq time steps
     bool verbose = true;
     // Timing
     real_t t_setup = 0.0;
@@ -104,30 +93,12 @@ int main(int argc, char *argv[])
     real_t t_io = 0.0;
     StopWatch chrono, chrono_total;
 
+    bool disable_gotranx_time_management = false;
+    
     OptionsParser args(argc, argv);
-    // Mesh related options
-    args.AddOption(&Mesh_ctx.dim, "-d", "--dim", "Mesh dimension (2 or 3)");
-    args.AddOption(&Mesh_ctx.hex, "-hex", "--hex", "-tri", "--tri",
-                   "Use hex/quad elements (default) or tri/tet elements");
-    args.AddOption(&Mesh_ctx.n, "-n", "--mesh-size", "Number of elements in one direction");
-    args.AddOption(&Mesh_ctx.serial_ref_levels, "-rs", "--serial-ref-levels",
-                   "Number of uniform refinement levels for the serial mesh");
-    args.AddOption(&Mesh_ctx.parallel_ref_levels, "-rp", "--parallel-ref-levels",
-                   "Number of uniform refinement levels for the parallel mesh");
-    // Finite element space related options
-    args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
     // Time stepping related options
-    args.AddOption(&dt, "-dt", "--time-step", "Time step size");
-    args.AddOption(&t_final, "-tf", "--time-final", "Final time");
-    args.AddOption(&dt_ode, "-dode", "--ode-substeps", "Number of ODE substeps for the reaction solver");
-    // Electrophysiology related options
-    args.AddOption(&stim_ctx.Iampl, "-i", "--i-stim", "Stimulation current amplitude");
-    args.AddOption(&stim_ctx.t_start, "-ts", "--t-stim-start", "Stimulation start time");
-    args.AddOption(&stim_ctx.t_duration, "-td", "--t-stim-duration", "Stimulation duration");
-    args.AddOption((int *)&stim_ctx.stim_type, "-st", "--stim-type",
-                   "Stimulation type: 0-CORNER, 1-PLANE_WAVE");
-    args.AddOption((int *)&ep_ctx.model_type, "-mt", "--model-type",
-                   "Ionic model type: 0-MITCHELL_SCHAEFFER, 1-FENTON_KARMA");
+    args.AddOption(&disable_gotranx_time_management, "-dgm", "--disable-gotranx-time-management", "-no-dgm", "--enable-gotranx-time-management",
+                   "Disable internal time management of gotranx ionic models.");
     // Output
     args.AddOption(&paraview, "-pv", "--paraview", "-no-pv", "--no-paraview",
                    "Enable or disable Paraview output (default enabled)");
@@ -147,21 +118,11 @@ int main(int argc, char *argv[])
     chrono.Start();
 
     auto type = Mesh_ctx.hex ? Element::QUADRILATERAL : Element::TRIANGLE;
-    Mesh *serial_mesh_2d = new Mesh(Mesh::MakeCartesian2D(Mesh_ctx.n, Mesh_ctx.n, type, true));
-    serial_mesh_2d->EnsureNodes();
-    GridFunction *nodes = serial_mesh_2d->GetNodes();
+    Mesh *serial_mesh = new Mesh(Mesh::MakeCartesian2D(Mesh_ctx.n, Mesh_ctx.n, type, true));
+    serial_mesh->EnsureNodes();
+    GridFunction *nodes = serial_mesh->GetNodes();
     *nodes *= 5.0;
     *nodes -= 2.5;
-
-    Mesh *serial_mesh = nullptr;
-    if (Mesh_ctx.dim == 3)
-    {
-        serial_mesh = Extrude2D(serial_mesh_2d, 2, 0.5);
-    }
-    else
-    {
-        serial_mesh = serial_mesh_2d;
-    }
 
     for (int l = 0; l < Mesh_ctx.serial_ref_levels; l++)
     {
@@ -244,8 +205,10 @@ int main(int argc, char *argv[])
     MonodomainDiffusionSolver *diff_solver = new MonodomainDiffusionSolver(&fespace, bc, &sigma_coeff, &chi_coeff, &Cm_coeff, ode_solver_type, solver_verbose);
 
     //<--- 5.3 Define the ReactionSolver
+    IonicModelType model_type = IonicModelType::MITCHELL_SCHAEFFER;
     TimeIntegrationScheme solver_type = TimeIntegrationScheme::EXPLICIT_EULER; // TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN;
-    ReactionSolver *reaction_solver = new ReactionSolver(&fespace, ep_ctx.model_type, solver_type, dt_ode);
+    ReactionSolver *reaction_solver = new ReactionSolver(&fespace, model_type, solver_type, dt_ode);
+
 
     /////////////////////////////////////////////////////////////////////////////
     //------     7. Add BCs and Setup the solvers
@@ -269,13 +232,21 @@ int main(int argc, char *argv[])
     reaction_solver->GetDefaultStates(initial_states);
     reaction_solver->GetDefaultParameters(parameters);
     // Modify parameters if needed --> check inside the specific ionic model what parameters are available
-    parameters[reaction_solver->GetModel()->parameter_index("IstimEnd")] = stim_ctx.t_start + stim_ctx.t_duration; //[ms]
-    parameters[reaction_solver->GetModel()->parameter_index("IstimStart")] = stim_ctx.t_start;                     //[ms]
-    parameters[reaction_solver->GetModel()->parameter_index("IstimPulseDuration")] = stim_ctx.t_duration;          //[ms]}
 
+    if (!disable_gotranx_time_management)
+    {
+        parameters[reaction_solver->GetModel()->parameter_index("IstimEnd")] = stim_ctx.t_start + stim_ctx.t_duration; //[ms]
+        parameters[reaction_solver->GetModel()->parameter_index("IstimStart")] = stim_ctx.t_start;                     //[ms]
+        parameters[reaction_solver->GetModel()->parameter_index("IstimPulseDuration")] = stim_ctx.t_duration;          //[ms]
+    }
+    else
+    {
+        // Disable internal time management of gotranx ionic model
+        reaction_solver->GetModel()->DisableInternalTimeManagement(parameters.data());
+    }
 
-    // Modify initial states if needed
-    //initial_states[reaction_solver->GetModel()->state_index("h")] = 1.0; // initial h []
+    // initialize the states
+    initial_states[reaction_solver->GetModel()->state_index("h")] = 1.0; // initial h []
 
     reaction_solver->Setup(initial_states, parameters);
 
@@ -283,16 +254,13 @@ int main(int argc, char *argv[])
     // switch case stim_ctx.stim_type, pick one of the defined stimulation functions
 
     Coefficient *Istim_coeff = nullptr;
-    switch (stim_ctx.stim_type)
+    if (disable_gotranx_time_management)
     {
-    case StimulationType::CORNER:
+        Istim_coeff = new FunctionCoefficient(stimulation_corner_td);
+    }
+    else
+    {
         Istim_coeff = new FunctionCoefficient(stimulation_corner);
-        break;
-    case StimulationType::PLANE_WAVE:
-        Istim_coeff = new FunctionCoefficient(stimulation_plane_wave);
-        break;
-    default:
-        mfem_error("Unknown stimulation type!");
     }
 
     reaction_solver->SetStimulation(Istim_coeff);
@@ -531,13 +499,18 @@ real_t stimulation_corner(const Vector &x)
     return stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (r2 - R * R)));
 }
 
-// Define the stimulation current as a function
-// Here we stimulate a plane wave at the left side of the domain, traveling rightwards
-// Domain is [-2.5,2.5]x[-2.5,2.5]
-real_t stimulation_plane_wave(const Vector &x)
+
+real_t stimulation_corner_td(const Vector &x, real_t t)
 {
-    real_t xs = -2.5;
+    real_t xc = -2.5;
+    real_t yc = -2.5;
+    real_t R = 5e-1;        // Radius of the stimulated region
     real_t sharpness = 5e2; //  transition
-    return stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (x(0) - xs)));
+    real_t r2 = (x(0) - xc) * (x(0) - xc) + (x(1) - yc) * (x(1) - yc);
+
+    const real_t tol = 1e-12;
+    bool active = (t >= stim_ctx.t_start && (t - stim_ctx.t_start) <= (stim_ctx.t_duration + tol));
+
+    return active ? stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (r2 - R * R))) : 0.0;
 }
 

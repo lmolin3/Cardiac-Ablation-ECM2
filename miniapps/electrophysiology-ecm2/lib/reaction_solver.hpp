@@ -65,7 +65,7 @@ namespace mfem
 
             inline real_t ToDimensionless(real_t u) const
             {
-                return (u - Vmin) * invVrange;
+                return std::abs((u - Vmin) * invVrange);
             }
             
             inline real_t FromDimensionless(real_t u_dimless) const

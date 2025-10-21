@@ -19,7 +19,12 @@ namespace mfem
                 NUM_MONITORED = 5;
 
                 potential_idx = state_index("Vm");
-                stim_idx = parameter_index("IstimAmplitude");
+                stim_ampl_idx = parameter_index("IstimAmplitude");
+                stim_duration_idx = parameter_index("IstimPulseDuration");
+                stim_start_idx = parameter_index("IstimStart");
+                stim_end_idx = parameter_index("IstimEnd");
+                stim_period_idx = parameter_index("IstimPeriod");
+
 
                 dimensionless = true; // Mitchell-Schaeffer model uses dimensionless potential
             }
