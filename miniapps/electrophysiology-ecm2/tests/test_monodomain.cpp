@@ -222,7 +222,7 @@ int main(int argc, char *argv[])
     // 4.1 Define H1 continuous high-order Lagrange finite elements of the given order.
     H1_FECollection fec(order, mesh.Dimension());
     ParFiniteElementSpace fespace(&mesh, &fec);
-    auto tdofs = fespace.GetTrueVSize();
+    auto tdofs = fespace.GlobalTrueVSize();
     if (Mpi::Root())
     {
         cout << "Number of unknowns: " << tdofs << endl;
