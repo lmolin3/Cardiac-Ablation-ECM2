@@ -148,6 +148,8 @@ namespace mfem
              */
             void Step(Vector &x, real_t &t, real_t &dt, bool provisional = false);
 
+            void StepOld(Vector &x, real_t &t, real_t &dt, bool provisional = false);
+
             /**
              * @brief Prints the conversion index table.
              */

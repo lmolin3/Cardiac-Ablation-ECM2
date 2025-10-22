@@ -79,7 +79,7 @@ namespace electrophysiology
         ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
                          BCHandler *bcs_, Array<int> &ess_tdof_list_,
                          MatrixCoefficient *diff_coeff_, Coefficient *mass_coeff_,
-                         int prec_type = 0);
+                         int prec_type = 1);
 
         void EliminateBC(const Vector &x, Vector &b) const override;
 

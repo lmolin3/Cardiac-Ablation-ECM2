@@ -43,45 +43,65 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
     invVrange = 1.0 / Vrange;
 
     // Get number of states and parameters from the model
-    double num_states = model->GetNumStates();
-    double num_param = model->GetNumParameters();
+    int num_states = model->GetNumStates();
+    int num_param = model->GetNumParameters();
 
-    // Initialize parameters and states
-    states.resize(fes_truevsize, std::vector<double>(num_states));
-    values.resize(fes_truevsize, std::vector<double>(num_states));
-    parameters.resize(fes_truevsize, std::vector<double>(num_param));
+    // Pre-allocate all vectors at once
+    states.resize(fes_truevsize);
+    values.resize(fes_truevsize);
+    parameters.resize(fes_truevsize);
+    
+    // Pre-allocate inner vectors to avoid repeated allocations
     for (int i = 0; i < fes_truevsize; i++)
     {
-        // Use provided initial states or defaults
-        if (!initial_states.empty() && initial_states.size() == num_states)
+        states[i].resize(num_states);
+        values[i].resize(num_states);
+        parameters[i].resize(num_param);
+    }
+
+    // Get default values once to avoid repeated function calls
+    std::vector<double> default_states(num_states);
+    std::vector<double> default_params(num_param);
+    
+    bool use_provided_states = !initial_states.empty() && initial_states.size() == num_states;
+    bool use_provided_params = !params.empty() && params.size() == num_param;
+    
+    if (!use_provided_states) {
+        model->init_state_values(default_states.data());
+    }
+    if (!use_provided_params) {
+        model->init_parameter_values(default_params.data());
+    }
+
+    // Initialize all DOFs with optimized loop
+    for (int i = 0; i < fes_truevsize; i++)
+    {
+        // Initialize states
+        if (use_provided_states)
         {
-            for (int j = 0; j < num_states; j++)
-            {
-                states[i][j] = initial_states[j];
-                values[i][j] = initial_states[j];
-            }
+            std::copy(initial_states.begin(), initial_states.end(), states[i].begin());
+            std::copy(initial_states.begin(), initial_states.end(), values[i].begin());
         }
         else
         {
-            model->init_state_values(states[i].data());
-            model->init_state_values(values[i].data());
+            std::copy(default_states.begin(), default_states.end(), states[i].begin());
+            std::copy(default_states.begin(), default_states.end(), values[i].begin());
         }
 
-        // Use provided parameters or defaults
-        if (!params.empty() && params.size() == num_param)
+        // Initialize parameters
+        if (use_provided_params)
         {
-            for (int j = 0; j < num_param; j++)
-            {
-                parameters[i][j] = params[j];
-            }
+            std::copy(params.begin(), params.end(), parameters[i].begin());
         }
         else
         {
-            model->init_parameter_values(parameters[i].data());
+            std::copy(default_params.begin(), default_params.end(), parameters[i].begin());
         }
+    }
 
-        // Initialize stimulation to default value from model
-        stimulation_vec = parameters[i][model->stim_ampl_idx]; 
+    // Initialize stimulation vector once, outside the loop
+    if (!parameters.empty()) {
+        stimulation_vec = parameters[0][model->stim_ampl_idx];
     }
 }
 
@@ -146,6 +166,123 @@ void ReactionSolver::RegisterFields(DataCollection &dc)
 }
 
 void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
+{
+    // Inner loop time step
+    double dt_ode = dt / ode_substeps;
+    double current_time = t;
+    
+    // Cache frequently used values OUTSIDE the substep loop (moved from StepOld)
+    int num_states = model->GetNumStates();
+    const double chi = 2e3;
+    const double Cm = 1e-3;
+    double Jscaling = model->dimensionless ? model->stim_sign * (chi * Cm * Vrange) : model->stim_sign;
+    bool use_dimensionless = model->dimensionless;
+    int potential_idx = model->potential_idx;
+    int stim_ampl_idx = model->stim_ampl_idx;
+
+    // Initialize values of x (potential) from the input vector - vectorized
+    for (int i = 0; i < fes_truevsize; i++) {
+        values[i][potential_idx] = use_dimensionless ? ToDimensionless(x[i]) : x[i];
+    }
+
+    // Pre-compute stimulation scaling factor
+    auto stimulation_data = stimulation_vec.GetData();
+
+    for (int i = 0; i < ode_substeps; i++) // Loop for ODE solver inner time stepping
+    {
+        // Project stimulation current once per substep
+        if (stimulation_coeff) {
+            stimulation_coeff->SetTime(current_time + dt_ode);
+            stimulation_gf.ProjectCoefficient(*stimulation_coeff);
+            stimulation_gf.GetTrueDofs(stimulation_vec);
+            stimulation_data = stimulation_vec.GetData(); // Update pointer after projection
+        }
+
+        // Main computational loop - optimize memory access patterns
+        for (int j = 0; j < fes_truevsize; j++)
+        {
+            // Copy states efficiently - avoid std::copy overhead for small vectors
+            double* state_ptr = states[j].data();
+            double* value_ptr = values[j].data();
+            
+            // Manual unrolled copy for small num_states (typically 2-4 for cardiac models)
+            if (num_states <= 4) {
+                for (int k = 0; k < num_states; k++) {
+                    state_ptr[k] = value_ptr[k];
+                }
+            } else {
+                std::memcpy(state_ptr, value_ptr, num_states * sizeof(double));
+            }
+
+            // Update stimulation current in parameters
+            parameters[j][stim_ampl_idx] = use_dimensionless ? 
+                stimulation_data[j] / Jscaling : stimulation_data[j];
+
+            // Call the appropriate time integration scheme
+            switch (scheme) {
+            case TimeIntegrationScheme::EXPLICIT_EULER:
+                model->explicit_euler(state_ptr, current_time, dt_ode, 
+                                    parameters[j].data(), value_ptr);
+                break;
+            case TimeIntegrationScheme::FORWARD_EXPLICIT_EULER:
+                model->forward_explicit_euler(state_ptr, current_time, dt_ode, 
+                                            parameters[j].data(), value_ptr);
+                break;
+            case TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN:
+                model->generalized_rush_larsen(state_ptr, current_time, dt_ode, 
+                                             parameters[j].data(), value_ptr);
+                break;
+            case TimeIntegrationScheme::FORWARD_GENERALIZED_RUSH_LARSEN:
+                model->forward_generalized_rush_larsen(state_ptr, current_time, dt_ode, 
+                                                     parameters[j].data(), value_ptr);
+                break;
+            case TimeIntegrationScheme::HYBRID_RUSH_LARSEN:
+                model->hybrid_rush_larsen(state_ptr, current_time, dt_ode, 
+                                        parameters[j].data(), value_ptr);
+                break;
+            default:
+                break;
+            }
+        }
+        current_time += dt_ode;
+    }
+
+    // Optimized final update loop - combine with field updates for better cache locality
+    if (registered_fields_vectors.empty()) {
+        // Fast path when no registered fields
+        if (use_dimensionless) {
+            for (int i = 0; i < fes_truevsize; i++) {
+                x[i] = std::clamp(FromDimensionless(values[i][potential_idx]), Vmin, Vmax);
+            }
+        } else {
+            for (int i = 0; i < fes_truevsize; i++) {
+                x[i] = std::clamp(values[i][potential_idx], Vmin, Vmax);
+            }
+        }
+    } else {
+        // Combined loop for better cache locality (like StepOld)
+        for (int i = 0; i < fes_truevsize; i++) {
+            // Update potential
+            x[i] = use_dimensionless ? FromDimensionless(values[i][potential_idx]) : values[i][potential_idx];
+            x[i] = std::clamp(x[i], Vmin, Vmax);
+            
+            // Update registered fields in the same loop
+            for (size_t k = 0; k < registered_fields_vectors.size(); k++) {
+                int state_idx = (k >= potential_idx) ? k + 1 : k;
+                (*registered_fields_vectors[k])[i] = values[i][state_idx];
+            }
+        }
+    }
+
+    // Update all registered ParGridFunctions from their vectors
+    for (size_t k = 0; k < registered_fields.size(); k++) {
+        registered_fields[k]->SetFromTrueDofs(*registered_fields_vectors[k]);
+    }
+
+    t = provisional ? t : current_time;
+}
+
+void ReactionSolver::StepOld(Vector &x, real_t &t, real_t &dt, bool provisional)
 {
     // Inner loop time step
     double dt_ode = dt / ode_substeps;
