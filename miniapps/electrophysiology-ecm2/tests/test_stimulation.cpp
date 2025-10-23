@@ -206,8 +206,8 @@ int main(int argc, char *argv[])
 
     //<--- 5.3 Define the ReactionSolver
     IonicModelType model_type = IonicModelType::MITCHELL_SCHAEFFER;
-    TimeIntegrationScheme solver_type = TimeIntegrationScheme::EXPLICIT_EULER; // TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN;
-    ReactionSolver *reaction_solver = new ReactionSolver(&fespace, model_type, solver_type, dt_ode);
+    TimeIntegrationScheme solver_type = TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN; // TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN;
+    ReactionSolver *reaction_solver = new ReactionSolver(&fespace, &chi_coeff, &Cm_coeff, model_type, solver_type, dt_ode);
 
 
     /////////////////////////////////////////////////////////////////////////////

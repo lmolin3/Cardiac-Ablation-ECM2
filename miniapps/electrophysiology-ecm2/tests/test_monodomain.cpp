@@ -25,7 +25,6 @@
 // - Partial assembly: -pa
 //       mpirun -np 4 ./test_monodomain -tf 1 -pa -o 6 -rs 5 --no-paraview -of ./Output/Electrophysiology/TestAssembly/PA
 
-
 #include "mfem.hpp"
 #include "../lib/reaction_solver.hpp"
 #include "../lib/monodomain_solver.hpp"
@@ -60,18 +59,20 @@ struct s_MeshContext // mesh
 
 struct ep_Context
 {
-    real_t sigma = 2; // conductivity   [mS/cm]
-    real_t chi = 2e3; // surface-to-volume ratio [cm^-1]
-    real_t Cm = 1e-3; // membrane capacitance [uF/cm^2]
+    // Electrophysiology parameters
+    // From Niederer et al. Benchmark
+    real_t sigma = 2.4e-3; // conductivity   [S/cm] = 2.4e-1 [S/m]
+    real_t chi = 1.4e3;    // surface-to-volume ratio [cm^-1]
+    real_t Cm = 1e-3;      // membrane capacitance [F/cm^2] = 1 [uF/cm^2]
     real_t matrix_factor = 1.0;
-    IonicModelType model_type = IonicModelType::MITCHELL_SCHAEFFER; // FENTON_KARMA;ss
+    IonicModelType model_type = IonicModelType::MITCHELL_SCHAEFFER; // FENTON_KARMA
 } ep_ctx;
 
 struct stim_Context
 {
     real_t t_start = 0.0;    // stimulation start time [ms]
-    real_t t_duration = 1.0; // stimulation duration [ms]
-    real_t Iampl = 2000;     // stimulation current amplitude  [mA/cm^3] = 1 [mA/mm^3]
+    real_t t_duration = 2.0; // stimulation duration [ms]
+    real_t Iampl = 50;       // stimulation current amplitude  [mA/cm^3] = 5e4 [uA/cm^3]
     StimulationType stim_type = StimulationType::CORNER;
 } stim_ctx;
 
@@ -92,10 +93,10 @@ int main(int argc, char *argv[])
     bool pa = false; // partial assembly
     // Timestepping
     bool last_step = false;
-    real_t dt = 0.05;       // Time step (ms)
-    real_t t = 0.0;         // Current time (ms)
-    real_t t_final = 500.0; // Final time (ms)
-    int dt_ode = 1;         // number of ODE substeps for the reaction solver
+    real_t dt = 0.05;         // Time step (ms)
+    real_t t = 0.0;           // Current time (ms)
+    real_t t_final = 500.0;   // Final time (ms)
+    int dt_ode = 1;           // number of ODE substeps for the reaction solver
     int ode_solver_type = 21; // Backward Euler. See ODESolver::Select for other options.
     // Output
     bool paraview = true;
@@ -255,8 +256,8 @@ int main(int argc, char *argv[])
     diff_solver->EnablePA(pa);
 
     //<--- 5.3 Define the ReactionSolver
-    TimeIntegrationScheme solver_type = TimeIntegrationScheme::EXPLICIT_EULER; // TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN;
-    ReactionSolver *reaction_solver = new ReactionSolver(&fespace, ep_ctx.model_type, solver_type, dt_ode);
+    TimeIntegrationScheme solver_type = TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN; // TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN;
+    ReactionSolver *reaction_solver = new ReactionSolver(&fespace, &chi_coeff, &Cm_coeff, ep_ctx.model_type, solver_type, dt_ode);
 
     /////////////////////////////////////////////////////////////////////////////
     //------     7. Add BCs and Setup the solvers
@@ -290,9 +291,17 @@ int main(int argc, char *argv[])
     parameters[reaction_solver->GetModel()->parameter_index("IstimStart")] = stim_ctx.t_start;                     //[ms]
     parameters[reaction_solver->GetModel()->parameter_index("IstimPulseDuration")] = stim_ctx.t_duration;          //[ms]}
 
+    // Unphysical modifications to reduce the APD for faster tests
+    if (ep_ctx.model_type == IonicModelType::MITCHELL_SCHAEFFER)
+        parameters[reaction_solver->GetModel()->parameter_index("tau_close")] /= 4; //[ms]
+    else if (ep_ctx.model_type == IonicModelType::FENTON_KARMA)
+    {
+        parameters[reaction_solver->GetModel()->parameter_index("tau_si")] *= 2.0;
+        parameters[reaction_solver->GetModel()->parameter_index("tau_w_plus")] /= 1.5;
+    }
 
     // Modify initial states if needed
-    //initial_states[reaction_solver->GetModel()->state_index("h")] = 1.0; // initial h []
+    // initial_states[reaction_solver->GetModel()->state_index("h")] = 1.0; // initial h []
 
     reaction_solver->Setup(initial_states, parameters);
 
@@ -558,7 +567,8 @@ real_t stimulation_corner(const Vector &x)
 real_t stimulation_plane_wave(const Vector &x)
 {
     real_t xs = -2.5;
-    real_t sharpness = 5e2; //  transition
-    return stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (x(0) - xs)));
+    real_t xr = -2.3;
+    // real_t sharpness = 5e2; //  transition
+    //  return stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (x(0) - xs)));
+    return (x(0) >= xs && x(0) <= xr) ? stim_ctx.Iampl : 0.0;
 }
-

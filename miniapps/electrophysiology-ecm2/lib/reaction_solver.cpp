@@ -4,8 +4,8 @@
 using namespace mfem;
 using namespace mfem::electrophysiology;
 
-ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, IonicModelType model_type_, TimeIntegrationScheme scheme_type, int ode_substeps_)
-    : fes(fes_), fes_truevsize(fes_->GetTrueVSize()), model_type(model_type_), scheme(scheme_type), ode_substeps(ode_substeps_)
+ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coeff_, Coefficient *Cm_coeff_, IonicModelType model_type_, TimeIntegrationScheme scheme_type, int ode_substeps_)
+    : fes(fes_), fes_truevsize(fes_->GetTrueVSize()), model_type(model_type_), scheme(scheme_type), ode_substeps(ode_substeps_), chi_coeff(chi_coeff_), Cm_coeff(Cm_coeff_)
 {
     switch (model_type)
     {
@@ -22,6 +22,21 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, IonicModelType model
     stimulation_gf.SetSpace(fes); 
     stimulation_gf = 0.0;
     stimulation_gf.GetTrueDofs(stimulation_vec);
+
+    chi_gf.SetSpace(fes);
+    chi_gf = 0.0;
+    chi_gf.GetTrueDofs(chi_vec);
+
+    Cm_gf.SetSpace(fes);
+    Cm_gf = 0.0;
+    Cm_gf.GetTrueDofs(Cm_vec);
+
+    // Project chi and Cm coefficients once per time step
+    // Outside the step, because FOR NOW we assume they are time-independent (potentially heterogeneous)
+    chi_gf.ProjectCoefficient(*chi_coeff);
+    chi_gf.GetTrueDofs(chi_vec);
+    Cm_gf.ProjectCoefficient(*Cm_coeff);
+    Cm_gf.GetTrueDofs(Cm_vec);
 }
 
 ReactionSolver::~ReactionSolver()
@@ -171,11 +186,9 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
     double dt_ode = dt / ode_substeps;
     double current_time = t;
     
-    // Cache frequently used values OUTSIDE the substep loop (moved from StepOld)
+    // Cache frequently used values OUTSIDE the substep loop
     int num_states = model->GetNumStates();
-    const double chi = 2e3;
-    const double Cm = 1e-3;
-    double Jscaling = model->dimensionless ? model->stim_sign * (chi * Cm * Vrange) : model->stim_sign;
+
     bool use_dimensionless = model->dimensionless;
     int potential_idx = model->potential_idx;
     int stim_ampl_idx = model->stim_ampl_idx;
@@ -201,11 +214,15 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         // Main computational loop - optimize memory access patterns
         for (int j = 0; j < fes_truevsize; j++)
         {
+            // Compute Jscaling based on chi and Cm
+            double Jscaling = model->dimensionless ? model->stim_sign * (chi_vec[j] * Cm_vec[j] * Vrange) : model->stim_sign;
+
+
             // Copy states efficiently - avoid std::copy overhead for small vectors
             double* state_ptr = states[j].data();
             double* value_ptr = values[j].data();
-            
-            // Manual unrolled copy for small num_states (typically 2-4 for cardiac models)
+
+            // Manual unrolled copy for small num_states (typically 2-4 for states cardiac models)
             if (num_states <= 4) {
                 for (int k = 0; k < num_states; k++) {
                     state_ptr[k] = value_ptr[k];
@@ -276,119 +293,6 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
 
     // Update all registered ParGridFunctions from their vectors
     for (size_t k = 0; k < registered_fields.size(); k++) {
-        registered_fields[k]->SetFromTrueDofs(*registered_fields_vectors[k]);
-    }
-
-    t = provisional ? t : current_time;
-}
-
-void ReactionSolver::StepOld(Vector &x, real_t &t, real_t &dt, bool provisional)
-{
-    // Inner loop time step
-    double dt_ode = dt / ode_substeps;
-    double current_time = t;
-
-    // Initialize values of x (potential) from the input vector
-    for (int i = 0; i < fes_truevsize; i++)
-    {
-        values[i][model->potential_idx] = model->dimensionless ? ToDimensionless(x[i]) : x[i];
-    }
-
-    // Solve ODE on each FE dof
-    // NOTE: for parallelization usign device we can use MFEM's forall
-    //       We need to: (i) replace for with forall
-    //                   (ii) put outer loop for ode_substeps inside the inner loop (so the outer loop is on fes_truevsize)
-    //                   (iii) make sure that device data is used (ReadWrite())
-    //                   (iv) re-organize how parameters and states are passed. we need SoA (Structure of Arrays) instead of AoS (Array of Structures)
-    //                        so that each thread can access its own data without conflicts.
-    //                        so that e.g. parameters[j] is a Vector on device
-    //
-    //      We might organize multi-vector variables as one large vector, and then use offsets to access each dof's data.
-    //      e.g.
-    //      Vector states_flat;      // Size: fes_truevsize * num_states
-    //      Vector values_flat;      // Size: fes_truevsize * num_states
-    //      Vector parameters_flat;  // Size: fes_truevsize * num_params
-    //      auto d_states = states_flat.ReadWrite();
-    //      auto d_values = values_flat.ReadWrite();
-    //      auto d_parameters = parameters_flat.ReadWrite();
-    //      mfem::forall(fes_truevsize, [=] MFEM_HOST_DEVICE (int i) {
-    //            double *state_i = &d_states[i * num_states];
-    //            double *param_i = &d_parameters[i * num_params];
-    //            ...
-    //      });
-
-    for (int i = 0; i < ode_substeps; i++) // Loop for ODE solver inner time stepping
-    {
-        // Project stimulation current
-        if (stimulation_coeff)
-        {
-            stimulation_coeff->SetTime(current_time+dt_ode);
-            stimulation_gf.ProjectCoefficient(*stimulation_coeff);
-            stimulation_gf.GetTrueDofs(stimulation_vec);
-        }
-
-        // Placeholder for physical constants
-        const double chi = 2e3;
-        const double Cm = 1e-3;
-        double Jscaling = model->dimensionless ? model->stim_sign * (chi * Cm * Vrange) : model->stim_sign;
-        int num_states = model->GetNumStates();
-
-        for (int j = 0; j < fes_truevsize; j++) // Loop on FE dofs
-        {
-            // Update states from current values
-            for (size_t k = 0; k < num_states; k++)
-            {
-                states[j][k] = values[j][k];
-            }
-
-            // Update stimulation current in parameters
-            parameters[j][model->stim_ampl_idx] = model->dimensionless ? stimulation_vec[j] / Jscaling : stimulation_vec[j];
-
-            // Call the appropriate time integration scheme
-            switch (scheme)
-            {
-            case TimeIntegrationScheme::EXPLICIT_EULER:
-                model->explicit_euler(states[j].data(), current_time, dt_ode, parameters[j].data(), values[j].data());
-                break;
-            case TimeIntegrationScheme::FORWARD_EXPLICIT_EULER:
-                model->forward_explicit_euler(states[j].data(), current_time, dt_ode, parameters[j].data(), values[j].data());
-                break;
-            case TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN:
-                model->generalized_rush_larsen(states[j].data(), current_time, dt_ode, parameters[j].data(), values[j].data());
-                break;
-            case TimeIntegrationScheme::FORWARD_GENERALIZED_RUSH_LARSEN:
-                model->forward_generalized_rush_larsen(states[j].data(), current_time, dt_ode, parameters[j].data(), values[j].data());
-                break;
-            case TimeIntegrationScheme::HYBRID_RUSH_LARSEN:
-                model->hybrid_rush_larsen(states[j].data(), current_time, dt_ode, parameters[j].data(), values[j].data());
-                break;
-            default:
-                break;
-            }
-        }
-        current_time += dt_ode;
-    }
-
-    // Update potential (MFEM Vector) from ODE solution, and all registered fields
-    // If uses dimensionless potential, convert back to [Vmin, Vmax] range
-    // @note: this can be optimized by combining with the previous loop,
-    //       but we'd require a vector for each registered field
-    for (int i = 0; i < fes_truevsize; i++)
-    {
-        x[i] = model->dimensionless ? FromDimensionless(values[i][model->potential_idx]) : values[i][model->potential_idx];
-        x[i] = std::clamp(x[i], Vmin, Vmax);
-        //  Update vector for each registered field
-        for (size_t k = 0; k < registered_fields_vectors.size(); k++)
-        {
-            // Find the corresponding state index (accounting for skipped potential)
-            int state_idx = (k >= model->potential_idx) ? k + 1 : k;
-            (*registered_fields_vectors[k])[i] = values[i][state_idx];
-        }
-    }
-
-    // Update all registered ParGridFunctions from their vectors
-    for (size_t k = 0; k < registered_fields.size(); k++)
-    {
         registered_fields[k]->SetFromTrueDofs(*registered_fields_vectors[k]);
     }
 

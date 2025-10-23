@@ -53,10 +53,16 @@ namespace mfem
 
             Coefficient *stimulation_coeff = nullptr; // Stimulation function   //< NOT OWNED
             ParGridFunction stimulation_gf;           // GridFunction to hold the stimulation values at dofs
+            Coefficient *chi_coeff = nullptr;         // Chi coefficient function   //< NOT OWNED
+            Coefficient *Cm_coeff = nullptr;          // Membrane capacitance function //< NOT OWNED
+            ParGridFunction chi_gf;                   // GridFunction to hold the chi values at dofs
+            ParGridFunction Cm_gf;                    // GridFunction to hold the Cm values at dofs
             mutable Vector stimulation_vec;           // Vector to hold the stimulation values at dofs
+            mutable Vector chi_vec;                   // Vector to hold the chi values at dofs
+            mutable Vector Cm_vec;                    // Vector to hold the Cm values at dofs
 
-            std::vector<ParGridFunction*> registered_fields; // Registered fields for output
-            std::vector<Vector*> registered_fields_vectors;  // Corresponding vectors for registered fields
+            std::vector<ParGridFunction *> registered_fields; // Registered fields for output
+            std::vector<Vector *> registered_fields_vectors;  // Corresponding vectors for registered fields
 
             real_t Vmin = -80;
             real_t Vmax = -20;
@@ -77,7 +83,7 @@ namespace mfem
             /**
              * @brief Constructor for the ReactionSolver class.
              */
-            ReactionSolver(ParFiniteElementSpace *fes, IonicModelType model_type, TimeIntegrationScheme solver_type = TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN, int dt_ode = 1);
+            ReactionSolver(ParFiniteElementSpace *fes, Coefficient *chi_coeff_, Coefficient *Cm_coeff_, IonicModelType model_type, TimeIntegrationScheme solver_type = TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN, int dt_ode = 1);
 
             /**
              * @brief Destructor for the ReactionSolver class.
@@ -147,8 +153,6 @@ namespace mfem
              * @brief Solves the ionic model.
              */
             void Step(Vector &x, real_t &t, real_t &dt, bool provisional = false);
-
-            void StepOld(Vector &x, real_t &t, real_t &dt, bool provisional = false);
 
             /**
              * @brief Prints the conversion index table.

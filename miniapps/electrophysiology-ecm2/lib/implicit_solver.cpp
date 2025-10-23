@@ -24,7 +24,14 @@ ImplicitSolverFA::ImplicitSolverFA(Array<int> &ess_tdof_list_, int dim, real_t d
     // prec->SetType(HypreSmoother::Jacobi); // See hypre.hpp for more options --> use default l1-scaled block Gauss-Seidel/SSOR
     prec = std::make_unique<HypreBoomerAMG>();
     prec->iterative_mode = false;
-    static_cast<HypreBoomerAMG *>(prec.get())->SetPrintLevel(0);
+
+    HypreBoomerAMG *amg_prec = static_cast<HypreBoomerAMG *>(prec.get());
+    amg_prec->SetPrintLevel(0);
+    amg_prec->SetRelaxType(6);           // Chebyshev Smoother for fast, parallel smoothing
+    amg_prec->SetCycleNumSweeps(1, 1);   // 1 pre/post sweep (start here)
+    amg_prec->SetStrengthThresh(0.5);    // Increased threshold for robustness
+    amg_prec->SetAggressiveCoarsening(2); // Two levels of aggressive coarsening (Major speed boost)
+    amg_prec->SetCoarsening(8);          // Ensure HMIS or equivalent (Coarsening 8 is typical default)
 
     linear_solver = std::make_unique<CGSolver>(M->GetComm());
     linear_solver->iterative_mode = false;
@@ -133,10 +140,19 @@ void ImplicitSolverPA::BuildOperator()
         prec = std::make_unique<OperatorJacobiSmoother>(*T_form, ess_tdof_list);
         break;
     case 1: // LOR
+    {
         lor = std::make_unique<ParLORDiscretization>(*T_form, ess_tdof_list);
         prec = std::make_unique<HypreBoomerAMG>(lor->GetAssembledMatrix());
-        static_cast<HypreBoomerAMG *>(prec.get())->SetPrintLevel(0);
-        break;
+
+        HypreBoomerAMG *amg_prec = static_cast<HypreBoomerAMG *>(prec.get());
+        amg_prec->SetPrintLevel(0);
+        amg_prec->SetRelaxType(6);           // Chebyshev Smoother for fast, parallel smoothing
+        amg_prec->SetCycleNumSweeps(1, 1);   // 1 pre/post sweep (start here)
+        amg_prec->SetStrengthThresh(0.5);    // Increased threshold for robustness
+        amg_prec->SetAggressiveCoarsening(2); // Two levels of aggressive coarsening (Major speed boost)
+        amg_prec->SetCoarsening(8);          // Ensure HMIS or equivalent (Coarsening 8 is typical default)
+    }
+    break;
     default:
         MFEM_ABORT("Unknown preconditioner type.");
     }
