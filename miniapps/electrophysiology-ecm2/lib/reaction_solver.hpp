@@ -119,6 +119,15 @@ namespace mfem
 
 
             /**
+             * @brief Get a ParGridFunction representing a specific state variable.
+             * @param state_index Index of the state variable to retrieve.
+             * @param state_gf Output pointer to the ParGridFunction representing the state variable.
+             * @return ownership status (true if the ParGridFunction was created and must be deleted by the caller, false if it is managed internally).
+             * @note: This should be called after Setup(), ideally after RegisterFields(), to avoid duplicate ParGridFunction creation.
+             */
+            bool GetStateGridFunction(int state_index, ParGridFunction *&state_gf);
+
+            /**
              * @brief Register fields for output.
              */
             void RegisterFields(DataCollection &dc);

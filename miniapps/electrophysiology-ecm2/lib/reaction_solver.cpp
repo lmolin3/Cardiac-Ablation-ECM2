@@ -160,24 +160,84 @@ void ReactionSolver::SetStimulation(Coefficient *stim)
 
 void ReactionSolver::RegisterFields(DataCollection &dc)
 {
-    // For each state variable, apart from potential, register a field
     int num_states = model->GetNumStates();
+    int num_non_potential_states = num_states - 1;
+    
+    // Ensure registered_fields is large enough
+    if (static_cast<int>(registered_fields.size()) < num_non_potential_states) {
+        registered_fields.resize(num_non_potential_states, nullptr);
+        registered_fields_vectors.resize(num_non_potential_states, nullptr);
+    }
+    
+    // Register each state variable, apart from potential
     for (int j = 0; j < num_states; j++)
     {
         if (j == model->potential_idx)
-            continue; // Skip potential, already registered elsewhere
-
-        // Create a ParGridFunction and its vector for update for the state variable and keep track of it in registered_fields
+            continue; // Skip potential
+        
+        int adjusted_index = j;
+        if (j > model->potential_idx) {
+            adjusted_index -= 1;
+        }
+        
+        // Only create if not already registered
+        if (registered_fields[adjusted_index] == nullptr) {
+            ParGridFunction *state_gf = new ParGridFunction(fes);
+            Vector *state_vec = new Vector(fes_truevsize);
+            registered_fields[adjusted_index] = state_gf;
+            registered_fields_vectors[adjusted_index] = state_vec;
+        }
+        
+        // Register with DataCollection
         std::string field_name = "state_" + std::to_string(j);
-        ParGridFunction *state_gf = new ParGridFunction(fes);
-        Vector *state_vec = new Vector(fes_truevsize);
-        registered_fields.push_back(state_gf);
-        registered_fields_vectors.push_back(state_vec);
+        dc.RegisterField(field_name.c_str(), registered_fields[adjusted_index]);
+    }
+}
 
-        // Register the field with the DataCollection
-        dc.RegisterField(field_name.c_str(), state_gf);
+bool ReactionSolver::GetStateGridFunction(int state_index, ParGridFunction *&state_gf)
+{
+    MFEM_ASSERT(state_index >= 0 && state_index < model->GetNumStates(),
+                "Invalid state index in GetStateGridFunction");
+    MFEM_ASSERT(state_index != model->potential_idx,
+                "Cannot get potential through GetStateGridFunction, use GetPotential instead");
+
+    int adjusted_index = state_index;
+    if (state_index > model->potential_idx)
+    {
+        adjusted_index -= 1; // Adjust index since potential is skipped
     }
 
+    // Ensure registered_fields is large enough to hold all non-potential states
+    int num_non_potential_states = model->GetNumStates() - 1;
+    if (static_cast<int>(registered_fields.size()) < num_non_potential_states)
+    {
+        registered_fields.resize(num_non_potential_states, nullptr);
+        registered_fields_vectors.resize(num_non_potential_states, nullptr);
+    }
+
+    // Check if the field is already registered (non-null)
+    if (registered_fields[adjusted_index] != nullptr)
+    {
+        state_gf = registered_fields[adjusted_index];
+        return false; // Caller does NOT own the pointer
+    }
+
+    // Field not registered yet - create and register it now
+    state_gf = new ParGridFunction(fes);
+    Vector *state_vec = new Vector(fes_truevsize);
+
+    // Populate with current state values
+    for (int i = 0; i < fes_truevsize; i++)
+    {
+        (*state_vec)[i] = values[i][state_index];
+    }
+    state_gf->SetFromTrueDofs(*state_vec);
+
+    // Store in the sparse array
+    registered_fields[adjusted_index] = state_gf;
+    registered_fields_vectors[adjusted_index] = state_vec;
+
+    return false; // Caller does NOT own the pointer (we manage it)
 }
 
 void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
@@ -283,17 +343,21 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
             x[i] = use_dimensionless ? FromDimensionless(values[i][potential_idx]) : values[i][potential_idx];
             x[i] = std::clamp(x[i], Vmin, Vmax);
             
-            // Update registered fields in the same loop
+            // Update registered fields in the same loop (skip null entries)
             for (size_t k = 0; k < registered_fields_vectors.size(); k++) {
-                int state_idx = (k >= potential_idx) ? k + 1 : k;
-                (*registered_fields_vectors[k])[i] = values[i][state_idx];
+                if (registered_fields_vectors[k] != nullptr) {
+                    int state_idx = (k >= static_cast<size_t>(potential_idx)) ? k + 1 : k;
+                    (*registered_fields_vectors[k])[i] = values[i][state_idx];
+                }
             }
         }
     }
 
-    // Update all registered ParGridFunctions from their vectors
+    // Update all registered ParGridFunctions from their vectors (skip null entries)
     for (size_t k = 0; k < registered_fields.size(); k++) {
-        registered_fields[k]->SetFromTrueDofs(*registered_fields_vectors[k]);
+        if (registered_fields[k] != nullptr) {
+            registered_fields[k]->SetFromTrueDofs(*registered_fields_vectors[k]);
+        }
     }
 
     t = provisional ? t : current_time;

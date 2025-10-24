@@ -24,7 +24,16 @@
 //       mpirun -np 4 ./test_monodomain -tf 1 -fa -o 6 -rs 5 --no-paraview -of ./Output/Electrophysiology/TestAssembly/FA
 // - Partial assembly: -pa
 //       mpirun -np 4 ./test_monodomain -tf 1 -pa -o 6 -rs 5 --no-paraview -of ./Output/Electrophysiology/TestAssembly/PA
-
+//
+//
+// Spiral examples (2D, but can be run in 3D as well) using S1-S2 cross-field protocol:
+//
+// 1) Single spiral wave initiation, S2 from a line in the bottom half-domain:
+//    mpirun -np 4 ./test_monodomain -st 2 -d 2 -tf 500 -mt 1 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output 
+//
+// 2) Multiple spiral wave initiations, S2 from rectangular area in the center:
+//    mpirun -np 4 ./test_monodomain -st 3 -d 2 -tf 500 -mt 1 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
+// 
 #include "mfem.hpp"
 #include "../lib/reaction_solver.hpp"
 #include "../lib/monodomain_solver.hpp"
@@ -39,6 +48,10 @@ using namespace electrophysiology;
 real_t stimulation_corner(const Vector &x);
 real_t stimulation_plane_wave(const Vector &x);
 real_t stimulation_spiral_wave(const Vector &x, real_t t);
+real_t stimulation_spiral_wave_v2(const Vector &x, real_t t);
+real_t stimulation_spiral_wave_v3(const Vector &x, real_t t);
+
+inline bool CheckS1ReachedCenter(real_t potential_left, real_t potential_right, real_t recovery_left, real_t recovery_right);
 
 void conductivity_function(const Vector &x, DenseMatrix &Sigma);
 
@@ -46,6 +59,9 @@ enum class StimulationType : int
 {
     CORNER = 0,
     PLANE_WAVE = 1,
+    SPIRAL_WAVE = 2,
+    SPIRAL_WAVE_v2 = 3,
+    SPIRAL_WAVE_v3 = 4
 };
 
 struct s_MeshContext // mesh
@@ -63,7 +79,7 @@ struct ep_Context
     // From Niederer et al. Benchmark
     real_t sigma = 2.4e-3; // conductivity   [S/cm] = 2.4e-1 [S/m]
     real_t chi = 1.4e3;    // surface-to-volume ratio [cm^-1]
-    real_t Cm = 1e-3;      // membrane capacitance [F/cm^2] = 1 [uF/cm^2]
+    real_t Cm = 1e-3;      // membrane capacitance [mF/cm^2] = 1 [uF/cm^2]
     real_t matrix_factor = 1.0;
     IonicModelType model_type = IonicModelType::MITCHELL_SCHAEFFER; // FENTON_KARMA
 } ep_ctx;
@@ -75,6 +91,22 @@ struct stim_Context
     real_t Iampl = 50;       // stimulation current amplitude  [mA/cm^3] = 5e4 [uA/cm^3]
     StimulationType stim_type = StimulationType::CORNER;
 } stim_ctx;
+
+
+struct spiral_Context
+{
+    // Spiral wave specific
+    real_t S1_threshold_potential = -67.0; // mV
+    real_t S1_threshold_recovery = 0.5;    // dimensionless
+    bool S1_depolarized_center = false;
+    bool S2_started = false;
+    Vector S2_center;
+    real_t S2_width = 0.4;
+    real_t t_start_S2 = 0.0;       // time to start S2 stimulus (determined dynamically)
+    real_t Iampl_S2 = 50.0;        // S2 stimulation current amplitude
+    real_t t_duration_S2 = 1.0;    // S2 stimulation duration [ms]
+    bool enable_multiple_stimulations = false;
+} spiral_ctx;
 
 int main(int argc, char *argv[])
 {
@@ -143,6 +175,9 @@ int main(int argc, char *argv[])
                    "Stimulation type: 0-CORNER, 1-PLANE_WAVE");
     args.AddOption((int *)&ep_ctx.model_type, "-mt", "--model-type",
                    "Ionic model type: 0-MITCHELL_SCHAEFFER, 1-FENTON_KARMA");
+    args.AddOption(&spiral_ctx.enable_multiple_stimulations, "-ems", "--enable-multiple-stims",
+                     "-dms", "--disable-multiple-stims",
+                     "Enable or disable multiple S2 stimulations (default disabled)");
     // Output
     args.AddOption(&paraview, "-pv", "--paraview", "-no-pv", "--no-paraview",
                    "Enable or disable Paraview output (default enabled)");
@@ -194,16 +229,38 @@ int main(int argc, char *argv[])
 
     delete serial_mesh; // the serial mesh is no longer needed
 
+
     // Find the reference point for evaluating the solution
-    Vector point(Mesh_ctx.dim);
-    point(0) = 0.0;
-    point(1) = 0.0;
-    if (Mesh_ctx.dim == 3)
+
+    DenseMatrix points;
+    if (stim_ctx.stim_type == StimulationType::CORNER || stim_ctx.stim_type == StimulationType::PLANE_WAVE)
     {
-        point(2) = 0.25;
+        Vector point(Mesh_ctx.dim);
+        point(0) = 0.0;
+        point(1) = 0.0;
+        if (Mesh_ctx.dim == 3)
+        {
+            point(2) = 0.25;
+        }
+        points.SetSize(Mesh_ctx.dim, 1);
+        points.SetCol(0, point);
     }
-    DenseMatrix points(Mesh_ctx.dim, 1);
-    points.SetCol(0, point);
+    else 
+    {
+        Vector point_left(Mesh_ctx.dim), point_right(Mesh_ctx.dim);
+        point_left(0) = 0.0 - spiral_ctx.S2_width;
+        point_left(1) = 0.0;
+        point_right(0) = 0.0 + spiral_ctx.S2_width;
+        point_right(1) = 0.0;
+        if (Mesh_ctx.dim == 3)
+        {
+            point_left(2) = 0.25;
+            point_right(2) = 0.25;
+        }
+        points.SetSize(Mesh_ctx.dim, 2);
+        points.SetCol(0, point_left);
+        points.SetCol(1, point_right);
+    }
 
     Array<int> elem_ids;
     Array<IntegrationPoint> ips;
@@ -292,17 +349,29 @@ int main(int argc, char *argv[])
     parameters[reaction_solver->GetModel()->parameter_index("IstimPulseDuration")] = stim_ctx.t_duration;          //[ms]}
 
     // Unphysical modifications to reduce the APD for faster tests
+    int state_idx = -1;
     if (ep_ctx.model_type == IonicModelType::MITCHELL_SCHAEFFER)
+    {
+        state_idx = reaction_solver->GetModel()->state_index("h");
         parameters[reaction_solver->GetModel()->parameter_index("tau_close")] /= 4; //[ms]
+        parameters[reaction_solver->GetModel()->parameter_index("tau_open")] /= 4;  //[ms]
+    }
     else if (ep_ctx.model_type == IonicModelType::FENTON_KARMA)
     {
+        state_idx = reaction_solver->GetModel()->state_index("v");
         parameters[reaction_solver->GetModel()->parameter_index("tau_si")] *= 2.0;
-        parameters[reaction_solver->GetModel()->parameter_index("tau_w_plus")] /= 1.5;
+        parameters[reaction_solver->GetModel()->parameter_index("tau_w_plus")] /= 2.0;
+        parameters[reaction_solver->GetModel()->parameter_index("tau_v_plus")] *= 2.0;
+    }
+
+    // Spiral wave specific
+    if (stim_ctx.stim_type > StimulationType::PLANE_WAVE)
+    {
+        reaction_solver->GetModel()->DisableInternalTimeManagement(parameters.data());
     }
 
     // Modify initial states if needed
     // initial_states[reaction_solver->GetModel()->state_index("h")] = 1.0; // initial h []
-
     reaction_solver->Setup(initial_states, parameters);
 
     //<--- 7.3 Define and set the stimulation current
@@ -316,6 +385,15 @@ int main(int argc, char *argv[])
         break;
     case StimulationType::PLANE_WAVE:
         Istim_coeff = new FunctionCoefficient(stimulation_plane_wave);
+        break;
+    case StimulationType::SPIRAL_WAVE:
+        Istim_coeff = new FunctionCoefficient(stimulation_spiral_wave);
+        break;
+    case StimulationType::SPIRAL_WAVE_v2:
+        Istim_coeff = new FunctionCoefficient(stimulation_spiral_wave_v2);
+        break;
+    case StimulationType::SPIRAL_WAVE_v3:
+        Istim_coeff = new FunctionCoefficient(stimulation_spiral_wave_v3);
         break;
     default:
         mfem_error("Unknown stimulation type!");
@@ -356,6 +434,9 @@ int main(int argc, char *argv[])
     pvdc.RegisterField("Istim", Istim_gf);
     reaction_solver->RegisterFields(pvdc); // register ionic model states
 
+    ParGridFunction *state_gf = nullptr;
+    bool own_gf = reaction_solver->GetStateGridFunction(state_idx, state_gf);
+
     if (paraview)
     {
         // Save initial condition
@@ -383,7 +464,11 @@ int main(int argc, char *argv[])
         out << "-----------------------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl;
     }
 
-    real_t potential = 0.0; // just placeholder -->  we can check what we want to output
+    real_t potential = 0.0;
+    real_t potential_right = 0.0;
+    real_t recovery = 0.0;
+    real_t recovery_right = 0.0;
+
     int count = 0;
 
     for (int step = 0; !last_step; ++step)
@@ -413,6 +498,28 @@ int main(int argc, char *argv[])
         diff_solver->UpdateTimeStepHistory(u);
         t += dt;
 
+        //<--- Compute potential at the reference point (center of the domain)
+        // Only evaluate grid functions if the point was found on this rank
+        real_t potential_loc = (elem_ids[0] >= 0) ? u_gf->GetValue(elem_ids[0], ips[0]) : 0.0;
+        real_t recovery_loc = (elem_ids[0] >= 0) ? state_gf->GetValue(elem_ids[0], ips[0]) : 0.0;
+
+        // Reduce values across all ranks to get the result from whichever rank found the point
+        MPI_Allreduce(&potential_loc, &potential, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&recovery_loc, &recovery, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+        //<--- Check if back front reached center (for spiral wave only)
+        if (stim_ctx.stim_type > StimulationType::PLANE_WAVE && (!spiral_ctx.S2_started || spiral_ctx.enable_multiple_stimulations))
+        {
+            real_t potential_loc_right = (elem_ids[1] >= 0) ? u_gf->GetValue(elem_ids[1], ips[1]) : 0.0;
+            real_t recovery_loc_right = (elem_ids[1] >= 0) ? state_gf->GetValue(elem_ids[1], ips[1]) : 0.0;
+            MPI_Allreduce(&potential_loc_right, &potential_right, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&recovery_loc_right, &recovery_right, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            if (CheckS1ReachedCenter(potential, potential_right, recovery, recovery_right))
+            {
+                spiral_ctx.t_start_S2 = t;
+            }
+        }
+
         //<--- Save results
         chrono.Clear();
         chrono.Start();
@@ -427,16 +534,6 @@ int main(int argc, char *argv[])
 
         chrono.Clear();
         chrono.Start();
-
-        //<--- Evaluate potential at the reference point
-        if (verbose)
-        {
-            // Only evaluate grid functions if the point was found on this rank
-            real_t potential_loc = (elem_ids[0] >= 0) ? u_gf->GetValue(elem_ids[0], ips[0]) : 0.0;
-
-            // Reduce values across all ranks to get the result from whichever rank found the point
-            MPI_Allreduce(&potential_loc, &potential, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        }
 
         if (Mpi::Root() && verbose)
         {
@@ -529,6 +626,11 @@ int main(int argc, char *argv[])
     delete reaction_solver;
     delete diff_solver;
 
+    if (own_gf)
+    {
+        delete state_gf;
+    }
+
     return 0;
 }
 
@@ -571,4 +673,182 @@ real_t stimulation_plane_wave(const Vector &x)
     // real_t sharpness = 5e2; //  transition
     //  return stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (x(0) - xs)));
     return (x(0) >= xs && x(0) <= xr) ? stim_ctx.Iampl : 0.0;
+}
+
+// Define the stimulation current as a function
+// Here we stimulate a spiral wave using an S1-S2 protocol
+// Domain is [-2.5,2.5]x[-2.5,2
+// The S1 is a plane wave at the left side of the domain, traveling rightwards
+// The S2 stimulates a narrow rectangular region at the center of the domain,
+// with height equal to half the domain height (2.5), and width 0.2
+// The S2 is triggered after the S1 has depolarized and repolarized the center
+// of the domain, given by spiral_ctx.S1_repolarized_center
+real_t stimulation_spiral_wave(const Vector &x, real_t t)
+{
+    // S1 plane wave parameters
+    real_t xs = -2.5;
+    real_t xr = -2.3;
+
+    // S2 rectangular region parameters
+    real_t x_center = 0.0;
+    real_t y_center = 0.0;
+    real_t half_width = spiral_ctx.S2_width / 2.0;     
+
+    // Check if we are in the S1 stimulation phase
+    if (t >= stim_ctx.t_start && t <= stim_ctx.t_start + stim_ctx.t_duration)
+    {
+        // S1: plane wave at the left side of the domain
+        if (x(0) >= xs && x(0) <= xr)
+        {
+            return stim_ctx.Iampl;
+        }
+    }
+    else if (spiral_ctx.S1_depolarized_center && spiral_ctx.S2_started)
+    {
+        // Check if we are in the S2 stimulation phase
+        if (t >= spiral_ctx.t_start_S2 &&
+            t <= spiral_ctx.t_start_S2 + spiral_ctx.t_duration_S2)
+        {
+            // S2: rectangular region at the center of the domain
+            if (x(0) >= (x_center - half_width) && x(0) <= (x_center + half_width) && x(1) <= y_center)
+            {
+                return spiral_ctx.Iampl_S2;
+            }
+        }
+    }
+
+    return 0.0;
+
+}
+
+// Same as above but S2 is now a stimulation on a rectangular area in the center
+real_t stimulation_spiral_wave_v2(const Vector &x, real_t t)
+{
+    // S1 plane wave parameters
+    real_t xs = -2.5;
+    real_t xr = -2.3;
+
+    // S2 rectangular region parameters
+    real_t x_center = 0.0;
+    real_t y_center = 0.0;
+    real_t half_width = spiral_ctx.S2_width / 2.0;     
+
+    // Check if we are in the S1 stimulation phase
+    if (t >= stim_ctx.t_start && t <= stim_ctx.t_start + stim_ctx.t_duration)
+    {
+        // S1: plane wave at the left side of the domain
+        if (x(0) >= xs && x(0) <= xr)
+        {
+            return stim_ctx.Iampl;
+        }
+    }
+    else if (spiral_ctx.S1_depolarized_center && spiral_ctx.S2_started)
+    {
+        // Check if we are in the S2 stimulation phase
+        if (t >= spiral_ctx.t_start_S2 &&
+            t <= spiral_ctx.t_start_S2 + spiral_ctx.t_duration_S2)
+        {
+            // S2: rectangular region in the center of the domain
+            // x \in [x_center-half_width, x_center+half_width], y \in [y_center- 1, y_center+1]
+            if (x(0) >= (x_center - half_width) && x(0) <= (x_center + half_width) &&
+                x(1) >= (y_center - 1) && x(1) <= (y_center + 1))
+            {
+                return spiral_ctx.Iampl_S2;
+            }
+        }
+    }
+
+    return 0.0;
+
+}
+
+// Same as above but S2 is now a stimulation on two rectangular areas.
+// One is in the mid top half of the domain, the other is centered in the bottom edge
+real_t stimulation_spiral_wave_v3(const Vector &x, real_t t)
+{
+    // S1 plane wave parameters
+    real_t xs = -2.5;
+    real_t xr = -2.3;
+
+    // S2 rectangular region parameters
+    real_t x_center = 0.0;
+    real_t y_center_1 = 1.25;
+    real_t y_center_2 = -2.25;
+    real_t quarter_width = spiral_ctx.S2_width / 4.0;
+
+    // Check if we are in the S1 stimulation phase
+    if (t >= stim_ctx.t_start && t <= stim_ctx.t_start + stim_ctx.t_duration)
+    {
+        // S1: plane wave at the left side of the domain
+        if (x(0) >= xs && x(0) <= xr)
+        {
+            return stim_ctx.Iampl;
+        }
+    }
+    else if (spiral_ctx.S1_depolarized_center && spiral_ctx.S2_started)
+    {
+        // Check if we are in the S2 stimulation phase
+        if (t >= spiral_ctx.t_start_S2 &&
+            t <= spiral_ctx.t_start_S2 + spiral_ctx.t_duration_S2)
+        {
+            // S2: rectangular regions at the center top and bottom of the domain
+            // Top: x \in [x_center-quarter_width, x_center+quarter_width], y \in [y_center_1-0.5, y_center_1+0.5]
+            // Bottom: x \in [x_center-quarter_width, x_center+quarter_width], y \in [y_center_2-0.5, y_center_2+0.5]
+            if ( (x(0) >= (x_center - quarter_width) && x(0) <= (x_center + quarter_width) &&
+                  x(1) >= (y_center_1 - 0.5) && x(1) <= (y_center_1 + 0.5)) ||
+                 (x(0) >= (x_center - quarter_width) && x(0) <= (x_center + quarter_width) &&
+                  x(1) >= (y_center_2 - 0.5) && x(1) <= (y_center_2 + 0.5)) )
+            {
+                return spiral_ctx.Iampl_S2;
+            }
+        }
+    }
+
+    return 0.0;
+}
+
+// Check if the S1 wave has reached the center (depolarized)
+// and subsequently repolarized, so we can trigger the S2 stimulus
+// Uses parameters from spiral_ctx
+inline bool CheckS1ReachedCenter(real_t potential_left, real_t potential_right, real_t recovery_left, real_t recovery_right)
+{
+    if (!spiral_ctx.S1_depolarized_center)
+    {
+        if (potential_left >= spiral_ctx.S1_threshold_potential)
+        {
+            spiral_ctx.S1_depolarized_center = true;
+            if (Mpi::Root())
+            {
+                cout << "S1 depolarized center detected!" << endl;
+            }
+        }
+    }
+    else
+    {
+        // Check if at:
+        // center-width (left): recovery > threshold (repolarized), potential < threshold (resting)
+        // center+width (right): recovery < threshold (still refractory), potential > threshold (depolarized/repolarizing)
+        bool recovery_flag = (recovery_left > spiral_ctx.S1_threshold_recovery && recovery_right < spiral_ctx.S1_threshold_recovery);
+        bool potential_flag = (potential_left < spiral_ctx.S1_threshold_potential && potential_right > spiral_ctx.S1_threshold_potential);
+        
+        // Only trigger if not currently stimulating and conditions are met
+        if (recovery_flag && !spiral_ctx.S2_started)
+        {
+            spiral_ctx.S2_started = true;
+            if (Mpi::Root())
+            {
+                out << "S1 repolarized center detected!" << std::endl;
+                out << "  Left  (x=" << -spiral_ctx.S2_width << "): V=" << potential_left << " mV, h=" << recovery_left << endl;
+                out << "  Right (x=" << spiral_ctx.S2_width << "): V=" << potential_right << " mV, h=" << recovery_right << endl;
+            }
+        }
+        // Reset S2_started flag when conditions are no longer met (allows re-triggering)
+        // Only reset if multiple stimulations are enabled
+        else if (!recovery_flag && spiral_ctx.S2_started && spiral_ctx.enable_multiple_stimulations)
+        {
+            spiral_ctx.S2_started = false;
+        }
+    }
+
+    return spiral_ctx.S2_started && spiral_ctx.S1_depolarized_center;
 }
