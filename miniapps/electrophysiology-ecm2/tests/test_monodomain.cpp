@@ -34,6 +34,10 @@
 // 2) Multiple spiral wave initiations, S2 from rectangular area in the center:
 //    mpirun -np 4 ./test_monodomain -st 3 -d 2 -tf 500 -mt 1 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
 // 
+// 3) Multiple spiral wave initiations, S2 from two rectangular areas (top center and bottom edge):
+//    mpirun -np 4 ./test_monodomain -st 4 -d 2 -tf 500 -mt 0 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
+//
+
 #include "mfem.hpp"
 #include "../lib/reaction_solver.hpp"
 #include "../lib/monodomain_solver.hpp"
