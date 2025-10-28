@@ -46,12 +46,12 @@ MonodomainDiffusionSolver::MonodomainDiffusionSolver(ParFiniteElementSpace *fes_
    b.SetSize(fes_truevsize); b = 0.0;
 
    //<--- Initialize the ODEStateDataVector for previous solution
-   auto mem_type = GetMemoryType(this->GetMemoryClass());
-   int state_size = 2; // Store two previous time steps
-   u_prev = new ODEStateDataVector(state_size);
-   u_prev->SetSize(this->Width(), mem_type);
-   Vector tmp(fes_truevsize); tmp = 0.0;
-   u_prev->Append(tmp);
+   //auto mem_type = GetMemoryType(this->GetMemoryClass());
+   //int state_size = 2; // Store two previous time steps
+   //u_prev = new ODEStateDataVector(state_size);
+   //u_prev->SetSize(this->Width(), mem_type);
+   //Vector tmp(fes_truevsize); tmp = 0.0;
+   //u_prev->Append(tmp);
 
    //<--- Create ODESolver
    ode_solver = ODESolver::Select(ode_solver_type);
@@ -115,24 +115,9 @@ void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type)
       K_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       RobinMass_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
    }
+
    // Assemble
-   Array<int> empty;
-   int skip_zeros = 0;                   // keep sparsity pattern of M_form and K_form the same
-   M_form->Assemble(skip_zeros);         
-   K_form->Assemble(skip_zeros);         
-   RobinMass_form->Assemble(skip_zeros); 
-   K_form->FormSystemMatrix(empty, opK);
-   RobinMass_form->FormSystemMatrix(empty, opRobinMass); 
-   if (pa)
-   {
-      M_form->FormSystemMatrix(ess_tdof_list, opM);
-   }
-   else
-   {
-      M_form->FormSystemMatrix(empty, opM);
-      Mfull = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
-      opMe.EliminateRowsCols(opM, ess_tdof_list);
-   }
+   AssembleOperators();
 
    ///<--- Linear Solvers
    // Mass matrix
@@ -178,38 +163,57 @@ void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type)
 
 void MonodomainDiffusionSolver::Update()
 {
-   int skip_zeros = 0;
-   Array<int> empty;
-   // Inform the bilinear forms that the space has changed and reassemble.
+   //<--- Update the space: recalculate the number of DOFs and construct a matrix
+   // that will adjust any GridFunctions to the new mesh state.
+   fes->Update();
+
+   //<--- Interpolate the solution on the new mesh by applying the transformation
+   // matrix computed in the finite element space.
+   u_gf.Update();
+   du_dt_gf.Update();
+
+   //<--- Rebuild the bilinear forms 
    M_form->Update();
-   M_form->Assemble(skip_zeros);
-
-   if (pa)
-   {
-      M_form->FormSystemMatrix(ess_tdof_list, opM);
-   }
-   else
-   {
-      M_form->FormSystemMatrix(empty, opM);
-      Mfull = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
-      opMe.EliminateRowsCols(opM, ess_tdof_list);
-   }
-
    K_form->Update();
-   K_form->Assemble(skip_zeros);
-   K_form->FormSystemMatrix(empty, opK);
 
    if (bcs->GetRobinBcs().size() > 0)
    {
       RobinMass_form->Update(); 
    }
 
-   // Inform the linear forms that the space has changed.
+   AssembleOperators();
+
+   //<--- Recreate the linear solver for the mass matrix
+   if (pa)
+   {
+      M_prec = std::make_unique<OperatorJacobiSmoother>(*M_form, ess_tdof_list);
+   }
+   else
+   {
+      M_prec = std::make_unique<HypreSmoother>();
+      static_cast<HypreSmoother *>(M_prec.get())->SetType(HypreSmoother::Jacobi); // See hypre.hpp for more options
+   }
+   M_solver = std::make_unique<CGSolver>(fes->GetComm());
+   M_solver->iterative_mode = false; 
+   M_solver->SetRelTol(solver_opts.rel_tol);
+   M_solver->SetAbsTol(solver_opts.abs_tol);
+   M_solver->SetMaxIter(solver_opts.max_iter);
+   M_solver->SetPrintLevel(solver_opts.print_level);
+   M_solver->SetPreconditioner(*M_prec);
+   M_solver->SetOperator(*opM);
+
+   //<--- Update the linear form for the rhs (assembly will be done on next time step)
    fform->Update();
 
+   //<--- Update size of vectors
+   fes_truevsize = fes->GetTrueVSize();
+   this->height = fes_truevsize;
+   this->width = fes_truevsize;
+   z.SetSize(fes_truevsize); 
+   b.SetSize(fes_truevsize);
 
-   //<--- Reset the implicit solver
-   BuildImplicitSolver(); 
+   //<--- Update the ODE solver
+   ode_solver->Init(*this);
 }
 
 void MonodomainDiffusionSolver::BuildImplicitSolver()
@@ -368,39 +372,7 @@ void MonodomainDiffusionSolver::SetTime(const real_t time)
    // Return if reassembling is not enabled (e.g. constant coefficients)
    if (enable_rebuild)
    {
-      delete Mfull;
-      Mfull = nullptr;
-
-      // Re-assemble operators if needed
-      int skip_zeros = 0;
-      Array<int> empty;
-      M_form->Update();
-      M_form->Assemble(skip_zeros);
-      if (pa)
-      {
-         M_form->FormSystemMatrix(ess_tdof_list, opM);
-      }
-      else
-      {
-         M_form->FormSystemMatrix(empty, opM);
-         Mfull = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
-         opMe.EliminateRowsCols(opM, ess_tdof_list);
-      }
-
-      K_form->Update();
-      K_form->Assemble(skip_zeros);
-      K_form->FormSystemMatrix(empty, opK);
-
-      // Assemble matrix for robin bcs
-      if (bcs->GetRobinBcs().size() > 0)
-      {
-         RobinMass_form->Update();
-         RobinMass_form->Assemble(skip_zeros);
-         RobinMass_form->FormSystemMatrix(empty, opRobinMass);
-      }
-
-      // Delete the implicit solver 
-      T_solver = nullptr;
+      AssembleOperators();
    }
 }
 
@@ -420,6 +392,42 @@ inline void MonodomainDiffusionSolver::SetTimeStep(const real_t dt)
    }
 }
 
+inline void MonodomainDiffusionSolver::AssembleOperators()
+{
+   delete Mfull;
+   Mfull = nullptr;
+
+   // Re-assemble operators if needed
+   int skip_zeros = 0;
+   Array<int> empty;
+   M_form->Update();
+   M_form->Assemble(skip_zeros);
+   if (pa)
+   {
+      M_form->FormSystemMatrix(ess_tdof_list, opM);
+   }
+   else
+   {
+      M_form->FormSystemMatrix(empty, opM);
+      Mfull = new HypreParMatrix(*(opM.As<HypreParMatrix>()));
+      opMe.EliminateRowsCols(opM, ess_tdof_list);
+   }
+
+   K_form->Update();
+   K_form->Assemble(skip_zeros);
+   K_form->FormSystemMatrix(empty, opK);
+
+   // Assemble matrix for robin bcs
+   if (bcs->GetRobinBcs().size() > 0)
+   {
+      RobinMass_form->Update();
+      RobinMass_form->Assemble(skip_zeros);
+      RobinMass_form->FormSystemMatrix(empty, opRobinMass);
+   }
+
+   // Delete the implicit solver
+   T_solver.reset();
+}
 
 ////////////////////////////////////////////////////////////////////////////
 // ----- Other methods -----
@@ -429,5 +437,5 @@ void MonodomainDiffusionSolver::EnablePA(bool pa_) { pa = pa_; }
 
 void MonodomainDiffusionSolver::UpdateTimeStepHistory(Vector &x)
 {
-   u_prev->Append(x);
+   //u_prev->Append(x);
 }

@@ -82,7 +82,7 @@ namespace mfem
        */
       virtual void Setup( real_t dt = 0.0, int prec_type = 1);
 
-      /** Update the MonodomainDiffusionSolver in case of changes in Mesh. */
+      /** Update the MonodomainDiffusionSolver in case of changes in Mesh or FiniteElementSpace */
       void Update();
 
       /** Perform one time-step of the simulation.
@@ -171,9 +171,6 @@ namespace mfem
       MatrixCoefficient *sigma_coeff;                   ///< NOT OWNED
       std::unique_ptr<ProductCoefficient> chi_Cm_coeff; ///< OWNED
 
-      // State variables
-      ODEStateDataVector *u_prev;    // Previous solution
-
       // Verbosity
       bool verbose;
 
@@ -182,6 +179,9 @@ namespace mfem
 
       // Build the implicit solver
       void BuildImplicitSolver();
+
+      // Assemble the operators
+      inline void AssembleOperators();
     };
 
   } // namespace electrophysiology

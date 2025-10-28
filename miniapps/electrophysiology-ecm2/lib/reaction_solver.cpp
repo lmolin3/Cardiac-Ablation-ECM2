@@ -7,6 +7,7 @@ using namespace mfem::electrophysiology;
 ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coeff_, Coefficient *Cm_coeff_, IonicModelType model_type_, TimeIntegrationScheme scheme_type, int ode_substeps_)
     : fes(fes_), fes_truevsize(fes_->GetTrueVSize()), model_type(model_type_), scheme(scheme_type), ode_substeps(ode_substeps_), chi_coeff(chi_coeff_), Cm_coeff(Cm_coeff_)
 {
+    //<--- Initialize the ionic model based on the selected type
     switch (model_type)
     {
     case IonicModelType::MITCHELL_SCHAEFFER:
@@ -19,10 +20,13 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coe
         mfem_error("Unsupported ionic model type");
     }
 
+    //<--- Setup grid functions and vectors for stimulation, chi, and Cm
+    // Stimulation
     stimulation_gf.SetSpace(fes); 
     stimulation_gf = 0.0;
     stimulation_gf.GetTrueDofs(stimulation_vec);
 
+    // Chi and Cm
     chi_gf.SetSpace(fes);
     chi_gf = 0.0;
     chi_gf.GetTrueDofs(chi_vec);
@@ -37,15 +41,45 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coe
     chi_gf.GetTrueDofs(chi_vec);
     Cm_gf.ProjectCoefficient(*Cm_coeff);
     Cm_gf.GetTrueDofs(Cm_vec);
+
+    //<--- Setup grid functions and vectors for states (except potential)
+    int num_states = model->GetNumStates();
+    int num_non_potential_states = num_states - 1;
+
+    // Ensure states_gfs is large enough
+    if (static_cast<int>(states_gfs.size()) < num_non_potential_states)
+    {
+        states_gfs.resize(num_non_potential_states, nullptr);
+        states_vectors.resize(num_non_potential_states, nullptr);
+    }
+
+    // Register each state variable, apart from potential
+    for (int j = 0; j < num_states; j++)
+    {
+        if (j == model->potential_idx)
+            continue; // Skip potential
+
+        int adjusted_index = j;
+        if (j > model->potential_idx)
+        {
+            adjusted_index -= 1;
+        }
+
+        // Create grid function and vector
+        ParGridFunction *state_gf = new ParGridFunction(fes);
+        Vector *state_vec = new Vector(fes_truevsize);
+        states_gfs[adjusted_index] = state_gf;
+        states_vectors[adjusted_index] = state_vec;
+    }
 }
 
 ReactionSolver::~ReactionSolver()
 {
-    for (auto gf : registered_fields)
+    for (auto gf : states_gfs)
     {
         delete gf;
     }
-    for (auto vec : registered_fields_vectors)
+    for (auto vec : states_vectors)
     {
         delete vec;
     }
@@ -84,8 +118,16 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
     if (!use_provided_states) {
         model->init_state_values(default_states.data());
     }
+
+    // Initialize default parameters (will be used later in case Update is called)
+    // For values/states we hold them in ParGridFunctions/Vectors anyway
+    parameters_default.resize(num_param);
     if (!use_provided_params) {
         model->init_parameter_values(default_params.data());
+        std::copy(default_params.begin(), default_params.end(), parameters_default.begin());
+    }
+    else {
+        std::copy(params.begin(), params.end(), parameters_default.begin());
     }
 
     // Initialize all DOFs with optimized loop
@@ -161,13 +203,6 @@ void ReactionSolver::SetStimulation(Coefficient *stim)
 void ReactionSolver::RegisterFields(DataCollection &dc)
 {
     int num_states = model->GetNumStates();
-    int num_non_potential_states = num_states - 1;
-    
-    // Ensure registered_fields is large enough
-    if (static_cast<int>(registered_fields.size()) < num_non_potential_states) {
-        registered_fields.resize(num_non_potential_states, nullptr);
-        registered_fields_vectors.resize(num_non_potential_states, nullptr);
-    }
     
     // Register each state variable, apart from potential
     for (int j = 0; j < num_states; j++)
@@ -180,21 +215,14 @@ void ReactionSolver::RegisterFields(DataCollection &dc)
             adjusted_index -= 1;
         }
         
-        // Only create if not already registered
-        if (registered_fields[adjusted_index] == nullptr) {
-            ParGridFunction *state_gf = new ParGridFunction(fes);
-            Vector *state_vec = new Vector(fes_truevsize);
-            registered_fields[adjusted_index] = state_gf;
-            registered_fields_vectors[adjusted_index] = state_vec;
-        }
-        
+        // Use the already allocated states_gfs and states_vectors
         // Register with DataCollection
         std::string field_name = "state_" + std::to_string(j);
-        dc.RegisterField(field_name.c_str(), registered_fields[adjusted_index]);
+        dc.RegisterField(field_name.c_str(), states_gfs[adjusted_index]);
     }
 }
 
-bool ReactionSolver::GetStateGridFunction(int state_index, ParGridFunction *&state_gf)
+ParGridFunction *ReactionSolver::GetStateGridFunction(int state_index)
 {
     MFEM_ASSERT(state_index >= 0 && state_index < model->GetNumStates(),
                 "Invalid state index in GetStateGridFunction");
@@ -207,38 +235,10 @@ bool ReactionSolver::GetStateGridFunction(int state_index, ParGridFunction *&sta
         adjusted_index -= 1; // Adjust index since potential is skipped
     }
 
-    // Ensure registered_fields is large enough to hold all non-potential states
-    int num_non_potential_states = model->GetNumStates() - 1;
-    if (static_cast<int>(registered_fields.size()) < num_non_potential_states)
-    {
-        registered_fields.resize(num_non_potential_states, nullptr);
-        registered_fields_vectors.resize(num_non_potential_states, nullptr);
-    }
-
-    // Check if the field is already registered (non-null)
-    if (registered_fields[adjusted_index] != nullptr)
-    {
-        state_gf = registered_fields[adjusted_index];
-        return false; // Caller does NOT own the pointer
-    }
-
-    // Field not registered yet - create and register it now
-    state_gf = new ParGridFunction(fes);
-    Vector *state_vec = new Vector(fes_truevsize);
-
-    // Populate with current state values
-    for (int i = 0; i < fes_truevsize; i++)
-    {
-        (*state_vec)[i] = values[i][state_index];
-    }
-    state_gf->SetFromTrueDofs(*state_vec);
-
-    // Store in the sparse array
-    registered_fields[adjusted_index] = state_gf;
-    registered_fields_vectors[adjusted_index] = state_vec;
-
-    return false; // Caller does NOT own the pointer (we manage it)
+    // Use the already allocated states_gfs and states_vectors
+    return states_gfs[adjusted_index];
 }
+
 
 void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
 {
@@ -324,43 +324,85 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         current_time += dt_ode;
     }
 
-    // Optimized final update loop - combine with field updates for better cache locality
-    if (registered_fields_vectors.empty()) {
-        // Fast path when no registered fields
-        if (use_dimensionless) {
-            for (int i = 0; i < fes_truevsize; i++) {
-                x[i] = std::clamp(FromDimensionless(values[i][potential_idx]), Vmin, Vmax);
-            }
-        } else {
-            for (int i = 0; i < fes_truevsize; i++) {
-                x[i] = std::clamp(values[i][potential_idx], Vmin, Vmax);
-            }
-        }
-    } else {
-        // Combined loop for better cache locality (like StepOld)
-        for (int i = 0; i < fes_truevsize; i++) {
-            // Update potential
-            x[i] = use_dimensionless ? FromDimensionless(values[i][potential_idx]) : values[i][potential_idx];
-            x[i] = std::clamp(x[i], Vmin, Vmax);
-            
-            // Update registered fields in the same loop (skip null entries)
-            for (size_t k = 0; k < registered_fields_vectors.size(); k++) {
-                if (registered_fields_vectors[k] != nullptr) {
-                    int state_idx = (k >= static_cast<size_t>(potential_idx)) ? k + 1 : k;
-                    (*registered_fields_vectors[k])[i] = values[i][state_idx];
-                }
-            }
+    // Optimized final update loop - Combined loop for better cache locality
+    for (int i = 0; i < fes_truevsize; i++)
+    {
+        // Update potential
+        x[i] = use_dimensionless ? FromDimensionless(values[i][potential_idx]) : values[i][potential_idx];
+        x[i] = std::clamp(x[i], Vmin, Vmax);
+
+        // Update fields in the same loop 
+        for (size_t k = 0; k < states_vectors.size(); k++)
+        {
+            int state_idx = (k >= static_cast<size_t>(potential_idx)) ? k + 1 : k;
+            (*states_vectors[k])[i] = values[i][state_idx];
         }
     }
 
-    // Update all registered ParGridFunctions from their vectors (skip null entries)
-    for (size_t k = 0; k < registered_fields.size(); k++) {
-        if (registered_fields[k] != nullptr) {
-            registered_fields[k]->SetFromTrueDofs(*registered_fields_vectors[k]);
-        }
+    // Update all states ParGridFunctions from their vectors 
+    for (size_t k = 0; k < states_gfs.size(); k++) {
+        states_gfs[k]->SetFromTrueDofs(*states_vectors[k]);
     }
 
     t = provisional ? t : current_time;
+}
+
+
+void ReactionSolver::Update()
+{
+    // Finite element space might have changed; update truevsize, grid functions, and vectors
+    // The fes space changed because the mesh changed (e.g., AMR), so we need to update our internal data structures
+    // No need to update the potential as it will be provided at each Step call
+    
+    int old_size = fes_truevsize; 
+    fes_truevsize = fes->GetTrueVSize();
+    
+    // Update grid functions and get their true DOFs in one pass
+    stimulation_gf.Update();
+    chi_gf.Update();
+    Cm_gf.Update();
+    stimulation_gf.GetTrueDofs(stimulation_vec);
+    chi_gf.GetTrueDofs(chi_vec);
+    Cm_gf.GetTrueDofs(Cm_vec);
+
+    // Update states fields and their vectors
+    for (size_t k = 0; k < states_gfs.size(); k++) {
+        states_gfs[k]->Update();
+        states_gfs[k]->GetTrueDofs(*states_vectors[k]);
+    }
+
+    // Resize internal data structures
+    states.resize(fes_truevsize);
+    values.resize(fes_truevsize);
+    parameters.resize(fes_truevsize);
+
+    // Cache model properties
+    int num_states = model->GetNumStates();
+    int num_param = model->GetNumParameters();
+    int potential_idx = model->potential_idx;
+
+    // Initialize inner vectors only for NEW elements (when mesh was refined)
+    for (int i = old_size; i < fes_truevsize; i++)
+    {
+        states[i].resize(num_states);
+        values[i].resize(num_states);
+        parameters[i].resize(num_param);
+        
+        // Initialize parameters for new DOFs immediately
+        std::copy(parameters_default.begin(), parameters_default.end(), parameters[i].begin());
+    }
+
+    // Update all DOFs from states_vectors - optimized loop order for cache locality
+    for (int i = 0; i < fes_truevsize; i++)
+    {
+        for (size_t k = 0; k < states_vectors.size(); k++)
+        {
+            int state_idx = (k >= static_cast<size_t>(potential_idx)) ? k + 1 : k;
+            double value = (*states_vectors[k])[i];
+            states[i][state_idx] = value;
+            values[i][state_idx] = value;
+        }
+    }
 }
 
 void ReactionSolver::PrintIndexTable()

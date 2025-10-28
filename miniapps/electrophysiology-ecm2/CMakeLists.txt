@@ -59,5 +59,9 @@ add_mfem_miniapp(test_monodomain
 add_mfem_miniapp(test_stimulation
     MAIN tests/test_stimulation.cpp
     LIBRARIES electrophysiology)
-    
+
+add_mfem_miniapp(test_amr
+    MAIN tests/test_amr.cpp
+    LIBRARIES electrophysiology)
+
 endif () #MFEM_USE_MPI

@@ -10,32 +10,10 @@
 // Sample runs:
 //
 // 2D example:
-//   mpirun -np 4 ./test_monodomain -o 1 -sf 10 -of ./Output/
+//   mpirun -np 8 ./test_amr -d 2 -tf 200 -mt 1 -fa -o 2 -rs 0 -dt 0.1 -sf 1 -of /home/shared/Output/Electrophysiology/NewTest/AMR --amr --nc-limit 4 --max-err 5e-2 
 //
 // 3D example:
-//   mpirun -np 8 ./test_monodomain -d 3 -o 2 -rs 1 -sf 1 -of ./Output/
-//
-// Different stimulation types can be selected with -st option:
-//   0 - Corner stimulation (default)
-//   1 - Plane wave stimulation
-//
-// Test assembly type: (~230k dofs, 2x speedup with implicit time integrator, 3x speedup with explicit time integrator)
-// - Full assembly (default): -fa
-//       mpirun -np 4 ./test_monodomain -tf 1 -fa -o 6 -rs 5 --no-paraview -of ./Output/Electrophysiology/TestAssembly/FA
-// - Partial assembly: -pa
-//       mpirun -np 4 ./test_monodomain -tf 1 -pa -o 6 -rs 5 --no-paraview -of ./Output/Electrophysiology/TestAssembly/PA
-//
-//
-// Spiral examples (2D, but can be run in 3D as well) using S1-S2 cross-field protocol:
-//
-// 1) Single spiral wave initiation, S2 from a line in the bottom half-domain:
-//    mpirun -np 4 ./test_monodomain -st 2 -d 2 -tf 500 -mt 1 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output 
-//
-// 2) Multiple spiral wave initiations, S2 from rectangular area in the center:
-//    mpirun -np 4 ./test_monodomain -st 3 -d 2 -tf 500 -mt 1 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
-// 
-// 3) Multiple spiral wave initiations, S2 from two rectangular areas (top center and bottom edge):
-//    mpirun -np 4 ./test_monodomain -st 4 -d 2 -tf 500 -mt 0 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
+//   
 //
 
 #include "mfem.hpp"
@@ -49,23 +27,23 @@ using namespace std;
 using namespace mfem;
 using namespace electrophysiology;
 
-real_t stimulation_corner(const Vector &x);
-real_t stimulation_plane_wave(const Vector &x);
+void UpdateAndRebalance(ParFiniteElementSpace *fespace, MonodomainDiffusionSolver *diff_solver, ReactionSolver *reaction_solver);
 real_t stimulation_spiral_wave(const Vector &x, real_t t);
-real_t stimulation_spiral_wave_v2(const Vector &x, real_t t);
-real_t stimulation_spiral_wave_v3(const Vector &x, real_t t);
-
-inline bool CheckS1ReachedCenter(real_t potential_left, real_t potential_right, real_t recovery_left, real_t recovery_right);
 
 void conductivity_function(const Vector &x, DenseMatrix &Sigma);
 
-enum class StimulationType : int
+class RankCoefficient : public Coefficient
 {
-    CORNER = 0,
-    PLANE_WAVE = 1,
-    SPIRAL_WAVE = 2,
-    SPIRAL_WAVE_v2 = 3,
-    SPIRAL_WAVE_v3 = 4
+private:
+    ParMesh *pmesh;
+
+public:
+    RankCoefficient(ParMesh *_pmesh) : pmesh(_pmesh) {}
+
+    real_t Eval(ElementTransformation &T, const IntegrationPoint &ip) override
+    {
+        return static_cast<real_t>(pmesh->GetMyRank());
+    }
 };
 
 struct s_MeshContext // mesh
@@ -93,7 +71,6 @@ struct stim_Context
     real_t t_start = 0.0;    // stimulation start time [ms]
     real_t t_duration = 2.0; // stimulation duration [ms]
     real_t Iampl = 50;       // stimulation current amplitude  [mA/cm^3] = 5e4 [uA/cm^3]
-    StimulationType stim_type = StimulationType::CORNER;
 } stim_ctx;
 
 
@@ -106,10 +83,9 @@ struct spiral_Context
     bool S2_started = false;
     Vector S2_center;
     real_t S2_width = 0.4;
-    real_t t_start_S2 = 0.0;       // time to start S2 stimulus (determined dynamically)
+    real_t t_start_S2 = 118.0;       // time to start S2 stimulus (determined dynamically)
     real_t Iampl_S2 = 50.0;        // S2 stimulation current amplitude
     real_t t_duration_S2 = 1.0;    // S2 stimulation duration [ms]
-    bool enable_multiple_stimulations = false;
 } spiral_ctx;
 
 int main(int argc, char *argv[])
@@ -147,9 +123,16 @@ int main(int argc, char *argv[])
     real_t t_total_solution = 0.0;
     real_t t_total = 0.0;
     real_t t_mesh = 0.0;
+    real_t t_amr = 0.0;
     real_t t_misc = 0.0;
     real_t t_io = 0.0;
     StopWatch chrono, chrono_total;
+    // AMR
+    bool amr = false;
+    real_t max_elem_error = 5.0e-3;
+    real_t hysteresis = 0.15; // derefinement safety coefficient
+    int nc_limit = 3;         // maximum level of hanging nodes
+    int which_estimator = 0;
 
     OptionsParser args(argc, argv);
     // Mesh related options
@@ -175,13 +158,8 @@ int main(int argc, char *argv[])
     args.AddOption(&stim_ctx.Iampl, "-i", "--i-stim", "Stimulation current amplitude");
     args.AddOption(&stim_ctx.t_start, "-ts", "--t-stim-start", "Stimulation start time");
     args.AddOption(&stim_ctx.t_duration, "-td", "--t-stim-duration", "Stimulation duration");
-    args.AddOption((int *)&stim_ctx.stim_type, "-st", "--stim-type",
-                   "Stimulation type: 0-CORNER, 1-PLANE_WAVE");
     args.AddOption((int *)&ep_ctx.model_type, "-mt", "--model-type",
                    "Ionic model type: 0-MITCHELL_SCHAEFFER, 1-FENTON_KARMA");
-    args.AddOption(&spiral_ctx.enable_multiple_stimulations, "-ems", "--enable-multiple-stims",
-                     "-dms", "--disable-multiple-stims",
-                     "Enable or disable multiple S2 stimulations (default disabled)");
     // Output
     args.AddOption(&paraview, "-pv", "--paraview", "-no-pv", "--no-paraview",
                    "Enable or disable Paraview output (default enabled)");
@@ -189,7 +167,20 @@ int main(int argc, char *argv[])
     args.AddOption(&save_freq, "-sf", "--save-freq", "Save frequency (in time steps)");
     args.AddOption(&verbose, "-v", "--verbose", "-q", "--quiet",
                    "Enable or disable console output (default enabled)");
+    // AMR options
+    args.AddOption(&amr, "-amr", "--amr", "-no-amr", "--no-amr",
+                   "Enable or disable adaptive mesh refinement (default disabled)");
+    args.AddOption(&max_elem_error, "-e", "--max-err",
+                   "Maximum element error");
+    args.AddOption(&hysteresis, "-y", "--hysteresis",
+                   "Derefinement safety coefficient.");
+    args.AddOption(&nc_limit, "-l", "--nc-limit",
+                   "Maximum level of hanging nodes.");
+    args.AddOption(&which_estimator, "-est", "--estimator",
+                   "Which estimator to use: "
+                   "0 = ZZ, 1 = Kelly. Defaults to ZZ.");
     args.ParseCheck();
+
 
     /////////////////////////////////////////////////////////////////////////////
     //------     3. Create serial and parallel mesh
@@ -217,10 +208,14 @@ int main(int argc, char *argv[])
         serial_mesh = serial_mesh_2d;
     }
 
+    serial_mesh->EnsureNCMesh(true);
     for (int l = 0; l < Mesh_ctx.serial_ref_levels; l++)
     {
         serial_mesh->UniformRefinement();
     }
+   // Make sure tet-only meshes are marked for local refinement.
+   serial_mesh->Finalize(true);
+
 
     // 4. Define a parallel mesh by a partitioning of the serial mesh. Refine
     //    this mesh once in parallel to increase the resolution.
@@ -235,40 +230,23 @@ int main(int argc, char *argv[])
 
 
     // Find the reference point for evaluating the solution
-
     DenseMatrix points;
-    if (stim_ctx.stim_type == StimulationType::CORNER || stim_ctx.stim_type == StimulationType::PLANE_WAVE)
+    Vector point_left(Mesh_ctx.dim), point_right(Mesh_ctx.dim);
+    point_left(0) = 0.0 - spiral_ctx.S2_width;
+    point_left(1) = 0.0;
+    point_right(0) = 0.0 + spiral_ctx.S2_width;
+    point_right(1) = 0.0;
+    if (Mesh_ctx.dim == 3)
     {
-        Vector point(Mesh_ctx.dim);
-        point(0) = 0.0;
-        point(1) = 0.0;
-        if (Mesh_ctx.dim == 3)
-        {
-            point(2) = 0.25;
-        }
-        points.SetSize(Mesh_ctx.dim, 1);
-        points.SetCol(0, point);
+        point_left(2) = 0.25;
+        point_right(2) = 0.25;
     }
-    else 
-    {
-        Vector point_left(Mesh_ctx.dim), point_right(Mesh_ctx.dim);
-        point_left(0) = 0.0 - spiral_ctx.S2_width;
-        point_left(1) = 0.0;
-        point_right(0) = 0.0 + spiral_ctx.S2_width;
-        point_right(1) = 0.0;
-        if (Mesh_ctx.dim == 3)
-        {
-            point_left(2) = 0.25;
-            point_right(2) = 0.25;
-        }
-        points.SetSize(Mesh_ctx.dim, 2);
-        points.SetCol(0, point_left);
-        points.SetCol(1, point_right);
-    }
+    points.SetSize(Mesh_ctx.dim, 2);
+    points.SetCol(0, point_left);
+    points.SetCol(1, point_right);
 
     Array<int> elem_ids;
     Array<IntegrationPoint> ips;
-
     mesh.FindPoints(points, elem_ids, ips);
 
     chrono.Stop();
@@ -289,6 +267,7 @@ int main(int argc, char *argv[])
     {
         cout << "Number of unknowns: " << tdofs << endl;
     }
+
 
     /////////////////////////////////////////////////////////////////////////////
     //------     5. Define parameters
@@ -369,10 +348,7 @@ int main(int argc, char *argv[])
     }
 
     // Spiral wave specific
-    if (stim_ctx.stim_type > StimulationType::PLANE_WAVE)
-    {
-        reaction_solver->GetModel()->DisableInternalTimeManagement(parameters.data());
-    }
+    reaction_solver->GetModel()->DisableInternalTimeManagement(parameters.data());
 
     // Modify initial states if needed
     // initial_states[reaction_solver->GetModel()->state_index("h")] = 1.0; // initial h []
@@ -382,26 +358,7 @@ int main(int argc, char *argv[])
     // switch case stim_ctx.stim_type, pick one of the defined stimulation functions
 
     Coefficient *Istim_coeff = nullptr;
-    switch (stim_ctx.stim_type)
-    {
-    case StimulationType::CORNER:
-        Istim_coeff = new FunctionCoefficient(stimulation_corner);
-        break;
-    case StimulationType::PLANE_WAVE:
-        Istim_coeff = new FunctionCoefficient(stimulation_plane_wave);
-        break;
-    case StimulationType::SPIRAL_WAVE:
         Istim_coeff = new FunctionCoefficient(stimulation_spiral_wave);
-        break;
-    case StimulationType::SPIRAL_WAVE_v2:
-        Istim_coeff = new FunctionCoefficient(stimulation_spiral_wave_v2);
-        break;
-    case StimulationType::SPIRAL_WAVE_v3:
-        Istim_coeff = new FunctionCoefficient(stimulation_spiral_wave_v3);
-        break;
-    default:
-        mfem_error("Unknown stimulation type!");
-    }
 
     reaction_solver->SetStimulation(Istim_coeff);
 
@@ -424,6 +381,10 @@ int main(int argc, char *argv[])
 
     auto Istim_gf = reaction_solver->GetStimulationGF();
 
+    ParGridFunction rank_gf(&fespace);
+    RankCoefficient *rank_coeff = new RankCoefficient(&mesh);
+    rank_gf.ProjectCoefficient(*rank_coeff);
+
     ParaViewDataCollection pvdc("EP", &mesh);
     pvdc.SetPrefixPath(outfolder);
     pvdc.SetDataFormat(VTKFormat::BINARY32);
@@ -436,6 +397,7 @@ int main(int argc, char *argv[])
     }
     pvdc.RegisterField("potential", u_gf);
     pvdc.RegisterField("Istim", Istim_gf);
+    pvdc.RegisterField("rank", &rank_gf);
     reaction_solver->RegisterFields(pvdc); // register ionic model states
 
     ParGridFunction *state_gf = reaction_solver->GetStateGridFunction(state_idx);
@@ -452,6 +414,59 @@ int main(int argc, char *argv[])
     t_misc += chrono.RealTime();
 
     /////////////////////////////////////////////////////////////////////////////
+    //------     AMR setup
+    /////////////////////////////////////////////////////////////////////////////
+
+        // 4.2 Setup AMR 
+   //<--- FE spaces and error estimator
+   L2_FECollection flux_fec(order, Mesh_ctx.dim);
+   RT_FECollection smooth_flux_fec(order-1, Mesh_ctx.dim);
+   ErrorEstimator* estimator{nullptr};
+
+   BilinearFormIntegrator *integ = new DiffusionIntegrator(sigma_coeff);
+
+   switch (which_estimator)
+   {
+      case 1:
+      {
+         auto flux_fes = new ParFiniteElementSpace(&mesh, &flux_fec, Mesh_ctx.dim);
+         estimator = new KellyErrorEstimator(*integ, *u_gf, flux_fes);
+         break;
+      }
+      case 2:
+      {
+         auto flux_fes = new ParFiniteElementSpace(&mesh, &fec, Mesh_ctx.dim);
+         estimator = new ZienkiewiczZhuEstimator(*integ, *u_gf, flux_fes);
+         break;
+      }
+
+      default:
+         if (Mpi::Root())
+         {
+            out << "Unknown estimator. Falling back to L2ZZ." << std::endl;
+         }
+      case 0:
+      {
+         auto flux_fes = new ParFiniteElementSpace(&mesh, &flux_fec, Mesh_ctx.dim);
+         auto smooth_flux_fes = new ParFiniteElementSpace(&mesh, &smooth_flux_fec);
+         estimator = new L2ZienkiewiczZhuEstimator(*integ, *u_gf, flux_fes, smooth_flux_fes);
+         break;
+      }
+   }
+
+   //<--- Refiner and Derefiner
+   ThresholdRefiner refiner(*estimator);
+   refiner.SetTotalErrorFraction(0.0); // use purely local threshold
+   refiner.SetLocalErrorGoal(max_elem_error);
+   refiner.PreferConformingRefinement();
+   refiner.SetNCLimit(nc_limit);
+
+   ThresholdDerefiner derefiner(*estimator);
+   derefiner.SetThreshold(hysteresis * max_elem_error);
+   derefiner.SetNCLimit(nc_limit);
+
+
+    /////////////////////////////////////////////////////////////////////////////
     //------     9. Solve the problem
     /////////////////////////////////////////////////////////////////////////////
 
@@ -463,6 +478,7 @@ int main(int argc, char *argv[])
             << std::setw(16) << "Time"
             << std::setw(16) << "dt"
             << std::setw(16) << "Potential"
+            << std::setw(16) << "Unknowns"
             << std::endl;
         out << "-----------------------------------------------------------------------------------------------------------------------------------------------------------------------" << std::endl;
     }
@@ -481,6 +497,9 @@ int main(int argc, char *argv[])
             last_step = true;
         }
 
+        refiner.Reset();
+        derefiner.Reset();
+
         //<--- Solve Diffusion step
         chrono.Clear();
         chrono.Start();
@@ -496,8 +515,34 @@ int main(int argc, char *argv[])
         chrono.Stop();
         t_reaction += chrono.RealTime();
 
-        //<--- Update the solution
         u_gf->SetFromTrueDofs(u);
+
+        //<--- AMR
+        chrono.Clear();
+        chrono.Start();
+        if (amr)
+        {
+            // Apply refinement 
+            refiner.Apply(mesh);
+            UpdateAndRebalance(&fespace, diff_solver, reaction_solver);
+
+            // Apply derefinement
+            derefiner.Apply(mesh);
+            UpdateAndRebalance(&fespace, diff_solver, reaction_solver);
+
+            // Recompute the reference point location after AMR
+            Array<int> elem_ids;
+            Array<IntegrationPoint> ips;
+            mesh.FindPoints(points, elem_ids, ips);
+
+            rank_gf.Update();
+            rank_gf.ProjectCoefficient(*rank_coeff);
+        }
+        chrono.Stop();
+        t_amr += chrono.RealTime();
+
+        //<--- Update the solution
+        u_gf->GetTrueDofs(u);
         diff_solver->UpdateTimeStepHistory(u);
         t += dt;
 
@@ -509,19 +554,6 @@ int main(int argc, char *argv[])
         // Reduce values across all ranks to get the result from whichever rank found the point
         MPI_Allreduce(&potential_loc, &potential, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&recovery_loc, &recovery, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-
-        //<--- Check if back front reached center (for spiral wave only)
-        if (stim_ctx.stim_type > StimulationType::PLANE_WAVE && (!spiral_ctx.S2_started || spiral_ctx.enable_multiple_stimulations))
-        {
-            real_t potential_loc_right = (elem_ids[1] >= 0) ? u_gf->GetValue(elem_ids[1], ips[1]) : 0.0;
-            real_t recovery_loc_right = (elem_ids[1] >= 0) ? state_gf->GetValue(elem_ids[1], ips[1]) : 0.0;
-            MPI_Allreduce(&potential_loc_right, &potential_right, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-            MPI_Allreduce(&recovery_loc_right, &recovery_right, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-            if (CheckS1ReachedCenter(potential, potential_right, recovery, recovery_right))
-            {
-                spiral_ctx.t_start_S2 = t;
-            }
-        }
 
         //<--- Save results
         chrono.Clear();
@@ -545,6 +577,7 @@ int main(int argc, char *argv[])
                 << std::setw(16) << std::scientific << std::setprecision(8) << t
                 << std::setw(16) << std::scientific << std::setprecision(8) << dt
                 << std::setw(16) << std::scientific << std::setprecision(8) << potential
+                << std::setw(16) << std::scientific << std::setprecision(8) << fespace.GlobalTrueVSize()
                 << std::endl;
         }
 
@@ -558,9 +591,12 @@ int main(int argc, char *argv[])
     t_diffusion /= count;
     t_reaction /= count;
 
+    t_amr /= count;
+
     // Compute global times
-    real_t t_setup_reaction_g, t_diffusion_g, t_reaction_g, t_total_solution_g, t_misc_g, t_mesh_g, t_total_g, t_io_g;
+    real_t t_setup_reaction_g, t_diffusion_g, t_reaction_g, t_total_solution_g, t_misc_g, t_mesh_g, t_total_g, t_io_g, t_amr_g;
     MPI_Allreduce(&t_io, &t_io_g, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&t_amr, &t_amr_g, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&t_misc, &t_misc_g, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&t_mesh, &t_mesh_g, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&t_setup_reaction, &t_setup_reaction_g, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
@@ -608,6 +644,8 @@ int main(int argc, char *argv[])
             << std::setw(15) << std::right << format_time(t_misc_g) << std::endl;
         out << std::setw(30) << std::left << "I/O time:"
             << std::setw(15) << std::right << format_time(t_io_g) << std::endl;
+        out << std::setw(30) << std::left << "AMR time (per step):"
+            << std::setw(15) << std::right << format_time(t_amr_g) << std::endl;
         out << std::setw(30) << std::left << "Solution time:"
             << std::setw(15) << std::right << format_time(t_total_solution_g) << std::endl;
         out << std::endl;
@@ -628,6 +666,9 @@ int main(int argc, char *argv[])
     delete Istim_coeff;
     delete reaction_solver;
     delete diff_solver;
+    delete estimator;
+
+    delete rank_coeff;
 
     return 0;
 }
@@ -643,35 +684,7 @@ void conductivity_function(const Vector &x, DenseMatrix &Sigma)
     }
 }
 
-// Define the stimulation current as a function
-// Here we stimulate a circular region (r=0.1)on the bottom left corner of the domain
-// Domain is [-1,1]x[-1,1]
-real_t stimulation_corner(const Vector &x)
-{
-    real_t xc = -2.5;
-    real_t yc = -2.5;
-    real_t zc = 0.0;
-    real_t R = 5e-1;        // Radius of the stimulated region
-    real_t sharpness = 5e2; //  transition
-    real_t r2 = (x(0) - xc) * (x(0) - xc) + (x(1) - yc) * (x(1) - yc);
-    if (x.Size() > 2)
-    {
-        r2 += (x(2) - zc) * (x(2) - zc); // Add z-component for 3D
-    }
-    return stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (r2 - R * R)));
-}
 
-// Define the stimulation current as a function
-// Here we stimulate a plane wave at the left side of the domain, traveling rightwards
-// Domain is [-2.5,2.5]x[-2.5,2.5]
-real_t stimulation_plane_wave(const Vector &x)
-{
-    real_t xs = -2.5;
-    real_t xr = -2.3;
-    // real_t sharpness = 5e2; //  transition
-    //  return stim_ctx.Iampl * 0.5 * (1.0 - std::tanh(sharpness * (x(0) - xs)));
-    return (x(0) >= xs && x(0) <= xr) ? stim_ctx.Iampl : 0.0;
-}
 
 // Define the stimulation current as a function
 // Here we stimulate a spiral wave using an S1-S2 protocol
@@ -701,7 +714,7 @@ real_t stimulation_spiral_wave(const Vector &x, real_t t)
             return stim_ctx.Iampl;
         }
     }
-    else if (spiral_ctx.S1_depolarized_center && spiral_ctx.S2_started)
+    else
     {
         // Check if we are in the S2 stimulation phase
         if (t >= spiral_ctx.t_start_S2 &&
@@ -719,134 +732,31 @@ real_t stimulation_spiral_wave(const Vector &x, real_t t)
 
 }
 
-// Same as above but S2 is now a stimulation on a rectangular area in the center
-real_t stimulation_spiral_wave_v2(const Vector &x, real_t t)
+void UpdateAndRebalance(ParFiniteElementSpace *fespace, MonodomainDiffusionSolver *diff_solver, ReactionSolver *reaction_solver)
 {
-    // S1 plane wave parameters
-    real_t xs = -2.5;
-    real_t xr = -2.3;
+    // Get mesh object
+    ParMesh &pmesh = *fespace->GetParMesh();
 
-    // S2 rectangular region parameters
-    real_t x_center = 0.0;
-    real_t y_center = 0.0;
-    real_t half_width = spiral_ctx.S2_width / 2.0;     
+   // Update the space: recalculate the number of DOFs and construct a matrix
+   // that will adjust any GridFunctions to the new mesh state.
+   fespace->Update();
 
-    // Check if we are in the S1 stimulation phase
-    if (t >= stim_ctx.t_start && t <= stim_ctx.t_start + stim_ctx.t_duration)
-    {
-        // S1: plane wave at the left side of the domain
-        if (x(0) >= xs && x(0) <= xr)
-        {
-            return stim_ctx.Iampl;
-        }
-    }
-    else if (spiral_ctx.S1_depolarized_center && spiral_ctx.S2_started)
-    {
-        // Check if we are in the S2 stimulation phase
-        if (t >= spiral_ctx.t_start_S2 &&
-            t <= spiral_ctx.t_start_S2 + spiral_ctx.t_duration_S2)
-        {
-            // S2: rectangular region in the center of the domain
-            // x \in [x_center-half_width, x_center+half_width], y \in [y_center- 1, y_center+1]
-            if (x(0) >= (x_center - half_width) && x(0) <= (x_center + half_width) &&
-                x(1) >= (y_center - 1) && x(1) <= (y_center + 1))
-            {
-                return spiral_ctx.Iampl_S2;
-            }
-        }
-    }
+   // Update the solvers (we might need a soft and hard update, which avoids re-assembling)
+    diff_solver->Update();
+    reaction_solver->Update();
 
-    return 0.0;
+   if (pmesh.Nonconforming())
+   {
+      // Load balance the mesh.
+      pmesh.Rebalance();
 
-}
+      // Update the space again, this time a GridFunction redistribution matrix
+      // is created. Apply it to the solution.
+      fespace->Update();
+      diff_solver->Update();
+      reaction_solver->Update();
+   }
 
-// Same as above but S2 is now a stimulation on two rectangular areas.
-// One is in the mid top half of the domain, the other is centered in the bottom edge
-real_t stimulation_spiral_wave_v3(const Vector &x, real_t t)
-{
-    // S1 plane wave parameters
-    real_t xs = -2.5;
-    real_t xr = -2.3;
-
-    // S2 rectangular region parameters
-    real_t x_center = 0.0;
-    real_t y_center_1 = 1.25;
-    real_t y_center_2 = -2.25;
-    real_t quarter_width = spiral_ctx.S2_width / 4.0;
-
-    // Check if we are in the S1 stimulation phase
-    if (t >= stim_ctx.t_start && t <= stim_ctx.t_start + stim_ctx.t_duration)
-    {
-        // S1: plane wave at the left side of the domain
-        if (x(0) >= xs && x(0) <= xr)
-        {
-            return stim_ctx.Iampl;
-        }
-    }
-    else if (spiral_ctx.S1_depolarized_center && spiral_ctx.S2_started)
-    {
-        // Check if we are in the S2 stimulation phase
-        if (t >= spiral_ctx.t_start_S2 &&
-            t <= spiral_ctx.t_start_S2 + spiral_ctx.t_duration_S2)
-        {
-            // S2: rectangular regions at the center top and bottom of the domain
-            // Top: x \in [x_center-quarter_width, x_center+quarter_width], y \in [y_center_1-0.5, y_center_1+0.5]
-            // Bottom: x \in [x_center-quarter_width, x_center+quarter_width], y \in [y_center_2-0.5, y_center_2+0.5]
-            if ( (x(0) >= (x_center - quarter_width) && x(0) <= (x_center + quarter_width) &&
-                  x(1) >= (y_center_1 - 0.5) && x(1) <= (y_center_1 + 0.5)) ||
-                 (x(0) >= (x_center - quarter_width) && x(0) <= (x_center + quarter_width) &&
-                  x(1) >= (y_center_2 - 0.5) && x(1) <= (y_center_2 + 0.5)) )
-            {
-                return spiral_ctx.Iampl_S2;
-            }
-        }
-    }
-
-    return 0.0;
-}
-
-// Check if the S1 wave has reached the center (depolarized)
-// and subsequently repolarized, so we can trigger the S2 stimulus
-// Uses parameters from spiral_ctx
-inline bool CheckS1ReachedCenter(real_t potential_left, real_t potential_right, real_t recovery_left, real_t recovery_right)
-{
-    if (!spiral_ctx.S1_depolarized_center)
-    {
-        if (potential_left >= spiral_ctx.S1_threshold_potential)
-        {
-            spiral_ctx.S1_depolarized_center = true;
-            if (Mpi::Root())
-            {
-                cout << "S1 depolarized center detected!" << endl;
-            }
-        }
-    }
-    else
-    {
-        // Check if at:
-        // center-width (left): recovery > threshold (repolarized), potential < threshold (resting)
-        // center+width (right): recovery < threshold (still refractory), potential > threshold (depolarized/repolarizing)
-        bool recovery_flag = (recovery_left > spiral_ctx.S1_threshold_recovery && recovery_right < spiral_ctx.S1_threshold_recovery);
-        bool potential_flag = (potential_left < spiral_ctx.S1_threshold_potential && potential_right > spiral_ctx.S1_threshold_potential);
-        
-        // Only trigger if not currently stimulating and conditions are met
-        if (recovery_flag && !spiral_ctx.S2_started)
-        {
-            spiral_ctx.S2_started = true;
-            if (Mpi::Root())
-            {
-                out << "S1 repolarized center detected!" << std::endl;
-                out << "  Left  (x=" << -spiral_ctx.S2_width << "): V=" << potential_left << " mV, h=" << recovery_left << endl;
-                out << "  Right (x=" << spiral_ctx.S2_width << "): V=" << potential_right << " mV, h=" << recovery_right << endl;
-            }
-        }
-        // Reset S2_started flag when conditions are no longer met (allows re-triggering)
-        // Only reset if multiple stimulations are enabled
-        else if (!recovery_flag && spiral_ctx.S2_started && spiral_ctx.enable_multiple_stimulations)
-        {
-            spiral_ctx.S2_started = false;
-        }
-    }
-
-    return spiral_ctx.S2_started && spiral_ctx.S1_depolarized_center;
+   // Free any transformation matrices to save memory.
+   fespace->UpdatesFinished();
 }

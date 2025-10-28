@@ -51,6 +51,8 @@ namespace mfem
             std::vector<std::vector<double>>
                 parameters; // Data structure holding the params for each dof, size          [fes_truevsize][num_params]
 
+            std::vector<double> parameters_default; // Default parameters from the model
+
             Coefficient *stimulation_coeff = nullptr; // Stimulation function   //< NOT OWNED
             ParGridFunction stimulation_gf;           // GridFunction to hold the stimulation values at dofs
             Coefficient *chi_coeff = nullptr;         // Chi coefficient function   //< NOT OWNED
@@ -61,8 +63,9 @@ namespace mfem
             mutable Vector chi_vec;                   // Vector to hold the chi values at dofs
             mutable Vector Cm_vec;                    // Vector to hold the Cm values at dofs
 
-            std::vector<ParGridFunction *> registered_fields; // Registered fields for output
-            std::vector<Vector *> registered_fields_vectors;  // Corresponding vectors for registered fields
+            // We need this to: 1) possibly use it for output in DataCollection, 2) Update the state after change in Mesh/FESpace (AMR)
+            std::vector<ParGridFunction *> states_gfs; // States grid functions for all states except potential
+            std::vector<Vector *> states_vectors;      // Corresponding vectors for states
 
             real_t Vmin = -80;
             real_t Vmax = -20;
@@ -100,6 +103,11 @@ namespace mfem
             void Setup() { Setup({}, {}); }
 
             /**
+             * @brief Update the MonodomainDiffusionSolver in case of changes in Mesh or FiniteElementSpace
+             */
+            void Update();
+
+            /**
              * @brief Sets the voltage range for dimensionless models.
              */
             void SetVRange(real_t V_min, real_t V_max)
@@ -121,11 +129,8 @@ namespace mfem
             /**
              * @brief Get a ParGridFunction representing a specific state variable.
              * @param state_index Index of the state variable to retrieve.
-             * @param state_gf Output pointer to the ParGridFunction representing the state variable.
-             * @return ownership status (true if the ParGridFunction was created and must be deleted by the caller, false if it is managed internally).
-             * @note: This should be called after Setup(), ideally after RegisterFields(), to avoid duplicate ParGridFunction creation.
              */
-            bool GetStateGridFunction(int state_index, ParGridFunction *&state_gf);
+            ParGridFunction *GetStateGridFunction(int state_index);
 
             /**
              * @brief Register fields for output.
