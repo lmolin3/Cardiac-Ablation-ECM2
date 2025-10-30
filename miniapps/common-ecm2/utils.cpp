@@ -40,8 +40,6 @@ namespace mfem
                       << std::flush; // Debugging print
         }
 
-
-
         // Mult and AddMult for full matrix (using matrices modified with WliminateRowsCols)
         void FullMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y)
         {
@@ -97,7 +95,6 @@ namespace mfem
             v -= global_sum / static_cast<real_t>(global_size);
         }
 
-
         // Implement logic && operator for Array<int>
         Array<int> operator&&(const Array<int> &a, const Array<int> &b)
         {
@@ -110,9 +107,37 @@ namespace mfem
             return result;
         }
 
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        ///                                              Mesh utils                                              ///
+        ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+        void ExportMeshwithPartitioning(const std::string &outfolder, Mesh &mesh, const int *partitioning_)
+        {
+            // Extract the partitioning
+            Array<int> partitioning;
+            partitioning.MakeRef(const_cast<int *>(partitioning_), mesh.GetNE(), false);
 
+            // Assign partitioning to the mesh
+            FiniteElementCollection *attr_fec = new L2_FECollection(0, mesh.Dimension());
+            FiniteElementSpace *attr_fespace = new FiniteElementSpace(&mesh, attr_fec);
+            GridFunction attr(attr_fespace);
+            for (int i = 0; i < mesh.GetNE(); i++)
+            {
+                attr(i) = partitioning[i] + 1;
+            }
 
+            // Create paraview datacollection
+            ParaViewDataCollection paraview_dc("Partitioning", &mesh);
+            paraview_dc.SetPrefixPath(outfolder);
+            paraview_dc.SetDataFormat(VTKFormat::BINARY);
+            paraview_dc.SetCompressionLevel(9);
+            paraview_dc.RegisterField("partitioning", &attr);
+            paraview_dc.Save();
+
+            // Clean up
+            delete attr_fespace;
+            delete attr_fec;
+        }
 
     } // namespace ecm2_utils
 

@@ -577,6 +577,7 @@ namespace mfem
         // Logical and operation between two arrays
         Array<int> operator&&(const Array<int> &a, const Array<int> &b);
 
+        void ExportMeshwithPartitioning(const std::string &outfolder, Mesh &mesh, const int *partitioning_);
 
     } // namespace ecm2_utils
 
