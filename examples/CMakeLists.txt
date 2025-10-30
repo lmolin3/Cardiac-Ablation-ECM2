@@ -89,6 +89,11 @@ if (MFEM_USE_MPI)
     ex37p.cpp
     ex39p.cpp
     ex40p.cpp
+    tutorial_ucbm_01.cpp
+    tutorial_ucbm_01_pa.cpp
+    tutorial_ucbm_01_convergence.cpp
+    tutorial_ucbm_02.cpp
+    tutorial_ucbm_02_pa.cpp
   )
 endif()
 
