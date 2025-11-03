@@ -16,7 +16,7 @@
 // To enable partial assembly, use the flag -pa. 
 // You're gonna see more significant speedups for 3D problems.
 //
-//               mpirun -np 4 tutorial_ucbm_01 -m ../data/amr-hex.mesh -rs 1 -o 3
+//               mpirun -np 4 tutorial_ucbm_01_pa -m ../data/amr-hex.mesh -rs 1 -o 4
 //
 // Use the flag -pa to enable partial assembly.
 //

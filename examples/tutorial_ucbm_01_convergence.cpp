@@ -91,7 +91,7 @@ int main(int argc, char *argv[])
    real_t h1_err_prev = 0.0;
    real_t h_prev = 0.0;
 
-   for (int ref_level = 0; ref_level <= 4; ref_level++)
+   for (int ref_level = 0; ref_level <= serial_ref_levels; ref_level++)
    {
 
       /////////////////////////////////////////////////////////////////////////////
