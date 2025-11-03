@@ -19,6 +19,11 @@
 // No refinement, fourth order elements with partial assembly:
 //                mpirun -np 8 tutorial_ucbm_02_pa -rs 0 -o 3 -pa -of ./Output/Tutorial02/PA
 //
+// For the tutorial, run the examples with flag 
+//          -of /home/shared/<folder-path>,
+// to ensure that the results will eb directly available in the fodler mounted 
+// to the docker volume
+//
 
 #include "mfem.hpp"
 #include <fstream>

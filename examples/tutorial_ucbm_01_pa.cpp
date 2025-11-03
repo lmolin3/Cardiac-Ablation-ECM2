@@ -20,6 +20,11 @@
 //
 // Use the flag -pa to enable partial assembly.
 //
+// For the tutorial, run the examples with flag 
+//          -of /home/shared/<folder-path>,
+// to ensure that the results will eb directly available in the fodler mounted 
+// to the docker volume
+//
 
 #include "mfem.hpp"
 #include <fstream>

@@ -15,6 +15,13 @@
 // 3D example:
 //   
 //
+// Use the flag -pa to enable partial assembly.
+//
+// For the tutorial, run the examples with flag 
+//          -of /home/shared/<folder-path>,
+// to ensure that the results will eb directly available in the fodler mounted 
+// to the docker volume
+//
 
 #include "mfem.hpp"
 #include "../lib/reaction_solver.hpp"
@@ -83,7 +90,7 @@ struct spiral_Context
     bool S2_started = false;
     Vector S2_center;
     real_t S2_width = 0.4;
-    real_t t_start_S2 = 118.0;       // time to start S2 stimulus (determined dynamically)
+    real_t t_start_S2 = 118.0;       // time to start S2 stimulus 
     real_t Iampl_S2 = 50.0;        // S2 stimulation current amplitude
     real_t t_duration_S2 = 1.0;    // S2 stimulation duration [ms]
 } spiral_ctx;

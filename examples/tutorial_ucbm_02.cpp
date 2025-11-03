@@ -24,6 +24,11 @@
 // 1 serial refinement, first order elements:
 //                mpirun -np 8 tutorial_ucbm_02 -rs 1 -o 1 -of ./Output/Tutorial02/rs1_o1
 //
+// For the tutorial, run the examples with flag 
+//          -of /home/shared/<folder-path>,
+// to ensure that the results will eb directly available in the fodler mounted 
+// to the docker volume
+//
 
 #include "mfem.hpp"
 #include <fstream>
