@@ -159,6 +159,8 @@ void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type)
 
    //<--- Setup ODE solver
    ode_solver->Init(*this);
+
+   assembled = true;
 }
 
 void MonodomainDiffusionSolver::Update()
@@ -181,6 +183,30 @@ void MonodomainDiffusionSolver::Update()
       RobinMass_form->Update(); 
    }
 
+   //<--- Update the linear form for the rhs (assembly will be done on next time step)
+   fform->Update();
+
+   //<--- Update size of vectors
+   fes_truevsize = fes->GetTrueVSize();
+   this->height = fes_truevsize;
+   this->width = fes_truevsize;
+   z.SetSize(fes_truevsize); 
+   b.SetSize(fes_truevsize);
+
+   //<--- Update the ODE solver
+   ode_solver->Init(*this);
+
+   //<--- Flag that we need to reassemble the operators
+   if (T_solver)
+   {
+      T_solver.reset(nullptr);
+   }
+
+   assembled = false;
+}
+
+inline void MonodomainDiffusionSolver::AssembleAndSetupSolver()
+{
    AssembleOperators();
 
    //<--- Recreate the linear solver for the mass matrix
@@ -194,26 +220,13 @@ void MonodomainDiffusionSolver::Update()
       static_cast<HypreSmoother *>(M_prec.get())->SetType(HypreSmoother::Jacobi); // See hypre.hpp for more options
    }
    M_solver = std::make_unique<CGSolver>(fes->GetComm());
-   M_solver->iterative_mode = false; 
+   M_solver->iterative_mode = false;
    M_solver->SetRelTol(solver_opts.rel_tol);
    M_solver->SetAbsTol(solver_opts.abs_tol);
    M_solver->SetMaxIter(solver_opts.max_iter);
    M_solver->SetPrintLevel(solver_opts.print_level);
    M_solver->SetPreconditioner(*M_prec);
    M_solver->SetOperator(*opM);
-
-   //<--- Update the linear form for the rhs (assembly will be done on next time step)
-   fform->Update();
-
-   //<--- Update size of vectors
-   fes_truevsize = fes->GetTrueVSize();
-   this->height = fes_truevsize;
-   this->width = fes_truevsize;
-   z.SetSize(fes_truevsize); 
-   b.SetSize(fes_truevsize);
-
-   //<--- Update the ODE solver
-   ode_solver->Init(*this);
 }
 
 void MonodomainDiffusionSolver::BuildImplicitSolver()
@@ -238,6 +251,13 @@ void MonodomainDiffusionSolver::Step(Vector &x, real_t &t, real_t &dt, bool prov
 {
    //<--- Set time
    this->SetTime(t+dt);
+
+   //<--- Re-assemble if required
+   if (!assembled)
+   {
+      AssembleAndSetupSolver();
+      assembled = true;
+   }
 
    //<--- Step
    ode_solver->Step(x, t, dt);

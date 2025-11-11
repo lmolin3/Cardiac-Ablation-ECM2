@@ -125,6 +125,8 @@ namespace mfem
       int dim;
       int fes_truevsize;
 
+      bool assembled = false;
+
       // BCHandler
       BCHandler *bcs; ///< OWNED
       Array<int> ess_tdof_list;
@@ -179,6 +181,9 @@ namespace mfem
 
       // Build the implicit solver
       void BuildImplicitSolver();
+
+      // Reassemble and setup the solver
+      inline void AssembleAndSetupSolver();
 
       // Assemble the operators
       inline void AssembleOperators();

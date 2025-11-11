@@ -739,7 +739,8 @@ void UpdateAndRebalance(ParFiniteElementSpace *fespace, MonodomainDiffusionSolve
 
    // Update the space: recalculate the number of DOFs and construct a matrix
    // that will adjust any GridFunctions to the new mesh state.
-   fespace->Update();
+   // Note: We can avoid this because it will be called inside the diff_solver Update() method
+   //fespace->Update();
 
    // Update the solvers (we might need a soft and hard update, which avoids re-assembling)
     diff_solver->Update();
@@ -752,7 +753,7 @@ void UpdateAndRebalance(ParFiniteElementSpace *fespace, MonodomainDiffusionSolve
 
       // Update the space again, this time a GridFunction redistribution matrix
       // is created. Apply it to the solution.
-      fespace->Update();
+      //fespace->Update();
       diff_solver->Update();
       reaction_solver->Update();
    }
