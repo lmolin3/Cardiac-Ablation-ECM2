@@ -1,4 +1,4 @@
-# Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
+# Copyright (c) 2010-2025, Lawrence Livermore National Security, LLC. Produced
 # at the Lawrence Livermore National Laboratory. All Rights reserved. See files
 # LICENSE and NOTICE for details. LLNL-CODE-806117.
 #
@@ -18,7 +18,6 @@ if (MFEM_USE_SUNDIALS)
    add_subdirectory(adjoint)
 endif()
 add_subdirectory(common)
-add_subdirectory(common-ecm2)
 add_subdirectory(electromagnetics)
 add_subdirectory(navier)
 add_subdirectory(meshing)
@@ -38,4 +37,7 @@ add_subdirectory(tribol)
 add_subdirectory(hooke)
 add_subdirectory(dpg)
 add_subdirectory(hdiv-linear-solver)
+add_subdirectory(dfem)
+add_subdirectory(diag-smoothers)
+add_subdirectory(common-ecm2)
 add_subdirectory(heat-ecm2)

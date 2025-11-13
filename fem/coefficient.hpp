@@ -1,4 +1,4 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
+// Copyright (c) 2010-2025, Lawrence Livermore National Security, LLC. Produced
 // at the Lawrence Livermore National Laboratory. All Rights reserved. See files
 // LICENSE and NOTICE for details. LLNL-CODE-806117.
 //
@@ -132,6 +132,9 @@ public:
    /// Evaluate the coefficient.
    real_t Eval(ElementTransformation &T,
                const IntegrationPoint &ip) override;
+
+   /// Fill the QuadratureFunction @a qf with the piecewise constant values.
+   void Project(QuadratureFunction &qf) override;
 };
 
 /** @brief A piecewise coefficient with the pieces keyed off the element
@@ -240,7 +243,9 @@ public:
        Vector argument instead of Vector. */
    MFEM_DEPRECATED FunctionCoefficient(real_t (*f)(Vector &))
    {
-      Function = reinterpret_cast<real_t(*)(const Vector&)>(f);
+      // Cast first to (void*) to suppress a warning from newer version of
+      // Clang when using -Wextra.
+      Function = reinterpret_cast<real_t(*)(const Vector&)>((void*)f);
       TDFunction = NULL;
    }
 
@@ -250,7 +255,10 @@ public:
    MFEM_DEPRECATED FunctionCoefficient(real_t (*tdf)(Vector &, real_t))
    {
       Function = NULL;
-      TDFunction = reinterpret_cast<real_t(*)(const Vector&,real_t)>(tdf);
+      // Cast first to (void*) to suppress a warning from newer version of
+      // Clang when using -Wextra.
+      TDFunction =
+         reinterpret_cast<real_t(*)(const Vector&,real_t)>((void*)tdf);
    }
 
    /// Evaluate the coefficient at @a ip.
@@ -798,6 +806,12 @@ public:
    /// Sets coefficient in the vector.
    void Set(int i, Coefficient *c, bool own=true);
 
+   /// Set ownership of the i'th coefficient
+   void SetOwnership(int i, bool own) { ownCoeff[i] = own; }
+
+   /// Get ownership of the i'th coefficient
+   bool GetOwnership(int i) const { return ownCoeff[i]; }
+
    /// Evaluates i'th component of the vector of coefficients and returns the
    /// value.
    real_t Eval(int i, ElementTransformation &T, const IntegrationPoint &ip)
@@ -882,6 +896,9 @@ public:
        M. */
    void Eval(DenseMatrix &M, ElementTransformation &T,
              const IntegrationRule &ir) override;
+
+   /// @copydoc VectorCoefficient::Project(QuadratureFunction &)
+   void Project(QuadratureFunction &qf) override;
 
    virtual ~GradientGridFunctionCoefficient() { }
 };
@@ -1320,6 +1337,12 @@ public:
        can be overridden with the @a own parameter. */
    void Set(int i, int j, Coefficient * c, bool own=true);
 
+   /// Set ownership of the coefficient at (i,j) in the matrix
+   void SetOwnership(int i, int j, bool own) { ownCoeff[i*width+j] = own; }
+
+   /// Get ownership of the coefficient at (i,j) in the matrix
+   bool GetOwnership(int i, int j) const { return ownCoeff[i*width+j]; }
+
    using MatrixCoefficient::Eval;
 
    /// Evaluate coefficient located at (i,j) in the matrix using integration
@@ -1359,6 +1382,12 @@ public:
        By this will take ownership of the Coefficient passed in, but this
        can be overridden with the @a own parameter. */
    void Set(int i, VectorCoefficient * c, bool own=true);
+
+   /// Set ownership of the i'th coefficient
+   void SetOwnership(int i, bool own) { ownCoeff[i] = own; }
+
+   /// Get ownership of the i'th coefficient
+   bool GetOwnership(int i) const { return ownCoeff[i]; }
 
    using MatrixCoefficient::Eval;
 
@@ -1426,6 +1455,9 @@ public:
 
    /// Set the time for internally stored coefficients
    void SetTime(real_t t) override;
+
+   /// @copydoc Coefficient::Project(QuadratureFunction &)
+   void Project(QuadratureFunction &qf) override;
 
    /// Reset the first term in the linear combination as a constant
    void SetAConst(real_t A) { a = NULL; aConst = A; }
@@ -1608,6 +1640,9 @@ public:
    /// Set the time for internally stored coefficients
    void SetTime(real_t t) override;
 
+   /// @copydoc Coefficient::Project(QuadratureFunction &)
+   void Project(QuadratureFunction &qf) override;
+
    /// Reset the first term in the product as a constant
    void SetAConst(real_t A) { a = NULL; aConst = A; }
    /// Return the first term in the product
@@ -1655,6 +1690,9 @@ public:
 
    /// Set the time for internally stored coefficients
    void SetTime(real_t t) override;
+
+   /// @copydoc Coefficient::Project(QuadratureFunction &)
+   void Project(QuadratureFunction &qf) override;
 
    /// Reset the numerator in the ratio as a constant
    void SetAConst(real_t A) { a = NULL; aConst = A; }
@@ -1748,6 +1786,9 @@ public:
    /// Evaluate the coefficient at @a ip.
    real_t Eval(ElementTransformation &T,
                const IntegrationPoint &ip) override;
+
+   /// @copydoc Coefficient::Project(QuadratureFunction &)
+   void Project(QuadratureFunction &qf) override;
 };
 
 /// Scalar coefficient defined as a cross product of two vectors in the xy-plane.

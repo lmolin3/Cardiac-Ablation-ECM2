@@ -1,4 +1,4 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
+// Copyright (c) 2010-2025, Lawrence Livermore National Security, LLC. Produced
 // at the Lawrence Livermore National Laboratory. All Rights reserved. See files
 // LICENSE and NOTICE for details. LLNL-CODE-806117.
 //
@@ -280,7 +280,6 @@ inline void TAssign(const A_layout_t &A_layout, A_data_t &A_data,
    internal::TensorOps<A_layout_t::rank>::
    template Assign<Op>(A_layout, A_data, B_layout, B_data);
 }
-
 
 // classes TVector, TMatrix, TTensor3, TTensor4
 

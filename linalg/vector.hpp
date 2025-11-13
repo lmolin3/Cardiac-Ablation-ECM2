@@ -1,4 +1,4 @@
-// Copyright (c) 2010-2024, Lawrence Livermore National Security, LLC. Produced
+// Copyright (c) 2010-2025, Lawrence Livermore National Security, LLC. Produced
 // at the Lawrence Livermore National Laboratory. All Rights reserved. See files
 // LICENSE and NOTICE for details. LLNL-CODE-806117.
 //
@@ -24,6 +24,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <limits>
+#include <type_traits>
+#include <initializer_list>
 #if defined(_MSC_VER) && (_MSC_VER < 1800)
 #include <float.h>
 #define isfinite _finite
@@ -119,10 +121,16 @@ public:
    Vector(int size_, MemoryType h_mt, MemoryType d_mt)
       : data(size_, h_mt, d_mt), size(size_) { }
 
+   /// Create a vector from a statically sized C-style array of convertible type
+   template <typename CT, int N>
+   explicit Vector(const CT (&values)[N]) : Vector(N)
+   { std::copy(values, values + N, begin()); }
+
    /// Create a vector using a braced initializer list
-   template <int N, typename T = real_t>
-   explicit Vector(const T (&values)[N]) : Vector(N)
-   { std::copy(values, values + N, GetData()); }
+   template <typename CT, typename std::enable_if<
+                std::is_convertible<CT,real_t>::value,bool>::type = true>
+   explicit Vector(std::initializer_list<CT> values) : Vector(values.size())
+   { std::copy(values.begin(), values.end(), begin()); }
 
    /// Enable execution of Vector operations using the mfem::Device.
    /** The default is to use Backend::CPU (serial execution on each MPI rank),
@@ -162,6 +170,13 @@ public:
 
    /// Resize the vector to size @a s using the MemoryType of @a v.
    void SetSize(int s, const Vector &v) { SetSize(s, v.GetMemory().GetMemoryType()); }
+
+   /// Update \ref Capacity() to @a res (if less than current), keeping existing entries.
+   void Reserve(int res);
+
+   /// Delete entries at @a indices and resize vector accordingly.
+   /// @warning Indices must be unique!
+   void DeleteAt(const Array<int> &indices);
 
    /// Set the Vector data.
    /// @warning This method should be called only when OwnsData() is false.
@@ -292,7 +307,12 @@ public:
    inline const real_t &operator[](int i) const { return (*this)(i); }
 
    /// Dot product with a `double *` array.
-   real_t operator*(const real_t *) const;
+   /// This function always executes on the CPU. A HostRead() will be called if
+   /// required.
+   /// To optionally execute on the device:
+   /// Vector tmp(v, Size());
+   /// res = (*this) * tmp;
+   real_t operator*(const real_t *v) const;
 
    /// Return the inner-product.
    real_t operator*(const Vector &v) const;
@@ -335,8 +355,10 @@ public:
    /// (*this) = a * x
    Vector &Set(const real_t a, const Vector &x);
 
+   /// (*this)[i + offset] = v[i]
    void SetVector(const Vector &v, int offset);
 
+   /// (*this)[i + offset] += v[i]
    void AddSubVector(const Vector &v, int offset);
 
    /// (*this) = -(*this)
@@ -344,6 +366,12 @@ public:
 
    /// (*this)(i) = 1.0 / (*this)(i)
    void Reciprocal();
+
+   /// (*this)(i) = abs((*this)(i))
+   void Abs();
+
+   /// (*this)(i) = pow((*this)(i), p)
+   void Pow(const real_t p);
 
    /// Swap the contents of two Vectors
    inline void Swap(Vector &other);
@@ -389,6 +417,15 @@ public:
    /** Negative dof values cause the -dof-1 position in this Vector to receive
        the -value. */
    void SetSubVector(const Array<int> &dofs, const real_t value);
+
+   /// Set the entries listed in @a dofs to the given @a value (always on host).
+   /** Negative dof values cause the -dof-1 position in this Vector to receive
+       the -value.
+
+       As opposed to SetSubVector(const Array<int>&, const real_t), this
+       function will execute only on host, even if the vector or the @a dofs
+       array have the device flag set. */
+   void SetSubVectorHost(const Array<int> &dofs, const real_t value);
 
    /** @brief Set the entries listed in @a dofs to the values given in the @a
        elemvect Vector. Negative dof values cause the -dof-1 position in this
@@ -589,6 +626,18 @@ inline void Vector::SetSize(int s, MemoryType mt)
       size = 0;
    }
    data.UseDevice(use_dev);
+}
+
+inline void Vector::Reserve(int res)
+{
+   if (res > Capacity())
+   {
+      Memory<real_t> p(res, data.GetMemoryType());
+      p.CopyFrom(data, size);
+      p.UseDevice(data.UseDevice());
+      data.Delete();
+      data = p;
+   }
 }
 
 inline void Vector::NewMemoryAndSize(const Memory<real_t> &mem, int s,
