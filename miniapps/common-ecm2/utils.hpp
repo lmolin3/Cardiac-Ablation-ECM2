@@ -1,18 +1,16 @@
+#ifndef MFEM_ECM2_UTILS_HPP
+#define MFEM_ECM2_UTILS_HPP
+
+#pragma once
+
+#include "mfem.hpp"
+
 #include <algorithm>
 #include <assert.h>
 #include <cstdlib>
 #include <memory>
 
-#ifdef MFEM_USE_MPI
-#include <mpi.h>
-#endif // MFEM_USE_MPI
-
-#include "mfem.hpp"
-
 #include "../../linalg/dtensor.hpp"
-
-#ifndef MFEM_ECM2_UTILS_HPP
-#define MFEM_ECM2_UTILS_HPP
 
 namespace mfem
 {
@@ -28,7 +26,9 @@ namespace mfem
         // Vector and Scalar functions (time dependent)
         using VecFuncT = void(const Vector &x, double t, Vector &u);
         using ScalarFuncT = double(const Vector &x, double t);
-        using qoi_func_t = std::function<void(ElementTransformation &, int, const IntegrationPoint &)>; // QoI function type for GSLIB interpolation
+
+        void print_matrix(const DenseMatrix &A);
+
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                          Solver utils                                                ///
@@ -55,12 +55,12 @@ namespace mfem
         {
         public:
             VecCoeffContainer(Array<int> attr, VectorCoefficient *coeff_, bool own = true)
-                : attr(attr)
+                : attr(attr), own(own)
             {
                 this->coeff = coeff_;
             }
 
-            VecCoeffContainer(VecCoeffContainer &&obj)
+            VecCoeffContainer(VecCoeffContainer &&obj) noexcept
             {
                 // Deep copy the attribute array
                 this->attr = obj.attr;
@@ -98,7 +98,7 @@ namespace mfem
                 this->beta = beta_;
             }
 
-            CustomNeumannContainer(CustomNeumannContainer &&obj)
+            CustomNeumannContainer(CustomNeumannContainer &&obj) noexcept
             {
                 // Deep copy the attribute array
                 this->attr = obj.attr;
@@ -147,7 +147,7 @@ namespace mfem
             {
             }
 
-            CoeffContainer(CoeffContainer &&obj)
+            CoeffContainer(CoeffContainer &&obj) noexcept
             {
                 // Deep copy the attribute and direction
                 this->attr = obj.attr;
@@ -183,7 +183,7 @@ namespace mfem
             }
 
             // Move Constructor
-            CompCoeffContainer(CompCoeffContainer &&obj)
+            CompCoeffContainer(CompCoeffContainer &&obj) noexcept
                 : CoeffContainer(std::move(obj))
             {
                 dir = obj.dir;
@@ -205,7 +205,7 @@ namespace mfem
                 hT0_coeff = new ProductCoefficient(*h_coeff, *T0_coeff);
             }
 
-            RobinCoeffContainer(RobinCoeffContainer &&obj)
+            RobinCoeffContainer(RobinCoeffContainer &&obj) noexcept
             {
                 // Deep copy the attribute and direction
                 this->attr = obj.attr;
@@ -222,14 +222,15 @@ namespace mfem
 
             ~RobinCoeffContainer()
             {
+                delete hT0_coeff; // Deleted regardless since it is created by RobinCoeffContainer
+                hT0_coeff = nullptr;
+
                 if (own)
                 {
                     delete h_coeff;
                     delete T0_coeff;
-                    delete hT0_coeff;
                     h_coeff = nullptr;
                     T0_coeff = nullptr;
-                    hT0_coeff = nullptr;
                 }
             }
 
@@ -240,39 +241,128 @@ namespace mfem
             bool own;
         };
 
+
+        /// Container for coefficient used for General Robin bcs:
+        //
+        // μ1 ∇u⋅n + α1 u =  μ2 ∇u2⋅n + α2 u2 
+        //
+        // holding: alpha1, alpha2, mu2, grad_u2, u2
+        //
+        // TODO: we can add code to handle case where alpha1, alpha2, mu2 are not provided (i.e. this becomes classical Robin, or even Neumann)
+        // We can set these are nullptr and check for nullptr in the specific Solver class.
+        //
+        class GeneralRobinContainer
+        {
+        public:
+            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, Coefficient *u2_, VectorCoefficient *grad_u2_, Coefficient *mu2_, bool own = true)
+                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), mu2(mu2_), grad_u2(grad_u2_), u2(u2_), own(own)
+            {
+                alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
+                mu2_grad_u2 = new ScalarVectorProductCoefficient(*mu2, *grad_u2);
+            }
+
+            GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, Coefficient *u2_, VectorCoefficient *mu2_grad_u2_, bool own = true)
+                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), grad_u2(mu2_grad_u2_), mu2(nullptr), u2(u2_), own(own)
+            {
+                alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
+                mu2_grad_u2 = new ScalarVectorProductCoefficient(1.0, *grad_u2);
+            }       
+
+            GeneralRobinContainer(GeneralRobinContainer &&obj) noexcept 
+            {
+                // Deep copy the attribute and direction
+                this->attr = obj.attr;
+                this->own = obj.own;
+
+                // Move the coefficient pointer
+                this->alpha1 = obj.alpha1;
+                this->alpha2 = obj.alpha2;
+                this->mu2 = obj.mu2;
+                this->grad_u2 = obj.grad_u2;
+                this->u2 = obj.u2;
+                this->alpha2_u2 = obj.alpha2_u2;
+                this->mu2_grad_u2 = obj.mu2_grad_u2;
+                obj.alpha1 = nullptr;
+                obj.alpha2 = nullptr;
+                obj.mu2 = nullptr;
+                obj.grad_u2 = nullptr;
+                obj.u2 = nullptr;
+                obj.alpha2_u2 = nullptr;
+                obj.mu2_grad_u2 = nullptr;
+            }
+
+            ~GeneralRobinContainer()
+            {
+                delete alpha2_u2; // Deleted regardless since it is created by GeneralRobinContainer
+                alpha2_u2 = nullptr;
+                delete mu2_grad_u2; // Deleted regardless since it is created by GeneralRobinContainer
+                mu2_grad_u2 = nullptr;
+                
+                if (own)
+                {
+                    delete alpha1;
+                    delete alpha2;
+                    delete grad_u2;
+                    delete mu2;
+                    delete u2;
+                    alpha1 = nullptr;
+                    alpha2 = nullptr;
+                    mu2 = nullptr;
+                    grad_u2 = nullptr;
+                    u2 = nullptr;
+                }
+            }
+
+                Array<int> attr;
+                Coefficient *alpha1;                                   // May be OWNED
+                Coefficient *alpha2;                                   // May be OWNED
+                Coefficient *mu2;                                      // May be OWNED
+                VectorCoefficient *grad_u2;                            // May be OWNED
+                Coefficient *u2;                                       // May be OWNED
+                ScalarVectorProductCoefficient *mu2_grad_u2 = nullptr; // OWNED
+                Coefficient *alpha2_u2 = nullptr;                      // OWNED
+                bool own;
+        };
+         
+
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                          Linalg utils                                                ///
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         /** @brief Matrix vector multiplication with the original uneliminated
-        matrix.  The original matrix is \f$ mat + mat_e \f$ so we have:
-        \f$ y = mat x + mat_e x \f$ */
+        * matrix.  The original matrix.  The original matrix is $ mat + mat_e $ so we have:
+        * $ y = mat x + mat_e x $
+        */
         void FullMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y);
 
         /** @brief Addition of matrix vector multiplication with the original uneliminated
-           matrix.  The original matrix is \f$ mat + mat_e \f$ so we have:
-           \f$ y += a ( mat x + mat_e x ) \f$ */
+        * matrix.  The original matrix is $ mat + mat_e $ so we have:
+        * $ y += a ( mat x + mat_e x ) $
+        */
         void FullAddMult(HypreParMatrix *mat, HypreParMatrix *mat_e, Vector &x, Vector &y, double a = 1.0);
+
+        /// Remove mean from a Vector.
+        /**
+         * Modify the Vector @a v by subtracting its mean using
+         * \f$v = v - \frac{\sum_i^N v_i}{N} \f$
+         */
+        void Orthogonalize(Vector &v, const MPI_Comm &comm);
+
+        /// Remove the mean from a ParGridFunction.
+        /**
+         * Modify the ParGridFunction @a v by subtracting its mean using
+         * \f$ v = v - \int_\Omega \frac{v}{vol(\Omega)} dx \f$.
+         */
+        void MeanZero(ParGridFunction &v, ParLinearForm *mass_lf = nullptr, real_t volume = 0.0);
+
+        // Logical and operation between two arrays
+        Array<int> operator&&(const Array<int> &a, const Array<int> &b);
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
         ///                                              Mesh utils                                              ///
         ////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
         void ExportMeshwithPartitioning(const std::string &outfolder, Mesh &mesh, const int *partitioning_);
-
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-        ///                                          GSLIB utils                                                ///
-        ///////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-        // Compute the coordinates of the quadrature points on the boundary elements with the specified attributes (on Destination mesh)
-        // Note: when using SubMeshes, provide bdry_attributes from the parent mesh, to ensure that
-        void ComputeBdrQuadraturePointsCoords(Array<int> &bdry_attributes, ParFiniteElementSpace &fes, std::vector<int> &bdry_element_idx, Vector &bdry_element_coords);
-
-        // GSLIB interpolation of the QoI (given by qoi_func) on the source mesh and transfer to the destination mesh quadrature points
-        void GSLIBInterpolate(FindPointsGSLIB &finder, ParFiniteElementSpace &fes, qoi_func_t qoi_func, Vector &qoi_src, Vector &qoi_dst, int qoi_size_on_qp = 1);
-
-        // Fill the grid function on destination mesh with the QoI vector (on quadrature points) on the destination mesh computed with GSLIBInterpolate
-        void TransferQoIToDest(const std::vector<int> &elem_idx, const ParFiniteElementSpace &dest_fes, const Vector &dest_vec, ParGridFunction &dest_gf);
 
     } // namespace ecm2_utils
 

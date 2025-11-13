@@ -17,9 +17,9 @@
 
 #include "heat_solver.hpp"
 
-#ifdef MFEM_USE_MPI
-
 constexpr int max_bdf_order = 6;
+
+#ifdef MFEM_USE_MPI
 
 using namespace std;
 namespace mfem
@@ -30,12 +30,12 @@ namespace mfem
    namespace heat
    {
 
-      double CelsiusToKelvin(double Tc)
+      real_t CelsiusToKelvin(real_t Tc)
       {
          return Tc + 273.15;
       }
 
-      double KelvinToCelsius(double Tk)
+      real_t KelvinToCelsius(real_t Tk)
       {
          return Tk - 273.15;
       }
@@ -60,7 +60,7 @@ namespace mfem
       {
          sw_init.Start();
 
-         display_banner(cout);
+         //display_banner(cout);
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -123,6 +123,7 @@ namespace mfem
       HeatSolver::~HeatSolver()
       {
          delete H1FESpace;
+         delete VectorH1FESpace;
 
          delete T;
 
@@ -161,36 +162,44 @@ namespace mfem
          std::string solver_name;
          ODESolver *ode_solver_ = nullptr;
 
+         implicit_time_integration = false;
+
          switch (ode_solver_type)
          {
          // Implicit L-stable methods
          case 1:
+            implicit_time_integration = true;
             ode_solver_ = new BackwardEulerSolver;
             time_scheme_order = 1;
             solver_name = "Backward Euler";
             break;
          case 2:
+            implicit_time_integration = true;
             ode_solver_ = new SDIRK23Solver(2);
             time_scheme_order = 2;
             solver_name = "SDIRK23";
             break;
          case 3:
+            implicit_time_integration = true;
             ode_solver_ = new SDIRK33Solver;
             time_scheme_order = 3;
             solver_name = "SDIRK33";
             break;
          // Implicit A-stable methods (not L-stable)
          case 4:
+            implicit_time_integration = true;
             ode_solver_ = new ImplicitMidpointSolver;
             time_scheme_order = 2;
             solver_name = "Implicit Midpoint";
             break;
          case 5:
+            implicit_time_integration = true;
             ode_solver_ = new SDIRK23Solver;
             time_scheme_order = 3;
             solver_name = "SDIRK23";
             break;
          case 6:
+            implicit_time_integration = true;
             ode_solver_ = new SDIRK34Solver;
             time_scheme_order = 4;
             solver_name = "SDIRK34";
@@ -231,7 +240,7 @@ namespace mfem
       }
 
       void
-      HeatSolver::Setup()
+      HeatSolver::Setup(real_t dt, int prec_type)
       {
          sw_setup.Start();
 
@@ -241,7 +250,7 @@ namespace mfem
          }
 
          // Set up the internal AdvectionReactionDiffusionOperator
-         op->Setup();
+         op->Setup(dt, implicit_time_integration, prec_type);
 
          // Initialize every entry with zero solution (only stored essential_tdofs)
          ess_tdof_list = op->GetEssTDofList();
@@ -283,7 +292,7 @@ namespace mfem
       }
 
       void
-      HeatSolver::Update() // TODO: maybe for transient simulations we can add Update(double time) and update coeffs and bcs
+      HeatSolver::Update() // TODO: maybe for transient simulations we can add Update(real_t time) and update coeffs and bcs
       {
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -305,13 +314,12 @@ namespace mfem
       }
 
       void
-      HeatSolver::Step(double &time, double dt, int step, bool UpdateHistory)
+      HeatSolver::Step(real_t &time, real_t dt, int step, bool UpdateHistory)
       {
          // Solve the system
          sw_solve.Start();
 
          // Update the operator
-         op->SetTimeStep(dt);
          SetTimeIntegrationCoefficients(step);
 
          // Set solution vector to the previous solution (without new bcs)
@@ -368,7 +376,7 @@ namespace mfem
 
          // Maximum BDF order to use at current time step
          // step + 1 <= order <= time_scheme_order
-         int bdf_order = std::min(step, time_scheme_order);
+         int bdf_order = std::min(step-1, time_scheme_order);
 
          // Set the coefficients for the BDF scheme
          // du/dt ~ (1/dt) * (  alpha un  +  ubdf  ),   with   ubdf = sum_{i=1}^{bdf_order} beta_i * u_{n-i}
@@ -383,25 +391,25 @@ namespace mfem
          //   5   | 137/60 | -5 | 5   | -10/3| 5/4 | -1/5       |
          //   6   | 147/60 | -6 | 15/2| -20/3| 15/4| -6/5 | 1/6 |
 
-         if (step == 1 && bdf_order == 1)
+         if (step == 1 && bdf_order <= 1)
          {
             alpha = 1.0;
             beta[0] = -1.0;
          }
-         else if (step >= 2 && bdf_order == 2)
+         else if (step > 2 && bdf_order == 2)
          {
             alpha = 1.5;
             beta[0] = -2.0;
             beta[1] = 0.5;
          }
-         else if (step >= 3 && bdf_order == 3)
+         else if (step > 3 && bdf_order == 3)
          {
             alpha = 11.0 / 6.0;
             beta[0] = -3.0;
             beta[1] = 1.5;
             beta[2] = -1.0 / 3.0;
          }
-         else if (step >= 4 && bdf_order == 4)
+         else if (step > 4 && bdf_order == 4)
          {
             alpha = 25.0 / 12.0;
             beta[0] = -4.0;
@@ -409,7 +417,7 @@ namespace mfem
             beta[2] = -4.0 / 3.0;
             beta[3] = 1.0 / 4.0;
          }
-         else if (step >= 5 && bdf_order == 5)
+         else if (step > 5 && bdf_order == 5)
          {
             alpha = 137.0 / 60.0;
             beta[0] = -5.0;
@@ -418,7 +426,7 @@ namespace mfem
             beta[3] = 5.0 / 4.0;
             beta[4] = -1.0 / 5.0;
          }
-         else if (step >= 6 && bdf_order == 6)
+         else if (step > 6 && bdf_order == 6)
          {
             alpha = 147.0 / 60.0;
             beta[0] = -6.0;
@@ -430,7 +438,7 @@ namespace mfem
          }
       }
 
-      void HeatSolver::ComputeDerivativeApproximation(const Vector &T, double dt) const
+      void HeatSolver::ComputeDerivativeApproximation(const Vector &T, real_t dt) const
       {
 
          Vector &dT_approx = op->GetDerivativeApproximation();
@@ -452,9 +460,9 @@ namespace mfem
          }
       }
 
-      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, Array<int> &attr)
+      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, Array<int> &attr, bool own)
       {
-         op->AddVolumetricTerm(coeff, attr);
+         op->AddVolumetricTerm(coeff, attr, own);
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -470,9 +478,9 @@ namespace mfem
          }
       }
 
-      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr)
+      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, Array<int> &attr, bool own)
       {
-         op->AddVolumetricTerm(func, attr);
+         op->AddVolumetricTerm(func, attr, own);
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
@@ -488,24 +496,24 @@ namespace mfem
          }
       }
 
-      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, int &attr)
+      void HeatSolver::AddVolumetricTerm(Coefficient *coeff, int &attr, bool own)
       {
          // Create array for attributes and mark given mesh boundary
          tmp_domain_attr = 0;
          tmp_domain_attr[attr - 1] = 1;
 
          // Add the volumetric term to the operator
-         AddVolumetricTerm(coeff, tmp_domain_attr);
+         AddVolumetricTerm(coeff, tmp_domain_attr, own);
       }
 
-      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, int &attr)
+      void HeatSolver::AddVolumetricTerm(ScalarFuncT func, int &attr, bool own)
       {
          // Create array for attributes and mark given mesh boundary
          tmp_domain_attr = 0;
          tmp_domain_attr[attr - 1] = 1;
 
          // Add the volumetric term to the operator
-         AddVolumetricTerm(func, tmp_domain_attr);
+         AddVolumetricTerm(func, tmp_domain_attr, own);
       }
 
       void
@@ -550,7 +558,7 @@ namespace mfem
       }
 
       void
-      HeatSolver::WriteFields(const int &it, const double &time)
+      HeatSolver::WriteFields(const int &it, const real_t &time)
       {
          if (visit_dc)
          {
@@ -612,7 +620,7 @@ namespace mfem
 
          int Wx = 0, Wy = 0;                 // window position
          int Ww = 350, Wh = 350;             // window size
-         int offx = Ww + 10, offy = Wh + 45; // window offsets
+         int offx = Ww + 10; // window offsets
 
          VisualizeField(*socks["T"], vishost, visport,
                         *T_gf, "Temperature (T)", Wx, Wy, Ww, Wh);
@@ -624,15 +632,15 @@ namespace mfem
          }
       }
 
-      std::vector<double> HeatSolver::GetTimingData()
+      std::vector<real_t> HeatSolver::GetTimingData()
       {
-         std::vector<double> timing_data(3);
+         std::vector<real_t> timing_data(3);
 
          timing_data[0] = sw_init.RealTime();
          timing_data[1] = sw_setup.RealTime();
          timing_data[2] = sw_solve.RealTime();
 
-         double rt_max[3];
+         real_t rt_max[3];
          MPI_Reduce(timing_data.data(), rt_max, 3, MPI_DOUBLE, MPI_MAX, 0, pmesh->GetComm());
 
          if (pmesh->GetMyRank() == 0 && verbose)
@@ -647,7 +655,7 @@ namespace mfem
 
       void HeatSolver::PrintTimingData()
       {
-         std::vector<double> timing_data = GetTimingData();
+         std::vector<real_t> timing_data = GetTimingData();
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {

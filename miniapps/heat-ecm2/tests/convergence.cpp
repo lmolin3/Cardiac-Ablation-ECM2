@@ -31,10 +31,10 @@
 //
 // Sample runs:
 //
-//    mpirun -np 4 ./convergence -ode 1 -n 20 -a 3 -b 1.2 -kattr 1 -kval 1 -cattr 1 -cval 1 -rhoattr 1 -rhoval 1 --paraview -o 1 -r 5 -fun 2 -d 2
+//    mpirun -np 4 ./convergence_heat -ode 1 -n 20 -a 3 -b 1.2 -kattr 1 -kval 1 -cattr 1 -cval 1 -rhoattr 1 -rhoval 1 --paraview -o 1 -r 5 -fun 2 -d 2
 //
 
-#include "lib/heat_solver.hpp"
+#include "../lib/heat_solver.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -45,23 +45,23 @@ using namespace mfem;
 using namespace mfem::heat;
 
 // Exact smooth analytic solution for convergence study
-double T_exact1(const Vector &x, double t);
+real_t T_exact1(const Vector &x, real_t t);
 void T_grad_exact1(const Vector &x, Vector &gradT);
-double f_exact1(const Vector &x);
+real_t f_exact1(const Vector &x);
 
-double T_exact2(const Vector &x, double t);
+real_t T_exact2(const Vector &x, real_t t);
 void T_grad_exact2(const Vector &x, Vector &gradT);
-double f_exact2(const Vector &x);
+real_t f_exact2(const Vector &x);
 
-double T_exact3(const Vector &x, double t);
+real_t T_exact3(const Vector &x, real_t t);
 void T_grad_exact3(const Vector &x, Vector &gradT);
-double f_exact3(const Vector &x, double t);
+real_t f_exact3(const Vector &x, real_t t);
 
 // Setting the frequency for the exact solution
-double alpha = 3.0;
-double beta = 1.2;
-double freq = 1.0;
-double kappa;
+real_t alpha = 3.0;
+real_t beta_coef  = 1.2;
+real_t freq = 1.0;
+real_t kappa;
 
 static Vector pw_k(0);     // Piecewise conductivity values
 static Vector k_attr(0);   // Domain attributes associated to piecewise Conductivity
@@ -95,6 +95,7 @@ int main(int argc, char *argv[])
    // Time integrator
    int ode_solver_type = -1;
    int num_steps = 20;
+   bool pa = false;
    // Postprocessing
    bool paraview = true;
    const char *outfolder = "./Output/Convergence/";
@@ -106,6 +107,8 @@ int main(int argc, char *argv[])
                   "Dimension of the problem (2 or 3).");
    args.AddOption(&order, "-o", "--order",
                   "Finite element order (polynomial degree).");
+   args.AddOption(&pa, "-pa", "--partial-assembly", "-no-pa", "--no-partial-assembly",
+                  "Enable or disable partial assembly.");
    args.AddOption(&total_refinements, "-r", "--refinements",
                   "Number of total uniform refinements");
    args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
@@ -116,7 +119,7 @@ int main(int argc, char *argv[])
                   "Number of time steps.");
    args.AddOption(&alpha, "-a", "--alpha",
                   "First parameter for the exact solution.");
-   args.AddOption(&beta, "-b", "--beta",
+   args.AddOption(&beta_coef , "-b", "--beta_coef ",
                   "Second parameter for the exact solution.");
    args.AddOption(&freq, "-f", "--frequency",
                   "Frequency for the exact solution.");
@@ -140,22 +143,15 @@ int main(int argc, char *argv[])
    args.AddOption(&fun, "-fun", "--function",
                   "Function to use for the exact solution: 1 - 2nd ord Polynomial, 2 - Trigonometric");
 
-   args.Parse();
-   if (!args.Good())
-   {
-      if (Mpi::Root())
-      {
-         args.PrintUsage(cout);
-      }
-      return 1;
-   }
+   args.ParseCheck();
+
 
    kappa = freq * M_PI;
 
    // Determine final time
-   double t_initial = 0.0;
-   double t_final = 2.0;
-   double dt = (t_final - t_initial) / num_steps;
+   real_t t_initial = 0.0;
+   real_t t_final = 2.0;
+   real_t dt = (t_final - t_initial) / num_steps;
 
    // Set output options and print header
    cout.precision(4);
@@ -170,9 +166,9 @@ int main(int argc, char *argv[])
            << endl;
    }
 
-   double l2_err_prev = 0.0;
-   double h1_err_prev = 0.0;
-   double h_prev = 0.0;
+   real_t l2_err_prev = 0.0;
+   real_t h1_err_prev = 0.0;
+   real_t h_prev = 0.0;
 
    // Refinement loop
    for (int serial_ref_levels = 0; serial_ref_levels < total_refinements; serial_ref_levels++)
@@ -377,7 +373,7 @@ int main(int argc, char *argv[])
       /// 7. Setup solver and Assemble forms
       ///////////////////////////////////////////////////////////////////////////////////////////////
 
-      Heat.EnablePA(false);
+      Heat.EnablePA(pa);
       Heat.Setup();
 
       ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -415,7 +411,7 @@ int main(int argc, char *argv[])
       Heat.SetInitialTemperature(T_gf);
 
       // Time-stepping loop
-      double t = 0.0;
+      real_t t = 0.0;
       bool last_step = false;
       for (int step = 1; !last_step; step++)
       {
@@ -439,17 +435,17 @@ int main(int argc, char *argv[])
       /// 9. Compute and print the L^2 and H^1 norms of the error.
       ///////////////////////////////////////////////////////////////////////////////////////////////
 
-      double l2_err = 0.0;
-      double h1_err = 0.0;
-      double l2_rate = 0.0;
-      double h1_rate = 0.0;
+      real_t l2_err = 0.0;
+      real_t h1_err = 0.0;
+      real_t l2_rate = 0.0;
+      real_t h1_rate = 0.0;
       l2_err = T_gf.ComputeL2Error(*Tex_coeff);
       h1_err = T_gf.ComputeH1Error(Tex_coeff, gradTex_coeff);
 
-      double h_min = 0.0;
-      double h_max = 0.0;
-      double kappa_min = 0.0;
-      double kappa_max = 0.0;
+      real_t h_min = 0.0;
+      real_t h_max = 0.0;
+      real_t kappa_min = 0.0;
+      real_t kappa_max = 0.0;
       pmesh->GetCharacteristics(h_min, h_max, kappa_min, kappa_max);
 
       if (serial_ref_levels != 0)
@@ -505,18 +501,18 @@ int main(int argc, char *argv[])
    }
 }
 
-double T_exact1(const Vector &x, double t)
+real_t T_exact1(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 2)
    {
-      // T = 1 + x^2 + alpha y^2 + beta t
-      T = 1.0 + x(0) * x(0) + alpha * x(1) * x(1) + beta * t;
+      // T = 1 + x^2 + alpha y^2 + beta_coef  t
+      T = 1.0 + x(0) * x(0) + alpha * x(1) * x(1) + beta_coef  * t;
    }
    else if (x.Size() == 3)
    {
-      // T = 1 + x^2 + alpha y^2 + beta z^2 + beta t
-      T = 1.0 + x(0) * x(0) + alpha * x(1) * x(1) + alpha * x(2) * x(2) + beta * t;
+      // T = 1 + x^2 + alpha y^2 + beta_coef  z^2 + beta_coef  t
+      T = 1.0 + x(0) * x(0) + alpha * x(1) * x(1) + alpha * x(2) * x(2) + beta_coef  * t;
    }
    else
    {
@@ -547,18 +543,18 @@ void T_grad_exact1(const Vector &x, Vector &gradT)
    }
 }
 
-double f_exact1(const Vector &x)
+real_t f_exact1(const Vector &x)
 {
-   double f = 0.0;
+   real_t f = 0.0;
    if (x.Size() == 2)
    {
-      // beta - 2 - 2 alpha
-      f = beta - 2.0 - 2.0 * alpha;
+      // beta_coef  - 2 - 2 alpha
+      f = beta_coef  - 2.0 - 2.0 * alpha;
    }
    else if (x.Size() == 3)
    {
-      // beta - 2 - 2 alpha - 2 alpha
-      f = beta - 2.0 - 2.0 * alpha - 2.0 * alpha;
+      // beta_coef  - 2 - 2 alpha - 2 alpha
+      f = beta_coef  - 2.0 - 2.0 * alpha - 2.0 * alpha;
    }
    else
    {
@@ -568,18 +564,18 @@ double f_exact1(const Vector &x)
    return f;
 }
 
-double T_exact2(const Vector &x, double t)
+real_t T_exact2(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 2)
    {
-      // T = sin(kappa x) sin(kappa y) + beta t
-      T = sin(kappa * x(0)) * sin(kappa * x(1)) + beta * t;
+      // T = sin(kappa x) sin(kappa y) + beta_coef  t
+      T = sin(kappa * x(0)) * sin(kappa * x(1)) + beta_coef  * t;
    }
    else if (x.Size() == 3)
    {
-      // T = sin(kappa x) sin(kappa y) sin(kappa z) + beta t
-      T = sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)) + beta * t;
+      // T = sin(kappa x) sin(kappa y) sin(kappa z) + beta_coef  t
+      T = sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)) + beta_coef  * t;
    }
    else
    {
@@ -610,18 +606,18 @@ void T_grad_exact2(const Vector &x, Vector &gradT)
    }
 }
 
-double f_exact2(const Vector &x)
+real_t f_exact2(const Vector &x)
 {
-   double f = 0.0;
+   real_t f = 0.0;
    if (x.Size() == 2)
    {
-      // beta + 2 kappa^2 sin(kappa x) sin(kappa y)
-      f = beta + 2.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)));
+      // beta_coef  + 2 kappa^2 sin(kappa x) sin(kappa y)
+      f = beta_coef  + 2.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)));
    }
    else if (x.Size() == 3)
    {
-      // beta + 3 kappa^2 sin(kappa x) sin(kappa y) sin(kappa z)
-      f = beta + 3.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)));
+      // beta_coef  + 3 kappa^2 sin(kappa x) sin(kappa y) sin(kappa z)
+      f = beta_coef  + 3.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)));
    }
    else
    {
@@ -631,18 +627,18 @@ double f_exact2(const Vector &x)
    return f;
 }
 
-double T_exact3(const Vector &x, double t)
+real_t T_exact3(const Vector &x, real_t t)
 {
-   double T = 0.0;
+   real_t T = 0.0;
    if (x.Size() == 2)
    {
-      // T = sin(kappa x) sin(kappa y) + beta t^2
-      T = sin(kappa * x(0)) * sin(kappa * x(1)) + beta * pow(t, 2);
+      // T = sin(kappa x) sin(kappa y) + beta_coef  t^2
+      T = sin(kappa * x(0)) * sin(kappa * x(1)) + beta_coef  * pow(t, 2);
    }
    else if (x.Size() == 3)
    {
-      // T = sin(kappa x) sin(kappa y) sin(kappa z) + beta t^2
-      T = sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)) + beta * pow(t, 2);
+      // T = sin(kappa x) sin(kappa y) sin(kappa z) + beta_coef  t^2
+      T = sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)) + beta_coef  * pow(t, 2);
    }
    else
    {
@@ -673,18 +669,18 @@ void T_grad_exact3(const Vector &x, Vector &gradT)
    }
 }
 
-double f_exact3(const Vector &x, double t)
+real_t f_exact3(const Vector &x, real_t t)
 {
-   double f = 0.0;
+   real_t f = 0.0;
    if (x.Size() == 2)
    {
-      // beta + 2 kappa^2 sin(kappa x) sin(kappa y)
-      f = 2.0 * beta * t + 2.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)));
+      // beta_coef  + 2 kappa^2 sin(kappa x) sin(kappa y)
+      f = 2.0 * beta_coef  * t + 2.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)));
    }
    else if (x.Size() == 3)
    {
-      // 2 beta t + 3 kappa^2 sin(kappa x) sin(kappa y) sin(kappa z)
-      f = 2.0 * beta * t + 3.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)));
+      // 2 beta_coef  t + 3 kappa^2 sin(kappa x) sin(kappa y) sin(kappa z)
+      f = 2.0 * beta_coef  * t + 3.0 * kappa * kappa * (sin(kappa * x(0)) * sin(kappa * x(1)) * sin(kappa * x(2)));
    }
    else
    {

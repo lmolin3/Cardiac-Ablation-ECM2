@@ -40,10 +40,11 @@
 #ifndef MFEM_HEAT_OPERATOR
 #define MFEM_HEAT_OPERATOR
 
-#include "mesh_extras.hpp"
-#include "pfem_extras.hpp"
-#include "bc/heat_bchandler.hpp"
-#include "utils.hpp"
+#include "../../common/mesh_extras.hpp"
+#include "../../common/pfem_extras.hpp"
+#include "../bc/heat_bchandler.hpp"
+#include "implicit_solver.hpp"
+#include "../../common-ecm2/utils.hpp"
 #include <deque>
 
 #ifdef MFEM_USE_MPI
@@ -61,8 +62,11 @@ namespace mfem
 
   namespace heat
   {
-    // Forward declaration of ImplicitSolver
-    class ImplicitSolver;
+    // Forward declaration of ImplicitSolverFA
+    class ImplicitSolverBase;
+    class ImplicitSolverFA;
+    class ImplicitSolverPA;
+
     class AdvectionReactionDiffusionOperator : public TimeDependentOperator
     {
     protected:
@@ -89,15 +93,18 @@ namespace mfem
       OperatorHandle opMe;
       OperatorHandle opK;
       OperatorHandle opRobinMass; // Mass matrix with Robin BCs
-      HypreParMatrix *Mfull;
+      HypreParMatrix *Mfull = nullptr;
 
-      double current_dt = 0.0;
+      real_t current_dt = 0.0;
       int current_step = 0;
 
       CGSolver M_solver; // Krylov solver for inverting the mass matrix M
       Solver *M_prec;    // Preconditioner for the mass matrix M
 
-      ImplicitSolver *T_solver; // Implicit solver for T = M + dt K
+      bool implicit_time_integration = false; // Implicit time integration flag
+      // TODO: it might make sense to have flags for time-dependent bcs and coefficients
+      bool enable_reassembling = true;        // Reassemble the operator T at every iteration (can be set to false in case of constant coefficients and/or bcs)
+      ImplicitSolverBase *T_solver;           // Implicit solver for T = M + dt K
 
       ProductCoefficient *rhoC;
       MatrixCoefficient *Kappa; // Diffusion term
@@ -120,6 +127,9 @@ namespace mfem
       // verbosity
       bool verbose;
 
+      // Set time for coefficients
+      void SetCoefficientsTime(const real_t &time);   
+
     public:
       AdvectionReactionDiffusionOperator(std::shared_ptr<ParMesh> pmesh_, ParFiniteElementSpace &f,
                                          BCHandler *bcs,
@@ -132,6 +142,9 @@ namespace mfem
       // Enable partial assembly
       void EnablePA(bool pa_ = false);
 
+      // Disable re-assembly of bilinear form at each iteration
+      void DisableReassembly() { enable_reassembling = false; }
+
       /** Set up the AdvectionReactionDiffusionOperator.
        * This involves adding all the necessary integrators to the linear form for
        * the rhs (volumetric terms, neumann, robin contribution)
@@ -139,7 +152,7 @@ namespace mfem
        * @note Must be called AFTER adding the volumetric terms with
        * AddVolumetricTerm()
        */
-      virtual void Setup();
+      virtual void Setup(real_t dt = 0.0, bool implicit_time_integration = false, int prec_type = 1);
 
       /** Update the AdvectionReactionDiffusionOperator in case of changes in Mesh. */
       void Update();
@@ -149,23 +162,21 @@ namespace mfem
 
       /** Solve the Backward-Euler equation: k = f(u + dt*k, t), for the unknown k.
           This is the only requirement for high-order SDIRK implicit integration.*/
-      virtual void ImplicitSolve(const double dt, const Vector &u, Vector &k);
+      virtual void ImplicitSolve(const real_t dt, const Vector &u, Vector &k);
 
       /** Update bcs and rhs*/
-      virtual void SetTime(const double time);
-
-      /** Set the time step */
-      void SetTimeStep(double dt);
+      virtual void SetTime(const real_t time);
 
       /** Set the starting temperature for the current step */
       void SetStartingTemperature(const Vector *Tn);
 
       // Add Volumetric heat term
       void AddVolumetricTerm(Coefficient *coeff,
-                             Array<int> &attr);                   // Using scalar coefficient
-      void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr); // Using function
+                             Array<int> &attr,
+                             bool own = true);                   // Using scalar coefficient
+      void AddVolumetricTerm(ScalarFuncT func, Array<int> &attr, bool own = true); // Using function
 
-      void ProjectDirichletBCS(const double &time, ParGridFunction &gf);
+      void ProjectDirichletBCS(const real_t &time, ParGridFunction &gf);
 
       /// Getter
       // Get derivative approximation vector
@@ -175,41 +186,6 @@ namespace mfem
       Array<int> &GetEssTDofList() { return ess_tdof_list; }
 
       virtual ~AdvectionReactionDiffusionOperator();
-    };
-
-    // Solver for implicit time integration Top du/dt = -K(T) + f
-    // where Top = M + dt*K + dt RobinMass = M + dt*(D + A - R) + dt RobinMass
-    class ImplicitSolver : public Solver
-    {
-    private:
-      HypreParMatrix *M, *K, *RobinMassMat;
-      HypreParMatrix *T, *Te;
-      IterativeSolver *linear_solver;
-      HypreBoomerAMG *prec;
-      double current_dt;
-      bool finalized;
-      Array<int> ess_tdof_list;
-
-    public:
-      ImplicitSolver(HypreParMatrix *M_, HypreParMatrix *K_,
-                     Array<int> &ess_tdof_list_, int dim, bool use_advection);
-
-      void SetOperator(const Operator &op);
-
-      void SetTimeStep(double dt_);
-
-      void Reset();
-
-      void BuildOperator(HypreParMatrix *M_, HypreParMatrix *K_,
-                         HypreParMatrix *RobinMass_ = nullptr);
-
-      void EliminateBC(const Vector &x, Vector &b) const;
-
-      virtual void Mult(const Vector &x, Vector &y) const;
-
-      bool IsFinalized() const;
-
-      ~ImplicitSolver();
     };
 
   } // namespace heat

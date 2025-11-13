@@ -25,7 +25,7 @@
 #define BCHANDLER_HEAT_HPP
 
 #include <mfem.hpp>
-#include "utils.hpp"
+#include "../../common-ecm2/utils.hpp"
 
 namespace mfem
 {
@@ -68,16 +68,16 @@ namespace mfem
             void AddDirichletBC(ScalarFuncT *func, Array<int> &attr, bool own = true);
 
             /**
-             * \brief Add Dirichlet BC for temperature using double and specific mesh attribute.
+             * \brief Add Dirichlet BC for temperature using real_t and specific mesh attribute.
              *
-             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing double,
+             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing real_t,
              * and integer for specific mesh attribute (they will be applied at setup time).
              *
              * \param coeff_val Value of the Dirichlet BC
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddDirichletBC(double coeff_val, Array<int> &attr, bool own = true);
+            void AddDirichletBC(real_t coeff_val, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for temperature using Coefficient and specific mesh attribute.
@@ -104,16 +104,16 @@ namespace mfem
             void AddDirichletBC(ScalarFuncT *func, int &attr, bool own = true);
 
             /**
-             * \brief Add Dirichlet BC for temperature using double and specific mesh attribute.
+             * \brief Add Dirichlet BC for temperature using real_t and specific mesh attribute.
              *
-             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing double,
+             * Add a Dirichlet boundary condition for temperature to internal list of essential bcs passing real_t,
              * and integer for specific mesh attribute (they will be applied at setup time).
              *
              * \param coeff_val Value of the Dirichlet BC
              * \param attr Boundary attribute
              *
              */
-            void AddDirichletBC(double coeff_val, int &attr, bool own = true);
+            void AddDirichletBC(real_t coeff_val, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using Coefficient and list of essential boundaries.
@@ -164,16 +164,16 @@ namespace mfem
             void AddNeumannBC(ScalarFuncT *func, int &attr, bool own = true);
 
             /**
-             * \brief Add Neumann BC using double and specific mesh attribute.
+             * \brief Add Neumann BC using real_t and specific mesh attribute.
              *
              * Add a Neumann boundary condition to internal list of Neumann bcs,
-             * using double and specific mesh attribute (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
+             * using real_t and specific mesh attribute (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
              *
              * \param val Neumann value
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannBC(double val, int &attr, bool own = true);
+            void AddNeumannBC(real_t val, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using VectorCoefficient and list of essential boundaries.
@@ -294,7 +294,42 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddRobinBC(double val_h, double val_T0, int &attr, bool own = true);
+            void AddRobinBC(real_t val_h, real_t val_T0, int &attr, bool own = true);
+
+            /**
+             * \brief Add Robin BC using Coefficient and list of essential boundaries.
+             *
+             * k1 ∇T⋅n + α1 T =  k2 ∇T2⋅n + α2 T2
+             * 
+             * Add a Robin boundary condition to internal list of Robin bcs,
+             * using Coefficient, and list of active mesh boundaries (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
+             * \param alpha_1 Pointer to Coefficient
+             * \param alpha_2 Pointer to Coefficient
+             * \param T_2 Pointer to Coefficient
+             * \param gradT_2 Pointer to Coefficient
+             * \param mu2 Pointer to Coefficient
+             *
+             * Note: If k2 is not provided, we assume gradT_2 = k2 ∇T2 
+             */ 
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *T_2, VectorCoefficient *gradT_2, Coefficient *mu2, Array<int> &attr, bool own = true); 
+
+
+            /**
+             * \brief Add Robin BC using Coefficient and specific mesh attribute.
+             */
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *T_2, VectorCoefficient *gradT_2, Coefficient *mu2, int &attr, bool own = true);
+
+
+            /** \brief Add Robin BC using Coefficient and list of essential boundaries.
+             * This version assumes gradT_2 = k2 ∇T2, since k2 is not provided.
+             */
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *T_2, VectorCoefficient *k2_gradT_2, Array<int> &attr, bool own = true);
+
+            /** \brief Add Robin BC using Coefficient and specific mesh attribute.
+             * This version assumes gradT_2 = k2 ∇T2, since k2 is not provided.
+             */
+            void AddGeneralRobinBC(Coefficient *alpha_1, Coefficient *alpha_2, Coefficient *T_2, VectorCoefficient *k2_gradT_2, int &attr, bool own = true);
+
 
             /**
              * \brief Set the time in the BCs coefficients.
@@ -304,7 +339,7 @@ namespace mfem
              * \param time Time value.
              *
              */
-            void SetTime(double time);
+            void SetTime(real_t time);
 
             // Getters
 
@@ -332,6 +367,12 @@ namespace mfem
                 return robin_bcs;
             }
 
+            // Getter for General Robin bcs
+            std::vector<GeneralRobinContainer> &GetGeneralRobinBcs()
+            {
+                return general_robin_bcs;
+            }
+
             // Getter for temperature dirichlet bcs
             Array<int> &GetDirichletAttr()
             {
@@ -356,6 +397,12 @@ namespace mfem
                 return robin_attr;
             }
 
+            // Getter for General Robin attr
+            Array<int> &GetGeneralRobinAttr()
+            {
+                return general_robin_attr;
+            }
+
         private:
             /**
              * \brief Update the time in the velocity BCs coefficients.
@@ -365,7 +412,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeDirichletBCs(double new_time);
+            void UpdateTimeDirichletBCs(real_t new_time);
 
             /**
              * \brief Update the time in the pressure BCs coefficients.
@@ -375,7 +422,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeNeumannBCs(double new_time);
+            void UpdateTimeNeumannBCs(real_t new_time);
 
             /**
              * \brief Update the time in the pressure BCs coefficients.
@@ -385,7 +432,7 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeNeumannVectorBCs(double new_time);
+            void UpdateTimeNeumannVectorBCs(real_t new_time);
 
             /**
              * \brief Update the time in the Robin BCs coefficients.
@@ -395,9 +442,20 @@ namespace mfem
              * \param new_time New time value.
              *
              */
-            void UpdateTimeRobinBCs(double new_time);
+            void UpdateTimeRobinBCs(real_t new_time);
 
-            double time;
+            /**
+             * \brief Update the time in the general Robin BCs coefficients.
+             * 
+             * Update the time in the general Robin BCs coefficients.
+             * 
+             * \param new_time New time value.
+             * 
+             */
+            void UpdateTimeGeneralRobinBCs(real_t new_time);
+
+
+            real_t time;
 
             // Shared pointer to Mesh
             std::shared_ptr<ParMesh> pmesh;
@@ -417,6 +475,9 @@ namespace mfem
             // Bookkeeping for Robin bcs.
             std::vector<RobinCoeffContainer> robin_bcs;
 
+            // Bookkeeping for General Robin bcs.
+            std::vector<GeneralRobinContainer> general_robin_bcs;
+
             /// Array of attributes for parsing bcs
             Array<int> dirichlet_attr;     // Essential mesh attributes.
             Array<int> neumann_attr;       // Neumann mesh attributes.
@@ -425,6 +486,7 @@ namespace mfem
             Array<int> dirichlet_attr_tmp; // Essential mesh attributes (temporary).
             Array<int> neumann_attr_tmp;   // Neumann mesh attributes (temporary).
             Array<int> robin_attr_tmp;     // Robin mesh attributes (temporary).
+            Array<int> general_robin_attr; // General Robin mesh attributes.
 
             // Verbosity
             bool verbose;
