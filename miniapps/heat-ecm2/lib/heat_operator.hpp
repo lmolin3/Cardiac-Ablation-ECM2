@@ -82,12 +82,12 @@ namespace mfem
       int fes_truevsize;
       bool pa; // Enable partial assembly
 
-      ParBilinearForm *M;
-      ParBilinearForm *K;
-      ParBilinearForm *RobinMass;
+      std::unique_ptr<ParBilinearForm> M_form;
+      std::unique_ptr<ParBilinearForm> K_form;
+      std::unique_ptr<ParBilinearForm> RobinMass_form;
 
-      ParLinearForm *fform;
-      Vector *fvec;
+      std::unique_ptr<ParLinearForm> fform;
+      mutable Vector fvec;
 
       OperatorHandle opM;
       OperatorHandle opMe;
@@ -95,21 +95,22 @@ namespace mfem
       OperatorHandle opRobinMass; // Mass matrix with Robin BCs
       HypreParMatrix *Mfull = nullptr;
 
-      real_t current_dt = 0.0;
+      real_t cached_dt = 0.0;
       int current_step = 0;
 
-      CGSolver M_solver; // Krylov solver for inverting the mass matrix M
-      Solver *M_prec;    // Preconditioner for the mass matrix M
+      std::unique_ptr<CGSolver> M_solver; // Krylov solver for inverting the mass matrix M
+      std::unique_ptr<Solver> M_prec;    // Preconditioner for the mass matrix M
 
       bool implicit_time_integration = false; // Implicit time integration flag
-      // TODO: it might make sense to have flags for time-dependent bcs and coefficients
-      bool enable_reassembling = true;        // Reassemble the operator T at every iteration (can be set to false in case of constant coefficients and/or bcs)
-      ImplicitSolverBase *T_solver;           // Implicit solver for T = M + dt K
+      int prec_type;                          // Preconditioner type for implicit solver
+      bool enable_rebuild = false;            // Trigger rebuild of the implicit solver at each time step
+      std::unique_ptr<ImplicitSolverBase> T_solver; // Implicit solver for T = M + dt K
 
       ProductCoefficient *rhoC;
       MatrixCoefficient *Kappa; // Diffusion term
       real_t alpha;             // Convection term
       VectorCoefficient *u;
+      VectorCoefficient *conv_coeff = nullptr; // Convection coefficient (rho c u)
       Coefficient *beta; // Reaction term
 
       bool has_diffusion = false;
@@ -127,8 +128,25 @@ namespace mfem
       // verbosity
       bool verbose;
 
+      // assembly flag
+      bool assembled = false;
+
       // Set time for coefficients
-      void SetCoefficientsTime(const real_t &time);   
+      void SetCoefficientsTime(const real_t &time);
+
+      // Reassemble and setup the solver
+      inline void AssembleAndSetupSolver();
+
+      // Assemble the operators
+      inline void AssembleOperators();
+
+      // Build the implicit solver
+      inline void BuildImplicitSolver();
+
+      /** Set the time step
+       * @note If different from the cached time step, the implicit solver is deleted and rebuilt at the next call to ImplicitSolve.
+       */
+      inline void SetTimeStep(const real_t dt);
 
     public:
       AdvectionReactionDiffusionOperator(std::shared_ptr<ParMesh> pmesh_, ParFiniteElementSpace &f,
@@ -142,8 +160,17 @@ namespace mfem
       // Enable partial assembly
       void EnablePA(bool pa_ = false);
 
-      // Disable re-assembly of bilinear form at each iteration
-      void DisableReassembly() { enable_reassembling = false; }
+      /** @brief Enable reassembling the implicit solver at every time step
+       * @note: this needs to be called before Setup()
+       * Rebuild of the implicit solver is required under the following conditions:
+       * - The parameters are time-dependent 
+       * - It has time-dependent Robin BCs
+       *
+       * The rhs is assembled at every time step anyway, so Neumann and Dirichlet BCs are not a problem.
+       * The implicit solver T is automatically reassembled, regardless of this flag if:
+       * - the time step changes,
+       * - the parameters are explicitly changed by calling Update() */
+      void EnableRebuild() { enable_rebuild = true; }
 
       /** Set up the AdvectionReactionDiffusionOperator.
        * This involves adding all the necessary integrators to the linear form for
@@ -152,7 +179,13 @@ namespace mfem
        * @note Must be called AFTER adding the volumetric terms with
        * AddVolumetricTerm()
        */
-      virtual void Setup(real_t dt = 0.0, bool implicit_time_integration = false, int prec_type = 1);
+      virtual void Setup(real_t dt = 0.0, bool implicit_time_integration = false, int prec_type_ = 1);
+
+      /** Rebuild the AdvectionReactionDiffusionOperator 
+       * @note This rebuilds only if the assembled flag is set to false,
+       * which happens if Update() is called
+       */
+      void Rebuild();
 
       /** Update the AdvectionReactionDiffusionOperator in case of changes in Mesh. */
       void Update();

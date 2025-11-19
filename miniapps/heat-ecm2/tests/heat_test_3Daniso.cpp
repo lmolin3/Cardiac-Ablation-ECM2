@@ -33,12 +33,12 @@
 // Sample runs:
 //
 // 1. 2D conduction in rectangular plate
-//    mpirun -np 10 ./heat_test_3Daniso -et 1 -p 1 -o 4 -rs 0 -rp 0 -ar 1.0 -ht 10000 -Tamb 500 -ode 4 -tf 1e5 -dt 1.0e2 --paraview -sf 10
+//    mpirun -np 10 ./heat_test_3Daniso -et 1 -p 1 -o 4 -rs 0 -rp 0 -ar 1.0 -ht 10000 -Tamb 500 -ode 21 -tf 1e5 -dt 1.0e2 --paraview -sf 10
 //
 // Test for partial assembly
 //
-// mpirun -np 4 ./heat_test_3Daniso --partial-assembly -et 1 -p 1 -o 6 -rs 0 -rp 0 -ar 1.0 -ht 10000 -Tamb 500 -ode 7 -tf 1e4 -dt 1.0e0 --paraview -sf 100
-// mpirun -np 4 ./heat_test_3Daniso --no-partial-assembly -et 1 -p 1 -o 6 -rs 0 -rp 0 -ar 1.0 -ht 10000 -Tamb 500 -ode 7 -tf 1e4 -dt 1.0e0 --paraview -sf 100
+// mpirun -np 4 ./heat_test_3Daniso --partial-assembly -et 1 -p 1 -o 6 -rs 0 -rp 0 -ar 1.0 -ht 10000 -Tamb 500 -ode 21 -tf 1e4 -dt 1.0e0 --paraview -sf 100
+// mpirun -np 4 ./heat_test_3Daniso --no-partial-assembly -et 1 -p 1 -o 6 -rs 0 -rp 0 -ar 1.0 -ht 10000 -Tamb 500 -ode 21 -tf 1e4 -dt 1.0e0 --paraview -sf 100
 //
 
 
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
    int parallel_ref_levels = 0;
    bool pa = false; // Enable partial assembly
    // Time integrator
-   int ode_solver_type = -1;
+   int ode_solver_type = 21;
    real_t t_final = 100;
    real_t dt = 1.0e-2;
    // Postprocessing

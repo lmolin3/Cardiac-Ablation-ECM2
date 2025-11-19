@@ -1,5 +1,8 @@
 if (MFEM_USE_MPI)
 
+  include_directories(
+    ${CMAKE_SOURCE_DIR}/miniapps/common-ecm2)
+
   list(APPEND HEAT_COMMON_SOURCES
     lib/heat_solver.cpp
     lib/heat_operator.cpp
@@ -11,6 +14,7 @@ if (MFEM_USE_MPI)
     lib/heat_solver.hpp
     lib/heat_operator.hpp
     lib/implicit_solver.hpp
+    lib/heat_coefficients.hpp
     bc/heat_bchandler.hpp
   )
 
@@ -40,6 +44,11 @@ if (MFEM_USE_MPI)
     MAIN tests/heat_test_3Daniso.cpp
     ${HEAT_COMMON_FILES}
     LIBRARIES heat-ecm2)
+
+  #add_mfem_miniapp(heat_test_volumetric_terms
+  #  MAIN tests/heat_test_volumetric_terms.cpp
+  #  ${HEAT_COMMON_FILES}
+  #  LIBRARIES heat-ecm2)
 
 endif () #MFEM_USE_MPI
 

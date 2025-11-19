@@ -89,7 +89,7 @@ namespace heat
         ProductCoefficient *dtBeta;
         real_t dtConv;
         Coefficient *rhoC, *Beta;
-        VectorCoefficient *u;
+        VectorCoefficient *conv_coeff;
         MatrixCoefficient *Kappa;
         real_t alpha;
         BCHandler *bcs;
@@ -108,7 +108,7 @@ namespace heat
         ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
                          BCHandler *bcs_, Array<int> &ess_tdof_list_,
                          MatrixCoefficient *Kappa_ = nullptr, Coefficient *rhoC_ = nullptr,
-                         real_t alpha_ = 0.0, VectorCoefficient *u_ = nullptr,
+                         real_t alpha_ = 0.0, VectorCoefficient *conv_coeff_ = nullptr,
                          Coefficient *beta_ = nullptr, int prec_type = 0);
 
         // Set the time step and delete the operator T (if dt changed from the cached one)

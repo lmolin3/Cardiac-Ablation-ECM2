@@ -161,11 +161,11 @@ namespace mfem
         ImplicitSolverPA::ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
                                            BCHandler *bcs_, Array<int> &ess_tdof_list_,
                                            MatrixCoefficient *Kappa_, Coefficient *rhoC_,
-                                           real_t alpha_, VectorCoefficient *u_,
+                                           real_t alpha_, VectorCoefficient *conv_coeff_,
                                            Coefficient *beta_, int prec_type_)
             : ImplicitSolverBase(ess_tdof_list_), fes(fes_), T(nullptr),
               lor(nullptr), dtKappa(nullptr), dtBeta(nullptr),
-              dtConv(0.0), rhoC(rhoC_), Beta(beta_), u(u_), Kappa(Kappa_), alpha(alpha_),
+              dtConv(0.0), rhoC(rhoC_), Beta(beta_), conv_coeff(conv_coeff_), Kappa(Kappa_), alpha(alpha_),
               bcs(bcs_), has_diffusion(false), has_advection(false), has_reaction(false),
               prec_type(prec_type_)
         {
@@ -176,7 +176,7 @@ namespace mfem
             // Check contributions
             has_reaction = Beta ? true : false;
             has_diffusion = Kappa ? true : false;
-            has_advection = alpha_ != 0 && u ? true : false;
+            has_advection = alpha_ != 0 && conv_coeff ? true : false;
 
             // Create product coefficients (dependent on timestep)
             if (has_diffusion)
@@ -192,7 +192,7 @@ namespace mfem
             if (has_diffusion)
                 T->AddDomainIntegrator(new DiffusionIntegrator(*dtKappa));
             if (has_advection)
-                T->AddDomainIntegrator(new ConvectionIntegrator(*u, dtConv));
+                T->AddDomainIntegrator(new ConvectionIntegrator(*conv_coeff, dtConv));
             if (has_reaction)
                 T->AddDomainIntegrator(new MassIntegrator(*dtBeta));
 
@@ -321,7 +321,7 @@ namespace mfem
             if (has_diffusion)
                 T->AddDomainIntegrator(new DiffusionIntegrator(*dtKappa));
             if (has_advection)
-                T->AddDomainIntegrator(new ConvectionIntegrator(*u, dtConv));
+                T->AddDomainIntegrator(new ConvectionIntegrator(*conv_coeff, dtConv));
             if (has_reaction)
                 T->AddDomainIntegrator(new MassIntegrator(*dtBeta));
 

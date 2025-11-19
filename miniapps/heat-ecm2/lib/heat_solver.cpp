@@ -60,8 +60,6 @@ namespace mfem
       {
          sw_init.Start();
 
-         //display_banner(cout);
-
          if (pmesh->GetMyRank() == 0 && verbose)
          {
             cout << "\nInitializing Heat solver... " << flush;
@@ -69,36 +67,33 @@ namespace mfem
 
          const int dim = pmesh->Dimension();
 
-         // Define  parallel finite element spaces on the parallel
+         ///<--- Define  parallel finite element spaces on the parallel mesh
          // Here we use arbitrary order H1 for the Temperature.
          // Note: Gauss-Lobatto basis is used for H1 space to ensure LOR can be used
          H1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto);
          VectorH1FESpace = new H1_ParFESpace(pmesh.get(), order, pmesh->Dimension(), BasisType::GaussLobatto, pmesh->Dimension());
 
-         // Print H1FEspace pointer for each rank
-         // cout << "\033[31mH1FESpace pointer on rank " << pmesh->GetMyRank() << " is " << H1FESpace << "\033[0m" << endl;
-
          fes_truevsize = H1FESpace->GetTrueVSize();
 
-         // Create the ParGridFunction and Vector for Temperature
+         ///<--- Create the ParGridFunction and Vector for Temperature
          T = new Vector(fes_truevsize); 
          *T = 0.0;
          T_gf = new ParGridFunction(H1FESpace);
          *T_gf = 0.0;
 
-         // Create the ODE Solver (no initialization yet)
-         ode_solver = CreateODESolver(ode_solver_type, *op);
+         ///<--- Create the ODE Solver (no initialization yet)
+         CreateODESolver(ode_solver_type, *op);
 
-         // Create the AdvectionReactionDiffusionOperator
+         ///<--- Create the AdvectionReactionDiffusionOperator
          op = new AdvectionReactionDiffusionOperator(pmesh, *H1FESpace, bcs, Kappa, c, rho, advection, u, reaction, verbose);
 
-         // Initialize ODESolver with operator
+         ///<--- Initialize ODESolver with operator
          ode_solver->Init(*op);
 
          tmp_domain_attr.SetSize(pmesh->attributes.Max());
          tmp_domain_attr = 0;
 
-         // Initialize the BDF coefficients
+         ///<--- Initialize the BDF coefficients
          beta.SetSize(time_scheme_order);
          beta = 0.0;
          alpha = 0.0;
@@ -131,8 +126,6 @@ namespace mfem
 
          delete op;
 
-         delete ode_solver;
-
          map<string, socketstream *>::iterator mit;
          for (mit = socks.begin(); mit != socks.end(); mit++)
          {
@@ -156,74 +149,61 @@ namespace mfem
          }
       }
 
-      ODESolver *HeatSolver::CreateODESolver(int ode_solver_type, TimeDependentOperator &op)
+      void HeatSolver::CreateODESolver(int ode_solver_type, TimeDependentOperator &op)
       {
-         // Define the ODESolver used to advance the heat solver
-         std::string solver_name;
-         ODESolver *ode_solver_ = nullptr;
+         // Remove solver_name and use correct time_scheme_order
+         implicit_time_integration = (ode_solver_type >= 20);
 
-         implicit_time_integration = false;
+         // Select ODESolver using unique_ptr, then release ownership to raw pointer
+         ode_solver = ODESolver::Select(ode_solver_type);
 
+         // Set time_scheme_order based on ode_solver_type
          switch (ode_solver_type)
          {
-         // Implicit L-stable methods
-         case 1:
-            implicit_time_integration = true;
-            ode_solver_ = new BackwardEulerSolver;
+         // Explicit RK methods
+         case 1:  // Forward Euler
+         case 11: // AB1
+         case 21: // Backward Euler
+         case 51: // AM1
             time_scheme_order = 1;
-            solver_name = "Backward Euler";
             break;
-         case 2:
-            implicit_time_integration = true;
-            ode_solver_ = new SDIRK23Solver(2);
+         case 2:  // RK2
+         case 12: // AB2
+         case 22: // SDIRK23 (order 2)
+         case 32: // Implicit Midpoint
+         case 52: // AM2
             time_scheme_order = 2;
-            solver_name = "SDIRK23";
             break;
-         case 3:
-            implicit_time_integration = true;
-            ode_solver_ = new SDIRK33Solver;
+         case 3:  // RK3 SSP
+         case 13: // AB3
+         case 23: // SDIRK33
+         case 33: // SDIRK23 (order 3)
+         case 53: // AM3
             time_scheme_order = 3;
-            solver_name = "SDIRK33";
             break;
-         // Implicit A-stable methods (not L-stable)
-         case 4:
-            implicit_time_integration = true;
-            ode_solver_ = new ImplicitMidpointSolver;
-            time_scheme_order = 2;
-            solver_name = "Implicit Midpoint";
-            break;
-         case 5:
-            implicit_time_integration = true;
-            ode_solver_ = new SDIRK23Solver;
-            time_scheme_order = 3;
-            solver_name = "SDIRK23";
-            break;
-         case 6:
-            implicit_time_integration = true;
-            ode_solver_ = new SDIRK34Solver;
+         case 4:  // RK4
+         case 14: // AB4
+         case 34: // SDIRK34
+         case 54: // AM4
             time_scheme_order = 4;
-            solver_name = "SDIRK34";
             break;
-         // Explicit methods
-         case 7:
-            ode_solver_ = new ForwardEulerSolver;
-            time_scheme_order = 1;
-            solver_name = "Forward Euler";
+         case 6:  // RK6
+         case 15: // AB5
+            time_scheme_order = 6;
             break;
-         case 8:
-            ode_solver_ = new RK2Solver(0.5);
+         // Generalized Alpha methods (order 2)
+         case 40:
+         case 41:
+         case 42:
+         case 43:
+         case 44:
+         case 45:
+         case 46:
+         case 47:
+         case 48:
+         case 49:
+         case 50:
             time_scheme_order = 2;
-            solver_name = "RK2";
-            break; // midpoint method
-         case 9:
-            ode_solver_ = new RK3SSPSolver;
-            time_scheme_order = 3;
-            solver_name = "RK3 SSP";
-            break;
-         case 10:
-            ode_solver_ = new RK4Solver;
-            time_scheme_order = 4;
-            solver_name = "RK4";
             break;
          default:
             mfem_error("Unknown ODE solver type \n");
@@ -233,10 +213,8 @@ namespace mfem
 
          if (pmesh->GetMyRank() == 0 && verbose)
          {
-            cout << "\nUsing time integrator: " << solver_name << flush;
+            cout << "\nUsing ODE solver type: " << ode_solver_type << " with order " << time_scheme_order << flush;
          }
-
-         return ode_solver_;
       }
 
       void
@@ -249,10 +227,10 @@ namespace mfem
             cout << "\nSetting up Heat solver... " << flush;
          }
 
-         // Set up the internal AdvectionReactionDiffusionOperator
+         ///<--- Set up the internal AdvectionReactionDiffusionOperator
          op->Setup(dt, implicit_time_integration, prec_type);
 
-         // Initialize every entry with zero solution (only stored essential_tdofs)
+         ///<--- Initialize every entry with zero solution (only stored essential_tdofs)
          ess_tdof_list = op->GetEssTDofList();
          Vector tmp;
          tmp.SetSize(fes_truevsize);
@@ -279,10 +257,10 @@ namespace mfem
             cout << "\nSetting initial temperature... " << flush;
          }
 
-         // Retrieve the true dofs of the initial temperature
+         ///<--- Retrieve the true dofs of the initial temperature
          T0_gf.GetTrueDofs(*T);
 
-         // Push vector into the time history
+         ///<--- Push vector into the time history
          UpdateTimeStepHistory(*T);
 
          if (pmesh->GetMyRank() == 0 && verbose)
@@ -292,17 +270,17 @@ namespace mfem
       }
 
       void
-      HeatSolver::Update() // TODO: maybe for transient simulations we can add Update(real_t time) and update coeffs and bcs
+      HeatSolver::Update()
+      {
+         mfem_error("HeatSolver::Update() is not implemented yet.");
+      }
+
+      void HeatSolver::UpdatedParameters()
       {
          if (pmesh->GetMyRank() == 0 && verbose)
          {
             cout << "\nUpdating FE space and Reassembling operators..." << flush;
          }
-
-         // Inform the spaces that the mesh has changed
-         // Note: we don't need to interpolate any GridFunctions on the new mesh
-         // so we pass 'false' to skip creation of any transformation matrices.
-         H1FESpace->Update(false);
 
          // Update the operator
          op->Update();
@@ -314,37 +292,45 @@ namespace mfem
       }
 
       void
-      HeatSolver::Step(real_t &time, real_t dt, int step, bool UpdateHistory)
+      HeatSolver::Step(real_t &t, real_t &dt, int step, bool provisional)
       {
-         // Solve the system
          sw_solve.Start();
 
-         // Update the operator
+         ///<--- Check if the operator needs to be re-assembled
+         op->Rebuild();
+
+         ///<--- Update the operator
          SetTimeIntegrationCoefficients(step);
 
-         // Set solution vector to the previous solution (without new bcs)
+         ///<--- Set solution vector to the previous solution (without new bcs)
          T_gf->GetTrueDofs(*T);
 
-         // Set the time for the boundary conditions, update the temperature gf and operator time
-         op->ProjectDirichletBCS(time + dt, *T_gf);
+         ///<--- Set the time for the boundary conditions, update the temperature gf and operator time
+         op->ProjectDirichletBCS(t + dt, *T_gf);
          T_gf->GetTrueDofs(T_bcs); // Need another vector since T_final = T + dt * dT, and dT(ess_tdof) != 0
          ComputeDerivativeApproximation(T_bcs, dt);
 
-         // Time advancing (Note time is updated by the ode_solver)
-         ode_solver->Step(*T, time, dt);
+         ///<--- Time advancing (Note time is updated by the ode_solver)
+         ode_solver->Step(*T, t, dt);
 
-         // Set bcs after solving
+         ///<--- Set bcs after solving
          for (int i = 0; i < ess_tdof_list.Size(); ++i)
          {
             (*T)[ess_tdof_list[i]] = T_bcs[ess_tdof_list[i]];
          }
 
-         // Update the temperature gf with the new solution
+         ///<--- Update the temperature gf with the new solution
          T_gf->SetFromTrueDofs(*T);
 
-         // Update the time history
-         if (UpdateHistory)
-            UpdateTimeStepHistory(*T);
+         //<--- Update time (if provisional, restore previous time and return)
+         if (provisional)
+         {
+            t -= dt;
+            return;
+         }
+
+         //<--- Update the time step history
+         UpdateTimeStepHistory(*T);
 
          sw_solve.Stop();
       }
@@ -367,18 +353,18 @@ namespace mfem
       void
       HeatSolver::UpdateTimeStepHistory()
       {
-         // Overload to update the history with the internally stored solution
+         ///<--- Overload to update the history with the internally stored solution
          UpdateTimeStepHistory(*T);
       }
 
       void HeatSolver::SetTimeIntegrationCoefficients(int step)
       {
 
-         // Maximum BDF order to use at current time step
+         ///<--- Maximum BDF order to use at current time step
          // step + 1 <= order <= time_scheme_order
          int bdf_order = std::min(step-1, time_scheme_order);
 
-         // Set the coefficients for the BDF scheme
+         ///<--- Set the coefficients for the BDF scheme
          // du/dt ~ (1/dt) * (  alpha un  +  ubdf  ),   with   ubdf = sum_{i=1}^{bdf_order} beta_i * u_{n-i}
          //
          // Based on the order, the coefficients are:
@@ -498,21 +484,21 @@ namespace mfem
 
       void HeatSolver::AddVolumetricTerm(Coefficient *coeff, int &attr, bool own)
       {
-         // Create array for attributes and mark given mesh boundary
+         ///<--- Create array for attributes and mark given mesh boundary
          tmp_domain_attr = 0;
          tmp_domain_attr[attr - 1] = 1;
 
-         // Add the volumetric term to the operator
+         ///<--- Add the volumetric term to the operator
          AddVolumetricTerm(coeff, tmp_domain_attr, own);
       }
 
       void HeatSolver::AddVolumetricTerm(ScalarFuncT func, int &attr, bool own)
       {
-         // Create array for attributes and mark given mesh boundary
+         ///<--- Create array for attributes and mark given mesh boundary
          tmp_domain_attr = 0;
          tmp_domain_attr[attr - 1] = 1;
 
-         // Add the volumetric term to the operator
+         ///<--- Add the volumetric term to the operator
          AddVolumetricTerm(func, tmp_domain_attr, own);
       }
 

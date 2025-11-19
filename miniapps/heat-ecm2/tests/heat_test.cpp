@@ -40,16 +40,16 @@
 // Sample runs:
 //
 // 1. 2D conduction in rectangular plate 
-//    mpirun -np 4 ./heat_test -p 1 -o 1 -et 0 -rs 0 -rp 0 -ode 1 -tf 0.5 -dt 1.0e-2 --paraview -sf 10
+//    mpirun -np 4 ./heat_test -p 1 -o 1 -et 0 -rs 0 -rp 0 -ode 21 -tf 0.5 -dt 1.0e-2 --paraview -sf 10
 //
 // 2. 2D conduction in rectangular plate with time-dependent boundary condition
-//    mpirun -np 4 ./heat_test -p 2 -o 1 -et 0 -rs 0 -rp 0 -ode 1 -tf 0.5 -dt 1.0e-2 --paraview -sf 10
+//    mpirun -np 4 ./heat_test -p 2 -o 1 -et 0 -rs 0 -rp 0 -ode 21 -tf 0.5 -dt 1.0e-2 --paraview -sf 10
 //
 // 3. 3D Sphere heating 
-//   mpirun -np 4 ./heat_test -p 3 -o 1 -rs 0 -rp 0 -ode 1 -tf 10.0 -dt 1.0e-2 -ht 300.0 -Tamb 100.0 --paraview -sf 10
+//   mpirun -np 4 ./heat_test -p 3 -o 1 -rs 0 -rp 0 -ode 21 -tf 10.0 -dt 1.0e-2 -ht 300.0 -Tamb 100.0 --paraview -sf 10
 //
 // 4. 3D Sphere with volumetric source and convective cooling
-//   mpirun -np 4 ./heat_test -p 4 -o 1 -rs 0 -rp 0 -ode 1 -tf 10.0 -dt 1.0e-2 -ht 300.0 -Tamb 0.0 -Q 1e7 --paraview -sf 10
+//   mpirun -np 4 ./heat_test -p 4 -o 1 -rs 0 -rp 0 -ode 21 -tf 10.0 -dt 1.0e-2 -ht 300.0 -Tamb 0.0 -Q 1e7 --paraview -sf 10
 //
 
 #include "../lib/heat_solver.hpp"
@@ -94,7 +94,7 @@ int main(int argc, char *argv[])
    int parallel_ref_levels = 0;
    bool pa = false; // Enable partial assembly
    // Time integrator
-   int ode_solver_type = -1;
+   int ode_solver_type = 21;
    real_t t_final = 100;
    real_t dt = 1.0e-2;
    // Postprocessing
@@ -514,6 +514,9 @@ int main(int argc, char *argv[])
          total_solve_time += timing_data[2]; // Add the solve time to the total
          iterations = step;
       }
+
+      // Flag that parameters have changed
+      Heat.UpdatedParameters();
    }
 
    std::vector<real_t> timing_data = Heat.GetTimingData();

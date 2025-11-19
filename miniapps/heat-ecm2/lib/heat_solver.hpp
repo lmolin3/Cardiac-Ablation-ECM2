@@ -69,9 +69,26 @@ namespace mfem
 
                   void SetInitialTemperature(ParGridFunction &T0);
 
+                  /** @brief Update after space/mesh has changed (e.g., after AMR).
+                   * NOT implemented yet.
+                   * One needs to update the fespace, trigger re-assembly on next Step, resize vectors,
+                   * find a way to handle the time history (as the size of those vectors may change too
+                   * since ess_tdof_list may change).
+                   */
                   void Update();
 
-                  void Step(real_t &time, real_t dt, int step, bool UpdateHistory = true);
+                  /** @brief Update after parameters have changed (e.g., material properties).
+                   * This is a "soft" update that does not require resizing vectors or change in the fespace.
+                   * It can be used to force re-assembly of the operators on next Step, when 
+                   * material properties have changed (e.g. time-dependent, or temperature-dependent coefficients).
+                   * 
+                   * @note: the rhs is always re-assembled at every time step (SetTime), so forcing terms/bcs varying in time or with solution
+                   * are already handled.
+                   * The operators are NOT re-assembled automatically after SetTime is called.
+                   */
+                  void UpdatedParameters();
+
+                  void Step(real_t &t, real_t &dt, int step, bool provisional = false);
 
                   // Explicit update of the time step history: useful to avoid automatic one in Step method (for multiple solutions at same time step)
                   void UpdateTimeStepHistory();
@@ -122,7 +139,7 @@ namespace mfem
                   Vector *GetTemperaturePtr() { return T; }
 
             private:
-                  ODESolver *CreateODESolver(int ode_solver_type, TimeDependentOperator &op);
+                  void CreateODESolver(int ode_solver_type, TimeDependentOperator &op);
 
                   /* Compute approximation of first derivative on essential tdofs*/
                   void ComputeDerivativeApproximation(const Vector &T, real_t dt) const;
@@ -153,7 +170,7 @@ namespace mfem
                   AdvectionReactionDiffusionOperator *op; // Conduction Operator
 
                   bool implicit_time_integration; // Implicit time integration flag
-                  ODESolver *ode_solver; // ODE Solver
+                  std::unique_ptr<ODESolver> ode_solver; // ODE Solver
 
                   Array<int> tmp_domain_attr; // Temporary domain attributes
 
