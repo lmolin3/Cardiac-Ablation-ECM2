@@ -14,7 +14,6 @@ if (MFEM_USE_MPI)
     lib/heat_solver.hpp
     lib/heat_operator.hpp
     lib/implicit_solver.hpp
-    lib/heat_coefficients.hpp
     bc/heat_bchandler.hpp
   )
 
@@ -45,10 +44,10 @@ if (MFEM_USE_MPI)
     ${HEAT_COMMON_FILES}
     LIBRARIES heat-ecm2)
 
-  #add_mfem_miniapp(heat_test_volumetric_terms
-  #  MAIN tests/heat_test_volumetric_terms.cpp
-  #  ${HEAT_COMMON_FILES}
-  #  LIBRARIES heat-ecm2)
+  add_mfem_miniapp(heat_test_volumetric_terms
+    MAIN tests/heat_test_volumetric_terms.cpp
+    ${HEAT_COMMON_FILES}
+    LIBRARIES heat-ecm2)
 
 endif () #MFEM_USE_MPI
 

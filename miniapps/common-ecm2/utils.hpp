@@ -262,13 +262,13 @@ namespace mfem
             }
 
             GeneralRobinContainer(Array<int> attr, Coefficient *alpha1_, Coefficient *alpha2_, Coefficient *u2_, VectorCoefficient *mu2_grad_u2_, bool own = true)
-                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), grad_u2(mu2_grad_u2_), mu2(nullptr), u2(u2_), own(own)
+                : attr(attr), alpha1(alpha1_), alpha2(alpha2_), mu2(nullptr), grad_u2(mu2_grad_u2_), u2(u2_), own(own)
             {
                 alpha2_u2 = new ProductCoefficient(*alpha2, *u2);
                 mu2_grad_u2 = new ScalarVectorProductCoefficient(1.0, *grad_u2);
-            }       
+            }
 
-            GeneralRobinContainer(GeneralRobinContainer &&obj) noexcept 
+            GeneralRobinContainer(GeneralRobinContainer &&obj) noexcept
             {
                 // Deep copy the attribute and direction
                 this->attr = obj.attr;

@@ -143,7 +143,7 @@ namespace mfem
       HeatSolver::PrintSizes()
       {
          HYPRE_BigInt size_h1 = H1FESpace->GlobalTrueVSize();
-         if (pmesh->GetMyRank() == 0 && verbose)
+         if (pmesh->GetMyRank() == 0)
          {
             cout << "Number of H1      unknowns: " << size_h1 << endl;
          }

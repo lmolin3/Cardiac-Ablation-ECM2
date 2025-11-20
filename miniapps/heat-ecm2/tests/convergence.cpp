@@ -111,10 +111,8 @@ int main(int argc, char *argv[])
                   "Enable or disable partial assembly.");
    args.AddOption(&total_refinements, "-r", "--refinements",
                   "Number of total uniform refinements");
-   args.AddOption(&ode_solver_type, "-ode", "--ode-solver",
-                  "ODE solver: 1 - Backward Euler, 2 - SDIRK2, 3 - SDIRK3,\n\t"
-                  "\t   4 - Implicit Midpoint, 5 - SDIRK23, 6 - SDIRK34,\n\t"
-                  "\t   7 - Forward Euler, 8 - RK2, 9 - RK3 SSP, 10 - RK4.");
+   args.AddOption(&ode_solver_type, "-s", "--ode-solver",
+                  ODESolver::Types.c_str());
    args.AddOption(&num_steps, "-n", "--num-steps",
                   "Number of time steps.");
    args.AddOption(&alpha, "-a", "--alpha",

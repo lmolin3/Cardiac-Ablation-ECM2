@@ -17,6 +17,7 @@ list(APPEND SRCS
 list(APPEND HDRS
   utils.hpp
   interface_transfer.hpp
+  custom_coefficients.hpp
   )
 
 convert_filenames_to_full_paths(SRCS)
