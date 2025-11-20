@@ -49,5 +49,10 @@ if (MFEM_USE_MPI)
     ${HEAT_COMMON_FILES}
     LIBRARIES heat-ecm2)
 
+  add_mfem_miniapp(heat_test_temperature_dependence
+    MAIN tests/heat_test_temperature_dependence.cpp
+    ${HEAT_COMMON_FILES}
+    LIBRARIES heat-ecm2)
+
 endif () #MFEM_USE_MPI
 

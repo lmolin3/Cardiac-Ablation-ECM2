@@ -182,20 +182,94 @@ namespace mfem
     class TemperatureDependentCoefficient : public Coefficient
     {
     protected:
-      GridFunction *T_gf;                       //< Temperature GridFunction, NOT OWNED
-      std::function<real_t(real_t)> coeff_func; //< User-defined function for temperature dependence
+      const GridFunction *T_gf;                       //< Temperature GridFunction, NOT OWNED
+      std::function<real_t(real_t)> coeff_func;       //< User-defined function for temperature dependence
     public:
-      TemperatureDependentCoefficient(GridFunction *T_gf_,
+      TemperatureDependentCoefficient(const GridFunction *T_gf_,
                                       std::function<real_t(real_t)> coeff_func_)
           : T_gf(T_gf_), coeff_func(coeff_func_)
-      {
-        MFEM_ASSERT(T_gf != nullptr, "Temperature GridFunction must be provided for TemperatureDependentCoefficient.");
-      }
+      {}
+
+
+      // Overload constructor without GridFunction (provided later)
+      TemperatureDependentCoefficient(std::function<real_t(real_t)> coeff_func_)
+          : T_gf(nullptr), coeff_func(coeff_func_)
+      {}
 
       real_t Eval(ElementTransformation &T, const IntegrationPoint &ip) override
       {
+        MFEM_ASSERT(T_gf != nullptr, "Temperature GridFunction must be provided for TemperatureDependentCoefficient.");
         real_t T_local = T_gf->GetValue(T, ip);
         return coeff_func(T_local);
+      }
+
+      void SetGridFunction(const GridFunction *new_gf)
+      {
+        T_gf = new_gf;
+      }
+
+    };
+
+    /** @brief Generic Temperature-Dependent Matrix Coefficient
+     *  Useful for defining material properties (e.g., thermal conductivity, specific heat, electrical conductivity) that vary with temperature.
+     *
+     * The user provides a function that defines how the coefficient varies with temperature.
+     *
+     * Example usage:
+     *
+     * ```cpp
+     * auto thermal_conductivity_matrix_func = [](real_t T, DenseMatrix &K) {
+     *     if (T < 310.15) // Below 37C
+     *    {
+     *       K.SetSize(3,3);
+     *       K(0,0) = 0.5; K(0,1) = 0.0; K(0,2) = 0.0;
+     *       K(1,0) = 0.0; K(1,1) = 0.5; K(1,2) = 0.0;
+     *       K(2,0) = 0.0; K(2,1) = 0.0; K(2,2) = 0.5;
+     *    }
+     *    else
+     *    { 
+     *       K.SetSize(3,3);
+     *       K(0,0) = 0.4; K(0,1) = 0.0; K(0,2) = 0.0;
+     *       K(1,0) = 0.0; K(1,1) = 0.4; K(1,2) = 0.0;
+     *       K(2,0) = 0.0; K(2,1) = 0.0; K(2,2) = 0.4;
+     *    }
+     * };
+     * TemperatureDependentMatrixCoefficient k_coeff(&T_gf, thermal_conductivity_matrix_func);
+     * ```
+     */
+    class TemperatureDependentMatrixCoefficient : public MatrixCoefficient
+    {
+    protected:
+      const GridFunction *T_gf;                       //< Temperature GridFunction, NOT OWNED
+      std::function<void(real_t, DenseMatrix &)> coeff_func; //< User-defined function for temperature dependence
+    public:
+      TemperatureDependentMatrixCoefficient(int dim,
+                                            const GridFunction *T_gf_,
+                                            std::function<void(real_t, DenseMatrix &)> coeff_func_)
+          : MatrixCoefficient(dim), T_gf(T_gf_), coeff_func(coeff_func_)
+      {
+      }
+
+      // Overload constructor without GridFunction (provided later)
+      TemperatureDependentMatrixCoefficient(int dim,
+                                            std::function<void(real_t, DenseMatrix &)> coeff_func_)
+          : MatrixCoefficient(dim), T_gf(nullptr), coeff_func(coeff_func_)
+      {
+      }
+
+      void Eval(DenseMatrix &K, ElementTransformation &T,
+                const IntegrationPoint &ip) override
+      {
+        MFEM_ASSERT(T_gf != nullptr, "Temperature GridFunction must be provided for TemperatureDependentMatrixCoefficient.");
+
+        K.SetSize(height, width);
+        real_t T_local = T_gf->GetValue(T, ip);
+        coeff_func(T_local, K);
+      }
+
+      void SetGridFunction(const GridFunction *new_gf)
+      {
+        T_gf = new_gf;
       }
     };
 
