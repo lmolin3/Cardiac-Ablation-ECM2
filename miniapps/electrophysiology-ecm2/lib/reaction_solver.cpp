@@ -16,9 +16,20 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coe
     case IonicModelType::FENTON_KARMA:
         model = std::make_unique<FentonKarma>();
         break;
+    case IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT:
+    {
+        model = std::make_unique<MitchellSchaefferTD>();
+        int num_time_constants = dynamic_cast<GotranxODEModelWithThermalDamage*>(model.get())->GetTimeConstantsIdxs().size();
+        td_delta_tau.resize(num_time_constants, 0.0);
+        td_healthy_tau.resize(num_time_constants, 0.0);
+    }
+    break;
     default:
         mfem_error("Unsupported ionic model type");
     }
+
+    // Check if the model has temperature/damage dependency
+    has_td_dependency = dynamic_cast<GotranxODEModelWithThermalDamage*>(model.get()) != nullptr; 
 
     //<--- Setup grid functions and vectors for stimulation, chi, and Cm
     // Stimulation
@@ -85,8 +96,54 @@ ReactionSolver::~ReactionSolver()
     }
 }
 
+void ReactionSolver::SetThermalDamageParameters(
+    ParGridFunction *temperature_gf_,
+    ParGridFunction *damage_gf_,
+    real_t A,
+    real_t B,
+    real_t T_ref,
+    real_t Q10,
+    std::function<real_t(real_t)> damage_func,
+    std::vector<real_t> delta_tau)
+{
+    if (!has_td_dependency && Mpi::Root())
+    {
+        mfem_warning("ReactionSolver::SetTemperatureAndDamageGridFunctions(): The current ionic model does not support temperature/damage dependency. The provided grid functions will be ignored.");
+    }
+
+    // NOTE: here we assume that the gfs are defined on the same fes as the EP solver
+    temperature_gf = temperature_gf_;
+    damage_gf = damage_gf_;
+
+    // Store parameters for later use
+    td_A = A;
+    td_B = B;
+    td_Tref = T_ref;
+    td_Q10 = Q10;
+    td_damage_func = damage_func != nullptr ? damage_func : [](real_t D) { return 1.0; }; // Default: identity function
+
+    // For delta_tau, ensure size matches number of time constants
+    int num_time_constants = dynamic_cast<GotranxODEModelWithThermalDamage*>(model.get())->GetTimeConstantsIdxs().size();
+    if (static_cast<int>(delta_tau.size()) != num_time_constants)
+    {
+        mfem_error("ReactionSolver::SetThermalDamageParameters(): Size of delta_tau does not match number of time constants in the model.");
+    }
+    td_delta_tau = delta_tau;
+}
+
 void ReactionSolver::Setup(const std::vector<double> &initial_states, const std::vector<double> &params)
 {
+    // Check if the model has temperature/damage dependency and issue a warning if gfs are not provided
+    if (has_td_dependency)
+    {
+        if ((temperature_gf == nullptr || damage_gf == nullptr) && Mpi::Root())
+        {
+            mfem_warning("ReactionSolver::Setup(): The selected ionic model has temperature/damage dependency, "
+                         "but no temperature or damage grid functions were provided. "
+                         "This is equivalent to having no dependency.");
+        }
+    }
+
     // Compute variables for conversion to/from dimensionless potential
     Vrange = Vmax - Vmin;
     invVrange = 1.0 / Vrange;
@@ -153,6 +210,17 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
         else
         {
             std::copy(default_params.begin(), default_params.end(), parameters[i].begin());
+        }
+    }
+
+    // Store time constants for undamaged tissue (use provided params or default)
+    if (has_td_dependency)
+    {
+        auto time_constants_idxs = dynamic_cast<GotranxODEModelWithThermalDamage*>(model.get())->GetTimeConstantsIdxs();
+        for (size_t idx = 0; idx < time_constants_idxs.size(); idx++)
+        {
+            int param_idx = time_constants_idxs[idx];
+            td_healthy_tau[idx] = parameters_default[param_idx];
         }
     }
 
@@ -239,13 +307,12 @@ ParGridFunction *ReactionSolver::GetStateGridFunction(int state_index)
     return states_gfs[adjusted_index];
 }
 
-
 void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
 {
     // Inner loop time step
     double dt_ode = dt / ode_substeps;
     double current_time = t;
-    
+
     // Cache frequently used values OUTSIDE the substep loop
     int num_states = model->GetNumStates();
 
@@ -253,18 +320,52 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
     int potential_idx = model->potential_idx;
     int stim_ampl_idx = model->stim_ampl_idx;
 
-    // Initialize values of x (potential) from the input vector - vectorized
-    for (int i = 0; i < fes_truevsize; i++) {
-        values[i][potential_idx] = use_dimensionless ? ToDimensionless(x[i]) : x[i];
+    // If has temperature/damage dependency, get the temperature and damage vectors
+    if (temperature_gf)
+    {
+        temperature_gf->GetTrueDofs(temperature_vec);
+    }
+    if (damage_gf)
+    {
+        damage_gf->GetTrueDofs(damage_vec);
     }
 
+    // Initialize values of x (potential) from the input vector, and update temperature/damage dependent parameters if needed
+    for (int i = 0; i < fes_truevsize; i++)
+    {
+
+        values[i][potential_idx] = use_dimensionless ? ToDimensionless(x[i]) : x[i];
+
+        // Temperature and damage dependency update
+        if (has_td_dependency)
+        {
+            auto td_model = dynamic_cast<GotranxODEModelWithThermalDamage*>(model.get());
+
+            real_t temperature = temperature_vec.Size() > 0 ? temperature_vec[i] : td_Tref; // Default to 37C if not provided
+            real_t damage = damage_vec.Size() > 0 ? td_damage_func(damage_vec[i]) : 0.0;   // Default to no damage if not provided
+
+            // Update parameters based on temperature and damage
+            parameters[i][td_model->eta_idx] = td_A * (1.0 + td_B * (temperature - td_Tref));    // eta = A[1+B(T-Tref)]
+            parameters[i][td_model->Q_idx] = std::pow(td_Q10, (temperature - td_Tref) / 10.0);   // Q = Q10^((T - Tref)/10)
+            parameters[i][td_model->gamma_idx] = (1.0 - damage);                                 // gamma = (1-f(D))
+
+            // Update time constants with damage effect
+            auto time_constants_idxs = td_model->GetTimeConstantsIdxs();
+            for (size_t idx = 0; idx < time_constants_idxs.size(); idx++)
+            {
+                int param_idx = time_constants_idxs[idx];
+                parameters[i][param_idx] = td_healthy_tau[idx] * (1.0 + td_delta_tau[idx] * damage);
+            }
+        }
+    }
     // Pre-compute stimulation scaling factor
     auto stimulation_data = stimulation_vec.GetData();
 
     for (int i = 0; i < ode_substeps; i++) // Loop for ODE solver inner time stepping
     {
         // Project stimulation current once per substep
-        if (stimulation_coeff) {
+        if (stimulation_coeff)
+        {
             stimulation_coeff->SetTime(current_time + dt_ode);
             stimulation_gf.ProjectCoefficient(*stimulation_coeff);
             stimulation_gf.GetTrueDofs(stimulation_vec);
@@ -277,45 +378,48 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
             // Compute Jscaling based on chi and Cm
             double Jscaling = model->dimensionless ? model->stim_sign * (chi_vec[j] * Cm_vec[j] * Vrange) : model->stim_sign;
 
-
             // Copy states efficiently - avoid std::copy overhead for small vectors
-            double* state_ptr = states[j].data();
-            double* value_ptr = values[j].data();
+            double *state_ptr = states[j].data();
+            double *value_ptr = values[j].data();
 
             // Manual unrolled copy for small num_states (typically 2-4 for states cardiac models)
-            if (num_states <= 4) {
-                for (int k = 0; k < num_states; k++) {
+            if (num_states <= 4)
+            {
+                for (int k = 0; k < num_states; k++)
+                {
                     state_ptr[k] = value_ptr[k];
                 }
-            } else {
+            }
+            else
+            {
                 std::memcpy(state_ptr, value_ptr, num_states * sizeof(double));
             }
 
             // Update stimulation current in parameters
-            parameters[j][stim_ampl_idx] = use_dimensionless ? 
-                stimulation_data[j] / Jscaling : stimulation_data[j];
+            parameters[j][stim_ampl_idx] = use_dimensionless ? stimulation_data[j] / Jscaling : stimulation_data[j];
 
             // Call the appropriate time integration scheme
-            switch (scheme) {
+            switch (scheme)
+            {
             case TimeIntegrationScheme::EXPLICIT_EULER:
-                model->explicit_euler(state_ptr, current_time, dt_ode, 
-                                    parameters[j].data(), value_ptr);
+                model->explicit_euler(state_ptr, current_time, dt_ode,
+                                      parameters[j].data(), value_ptr);
                 break;
             case TimeIntegrationScheme::FORWARD_EXPLICIT_EULER:
-                model->forward_explicit_euler(state_ptr, current_time, dt_ode, 
-                                            parameters[j].data(), value_ptr);
+                model->forward_explicit_euler(state_ptr, current_time, dt_ode,
+                                              parameters[j].data(), value_ptr);
                 break;
             case TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN:
-                model->generalized_rush_larsen(state_ptr, current_time, dt_ode, 
-                                             parameters[j].data(), value_ptr);
+                model->generalized_rush_larsen(state_ptr, current_time, dt_ode,
+                                               parameters[j].data(), value_ptr);
                 break;
             case TimeIntegrationScheme::FORWARD_GENERALIZED_RUSH_LARSEN:
-                model->forward_generalized_rush_larsen(state_ptr, current_time, dt_ode, 
-                                                     parameters[j].data(), value_ptr);
+                model->forward_generalized_rush_larsen(state_ptr, current_time, dt_ode,
+                                                       parameters[j].data(), value_ptr);
                 break;
             case TimeIntegrationScheme::HYBRID_RUSH_LARSEN:
-                model->hybrid_rush_larsen(state_ptr, current_time, dt_ode, 
-                                        parameters[j].data(), value_ptr);
+                model->hybrid_rush_larsen(state_ptr, current_time, dt_ode,
+                                          parameters[j].data(), value_ptr);
                 break;
             default:
                 break;
@@ -331,7 +435,7 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         x[i] = use_dimensionless ? FromDimensionless(values[i][potential_idx]) : values[i][potential_idx];
         x[i] = std::clamp(x[i], Vmin, Vmax);
 
-        // Update fields in the same loop 
+        // Update fields in the same loop
         for (size_t k = 0; k < states_vectors.size(); k++)
         {
             int state_idx = (k >= static_cast<size_t>(potential_idx)) ? k + 1 : k;
@@ -339,14 +443,14 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         }
     }
 
-    // Update all states ParGridFunctions from their vectors 
-    for (size_t k = 0; k < states_gfs.size(); k++) {
+    // Update all states ParGridFunctions from their vectors
+    for (size_t k = 0; k < states_gfs.size(); k++)
+    {
         states_gfs[k]->SetFromTrueDofs(*states_vectors[k]);
     }
 
     t = provisional ? t : current_time;
 }
-
 
 void ReactionSolver::Update()
 {

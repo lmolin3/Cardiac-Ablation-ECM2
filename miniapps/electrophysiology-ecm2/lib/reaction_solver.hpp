@@ -5,6 +5,7 @@
 // Include all available ionic models here
 #include "../ionic_models/mitchell_schaeffer_2003.h"
 #include "../ionic_models/fenton_karma_1998.h"
+#include "../ionic_models/mitchell_schaeffer_2003_td_dependent.h"
 
 namespace mfem
 {
@@ -23,7 +24,8 @@ namespace mfem
         enum class IonicModelType : int
         {
             MITCHELL_SCHAEFFER = 0,
-            FENTON_KARMA = 1
+            FENTON_KARMA = 1,
+            MITCHELL_SCHAEFFER_TD_DEPENDENT = 2
         };
 
 
@@ -44,14 +46,14 @@ namespace mfem
             std::unique_ptr<GotranxODEModel>
                 model; // Pointer to the model for ODE pointwise solution
 
-            std::vector<std::vector<double>>
+            std::vector<std::vector<real_t>>
                 states; // Data structure holding the states (input) for each dof, size [fes_truevsize][num_states]
-            std::vector<std::vector<double>>
+            std::vector<std::vector<real_t>>
                 values; // Data structure holding the values (output) for each dof, size [fes_truevsize][num_values]
-            std::vector<std::vector<double>>
+            std::vector<std::vector<real_t>>
                 parameters; // Data structure holding the params for each dof, size          [fes_truevsize][num_params]
 
-            std::vector<double> parameters_default; // Default parameters from the model
+            std::vector<real_t> parameters_default; // Default parameters from the model
 
             Coefficient *stimulation_coeff = nullptr; // Stimulation function   //< NOT OWNED
             ParGridFunction stimulation_gf;           // GridFunction to hold the stimulation values at dofs
@@ -62,6 +64,21 @@ namespace mfem
             mutable Vector stimulation_vec;           // Vector to hold the stimulation values at dofs
             mutable Vector chi_vec;                   // Vector to hold the chi values at dofs
             mutable Vector Cm_vec;                    // Vector to hold the Cm values at dofs
+
+            // GridFunctions for temperature and damage dependency (optional)
+            bool has_td_dependency = false;
+            ParGridFunction *temperature_gf = nullptr;   //< NOT OWNED
+            ParGridFunction *damage_gf = nullptr;        //< NOT OWNED
+            mutable Vector temperature_vec;              // Vector to hold temperature values at dofs
+            mutable Vector damage_vec;                   // Vector to hold damage values at dofs
+
+            real_t td_A = 1.0;      // Moore term A
+            real_t td_B = 0.0;      // Moore term B
+            real_t td_Tref = 310.15; // Reference temperature
+            real_t td_Q10 = 1.0;    // Q10 coefficient
+            std::function<real_t(real_t)> td_damage_func = nullptr; // Damage function
+            std::vector<real_t> td_delta_tau = {};                  // Delta tau values for damage dependency (might be different for each time constant)
+            std::vector<real_t> td_healthy_tau = {};                   // Original values of time constants for undamaged tissue
 
             // We need this to: 1) possibly use it for output in DataCollection, 2) Update the state after change in Mesh/FESpace (AMR)
             std::vector<ParGridFunction *> states_gfs; // States grid functions for all states except potential
@@ -86,12 +103,30 @@ namespace mfem
             /**
              * @brief Constructor for the ReactionSolver class.
              */
-            ReactionSolver(ParFiniteElementSpace *fes, Coefficient *chi_coeff_, Coefficient *Cm_coeff_, IonicModelType model_type, TimeIntegrationScheme solver_type = TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN, int dt_ode = 1);
+            ReactionSolver(ParFiniteElementSpace *fes, Coefficient *chi_coeff_, Coefficient *Cm_coeff_, IonicModelType model_type,
+                           TimeIntegrationScheme solver_type = TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN, int dt_ode = 1);
 
             /**
              * @brief Destructor for the ReactionSolver class.
              */
             ~ReactionSolver();
+
+
+            /**
+             * @brief Set the temperature and damage grid functions for temperature and damage dependent models.
+                During the setup phase, if a TD depedent model is used but no grid functions are provided,
+                a warning is issued (code is still functional, but this is equivalent to having no dependency).
+             */
+            void SetThermalDamageParameters(
+                ParGridFunction *temperature_gf_ = nullptr,
+                ParGridFunction *damage_gf_ = nullptr,
+                real_t A = 1.0,
+                real_t B = 0.0,
+                real_t T_ref = 37.0,
+                real_t Q10 = 1.0,
+                std::function<real_t(real_t)> damage_func = nullptr,
+                std::vector<real_t> delta_tau = {});
+
 
             /**
              * @brief Initializes the states and parameters.
@@ -99,7 +134,7 @@ namespace mfem
              * @param params Vector of parameters to set for all dofs. If empty, defaults are used.
              * If the size of initial_states or params does not match the model's requirements, an error is raised.
              */
-            void Setup(const std::vector<double> &initial_states, const std::vector<double> &params);
+            void Setup(const std::vector<real_t> &initial_states, const std::vector<real_t> &params);
             void Setup() { Setup({}, {}); }
 
             /**
@@ -122,8 +157,8 @@ namespace mfem
              * @brief Get the default states and parameters from the ionic model.
              * Useful for initializing and potentially modifying the parameters passed to Setup(). 
              */
-            void GetDefaultStates(std::vector<double> &default_states);
-            void GetDefaultParameters(std::vector<double> &default_params);
+            void GetDefaultStates(std::vector<real_t> &default_states);
+            void GetDefaultParameters(std::vector<real_t> &default_params);
 
 
             /**

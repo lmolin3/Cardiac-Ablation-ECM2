@@ -9,6 +9,10 @@ namespace mfem
     namespace electrophysiology
     {
 
+
+        /**  
+         * @brief  Base class for Gotranx-generated ODE models.
+         * */
         class GotranxODEModel
         {
         public:
@@ -120,5 +124,43 @@ namespace mfem
             bool dimensionless = false; // Flag indicating if the model uses dimensionless potential
         };
 
-    } // namespace electrophysiology
+
+
+        /**  
+         * @brief  Gotranx-generated ODE models with temperature and damage dependency.
+         * */
+        class GotranxODEModelWithThermalDamage : public GotranxODEModel
+        {
+        public:
+            // Allow ReactionSolver to access the indices
+            friend class ReactionSolver;
+        
+            GotranxODEModelWithThermalDamage() : GotranxODEModel()
+            {}
+
+            // Call this after construction
+            void InitializeParameterIndices()
+            {
+                eta_idx = parameter_index("eta");
+                gamma_idx = parameter_index("gamma");
+                Q_idx = parameter_index("Q");
+            }
+
+            std::vector<int> GetTimeConstantsIdxs()
+            {
+                return time_constants_idxs;
+            }
+        
+        protected:
+            // Additional indices for temperature and damage dependency
+            int eta_idx = -1;   // Index of the eta parameter in the parameters array
+            int gamma_idx = -1; // Index of the gamma parameter in the parameters array
+            int Q_idx = -1;     // Index of the Q parameter in the parameters array
+
+            std::vector<int> time_constants_idxs; // Indices of time constants in the parameters array
+        }; 
+        
+
+
+        } // namespace electrophysiology
 } // namespace mfem

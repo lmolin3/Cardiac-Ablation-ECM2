@@ -354,7 +354,7 @@ int main(int argc, char *argv[])
 
     // Unphysical modifications to reduce the APD for faster tests
     int state_idx = -1;
-    if (ep_ctx.model_type == IonicModelType::MITCHELL_SCHAEFFER)
+    if (ep_ctx.model_type == IonicModelType::MITCHELL_SCHAEFFER || ep_ctx.model_type == IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT)
     {
         state_idx = reaction_solver->GetModel()->state_index("h");
         parameters[reaction_solver->GetModel()->parameter_index("tau_close")] /= 4; //[ms]
