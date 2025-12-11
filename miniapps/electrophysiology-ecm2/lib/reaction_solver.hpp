@@ -117,13 +117,15 @@ namespace mfem
                 During the setup phase, if a TD depedent model is used but no grid functions are provided,
                 a warning is issued (code is still functional, but this is equivalent to having no dependency).
              */
-            void SetThermalDamageParameters(
+            void SetThermalParameters(
                 ParGridFunction *temperature_gf_ = nullptr,
-                ParGridFunction *damage_gf_ = nullptr,
                 real_t A = 1.0,
                 real_t B = 0.0,
-                real_t T_ref = 37.0,
-                real_t Q10 = 1.0,
+                real_t T_ref = 310.15,
+                real_t Q10 = 1.0);
+
+            void SetDamageParameters(
+                ParGridFunction *damage_gf_ = nullptr,
                 std::function<real_t(real_t)> damage_func = nullptr,
                 std::vector<real_t> delta_tau = {});
 

@@ -64,4 +64,8 @@ add_mfem_miniapp(test_amr
     MAIN tests/test_amr.cpp
     LIBRARIES electrophysiology)
 
+add_mfem_miniapp(test_thermal_coupling
+    MAIN tests/test_thermal_coupling.cpp
+    LIBRARIES electrophysiology)
+
 endif () #MFEM_USE_MPI

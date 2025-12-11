@@ -96,13 +96,32 @@ ReactionSolver::~ReactionSolver()
     }
 }
 
-void ReactionSolver::SetThermalDamageParameters(
+
+void ReactionSolver::SetThermalParameters(
     ParGridFunction *temperature_gf_,
-    ParGridFunction *damage_gf_,
     real_t A,
     real_t B,
     real_t T_ref,
-    real_t Q10,
+    real_t Q10)
+{
+    if (!has_td_dependency && Mpi::Root())
+    {
+        mfem_warning("ReactionSolver::SetTemperatureGridFunction(): The current ionic model does not support temperature dependency. The provided grid function will be ignored.");
+    }
+
+    // NOTE: here we assume that the gf is defined on the same fes as the EP solver
+    temperature_gf = temperature_gf_;
+
+    // Store parameters for later use
+    td_A = A;
+    td_B = B;
+    td_Tref = T_ref;
+    td_Q10 = Q10;
+}
+
+
+void ReactionSolver::SetDamageParameters(
+    ParGridFunction *damage_gf_,
     std::function<real_t(real_t)> damage_func,
     std::vector<real_t> delta_tau)
 {
@@ -112,14 +131,9 @@ void ReactionSolver::SetThermalDamageParameters(
     }
 
     // NOTE: here we assume that the gfs are defined on the same fes as the EP solver
-    temperature_gf = temperature_gf_;
     damage_gf = damage_gf_;
 
     // Store parameters for later use
-    td_A = A;
-    td_B = B;
-    td_Tref = T_ref;
-    td_Q10 = Q10;
     td_damage_func = damage_func != nullptr ? damage_func : [](real_t D) { return 1.0; }; // Default: identity function
 
     // For delta_tau, ensure size matches number of time constants
@@ -136,7 +150,7 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
     // Check if the model has temperature/damage dependency and issue a warning if gfs are not provided
     if (has_td_dependency)
     {
-        if ((temperature_gf == nullptr || damage_gf == nullptr) && Mpi::Root())
+        if ((temperature_gf == nullptr && damage_gf == nullptr) && Mpi::Root())
         {
             mfem_warning("ReactionSolver::Setup(): The selected ionic model has temperature/damage dependency, "
                          "but no temperature or damage grid functions were provided. "
