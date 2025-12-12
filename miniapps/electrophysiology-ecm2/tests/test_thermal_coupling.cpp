@@ -29,7 +29,7 @@ real_t stimulation_spiral_wave_v2(const Vector &x, real_t t);
 real_t stimulation_spiral_wave_v3(const Vector &x, real_t t);
 
 real_t damage_function(const Vector &x, real_t t);
-
+real_t temperature_function(const Vector &x, real_t t);
 
 inline bool CheckS1ReachedCenter(real_t potential_left, real_t potential_right, real_t recovery_left, real_t recovery_right);
 
@@ -57,6 +57,8 @@ struct ep_Context
 {
     // Electrophysiology parameters
     // From Niederer et al. Benchmark
+    bool has_damage_dependency = false;
+    bool has_thermal_dependency = false;
     real_t sigma = 2.4e-3;      // conductivity   [S/cm] = 2.4e-1 [S/m]
     real_t sigma_min = 0.24e-3; // minimum conductivity   [S/cm] = 2.4e-2 [S/m]
     real_t chi = 1.4e3;         // surface-to-volume ratio [cm^-1]
@@ -157,6 +159,12 @@ int main(int argc, char *argv[])
     args.AddOption(&spiral_ctx.enable_multiple_stimulations, "-ems", "--enable-multiple-stims",
                      "-dms", "--disable-multiple-stims",
                      "Enable or disable multiple S2 stimulations (default disabled)");
+    args.AddOption(&ep_ctx.has_damage_dependency, "-hd", "--has-damage-dependency",
+                   "-nhd", "--no-damage-dependency",
+                   "Enable or disable damage dependency in the reaction model (default disabled)");
+    args.AddOption(&ep_ctx.has_thermal_dependency, "-ht", "--has-thermal-dependency",
+                   "-nht", "--no-thermal-dependency",
+                   "Enable or disable thermal dependency in the reaction model (default disabled)");
     // Output
     args.AddOption(&paraview, "-pv", "--paraview", "-no-pv", "--no-paraview",
                    "Enable or disable Paraview output (default enabled)");
@@ -295,11 +303,9 @@ int main(int argc, char *argv[])
     TimeIntegrationScheme solver_type = TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN; // TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN;
     ReactionSolver *reaction_solver = new ReactionSolver(&fespace, &chi_coeff, &Cm_coeff, ep_ctx.model_type, solver_type, dt_ode);
 
-
     //<--- 5.4 For temperature/damage dependent models, set the temperature and damage GridFunctions
-    ParGridFunction damage_gf(&fespace);
-    FunctionCoefficient damage_coeff(damage_function);
-    damage_gf.ProjectDiscCoefficient(damage_coeff, GridFunction::ARITHMETIC); 
+    ParGridFunction damage_gf;
+    FunctionCoefficient *damage_coeff = nullptr;
 
     auto f_damage = [](real_t damage)
     {
@@ -307,9 +313,29 @@ int main(int argc, char *argv[])
         return damage;
     };
 
-    std::vector<real_t> td_delta_tau = {0.16, 0.16, 0.16, 0.16}; 
-    reaction_solver->SetDamageParameters(&damage_gf, f_damage, td_delta_tau);
+    if (ep_ctx.has_damage_dependency)
+    {
+        damage_gf.SetSpace(&fespace);
+        damage_coeff = new FunctionCoefficient(damage_function);
+        damage_gf.ProjectDiscCoefficient(*damage_coeff, GridFunction::ARITHMETIC);
 
+        std::vector<real_t> td_delta_tau = {0.16, 0.16, 0.16, 0.16};
+        reaction_solver->SetDamageParameters(&damage_gf, f_damage, td_delta_tau);
+    }
+
+    ParGridFunction temperature_gf;
+    FunctionCoefficient *temperature_coeff = nullptr;
+    if (ep_ctx.has_thermal_dependency)
+    {
+        temperature_gf.SetSpace(&fespace);
+        temperature_coeff = new FunctionCoefficient(temperature_function);
+        temperature_gf.ProjectDiscCoefficient(*temperature_coeff, GridFunction::ARITHMETIC);
+        real_t A = 1.0;
+        real_t B = 0.07;
+        real_t T_ref = 310.15; // K
+        real_t Q10 = 2.4;
+        reaction_solver->SetThermalParameters(&temperature_gf, A, B, T_ref, Q10);
+    }
 
     /////////////////////////////////////////////////////////////////////////////
     //------     7. Add BCs and Setup the solvers
@@ -420,8 +446,16 @@ int main(int argc, char *argv[])
     }
     pvdc.RegisterField("potential", u_gf);
     pvdc.RegisterField("Istim", Istim_gf);
-    pvdc.RegisterField("damage", &damage_gf);
     reaction_solver->RegisterFields(pvdc); // register ionic model states
+
+    if (ep_ctx.has_damage_dependency)
+    {
+        pvdc.RegisterField("damage", &damage_gf);
+    }
+    if (ep_ctx.has_thermal_dependency)
+    {
+        pvdc.RegisterField("temperature", &temperature_gf);
+    }
 
     ParGridFunction *state_gf = reaction_solver->GetStateGridFunction(state_idx);
 
@@ -467,10 +501,23 @@ int main(int argc, char *argv[])
         }
 
         //<--- Update the damage field
-        damage_coeff.SetTime(t+dt);
-        damage_gf.ProjectCoefficient(damage_coeff);
+        if (ep_ctx.has_damage_dependency)
+        {
+            damage_coeff->SetTime(t + dt);
+            damage_gf.ProjectDiscCoefficient(*damage_coeff, GridFunction::ARITHMETIC);
+        }
 
-        diff_solver->Update();
+        if (ep_ctx.has_thermal_dependency)
+        {
+            temperature_coeff->SetTime(t + dt);
+            temperature_gf.ProjectDiscCoefficient(*temperature_coeff, GridFunction::ARITHMETIC);
+        }
+
+        //<--- Update the diffusion solver (in case of time-dependent parameters)
+        if (ep_ctx.has_thermal_dependency || ep_ctx.has_damage_dependency)
+        {
+            diff_solver->Update();
+        }
 
         //<--- Solve Diffusion step
         chrono.Clear();
@@ -619,6 +666,9 @@ int main(int argc, char *argv[])
     delete Istim_coeff;
     delete reaction_solver;
     delete diff_solver;
+
+    delete damage_coeff;
+    delete temperature_coeff;
 
     return 0;
 }
@@ -861,3 +911,24 @@ real_t damage_function(const Vector &x, real_t t)
     }
     return 0.5 * (1.0 - std::tanh(sharpness * (r2 - R * R)));
 }   
+
+// Temperature function
+// Same as damage function,  but twice the radius
+// Temperature in the center is 70 deg C, which decreases smoothly in the rest of the domain 
+real_t temperature_function(const Vector &x, real_t t)
+{
+    // Circle in the center, radius 1.0
+    real_t xc = 0.0;
+    real_t yc = 0.0;
+    real_t zc = 0.0;
+
+    real_t R = 1.0;          // Radius of the heated region
+    real_t sharpness = 1;  //  transition
+    real_t r2 = (x(0) - xc) * (x(0) - xc) + (x(1) - yc) * (x(1) - yc);
+    if (x.Size() > 2)
+    {
+        r2 += (x(2) - zc) * (x(2) - zc); // Add z-component for 3D
+    }
+    real_t temp = 310.15 + (343.15 - 310.15) * 0.5 * (1.0 + std::tanh(sharpness * (R * R - r2)));
+    return temp;
+}
