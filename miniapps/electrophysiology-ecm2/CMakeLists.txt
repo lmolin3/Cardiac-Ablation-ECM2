@@ -68,4 +68,8 @@ add_mfem_miniapp(test_thermal_coupling
     MAIN tests/test_thermal_coupling.cpp
     LIBRARIES electrophysiology)
 
+  add_mfem_miniapp(test_constant_temperature
+      MAIN tests/test_constant_temperature.cpp
+      LIBRARIES electrophysiology)
+      
 endif () #MFEM_USE_MPI
