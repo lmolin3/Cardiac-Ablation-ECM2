@@ -71,7 +71,7 @@ namespace mfem
          B.UseDevice(true);
          B.SetSize(H1_fes->GetTrueVSize());
          Phi.UseDevice(true);
-         Phi.SetSize(H1_fes->GetTrueVSize());
+         Phi.SetSize(H1_fes->GetTrueVSize());   
 
          tmp_domain_attr.SetSize(pmesh->attributes.Max());
       }
@@ -151,9 +151,6 @@ namespace mfem
          delete HCurl_fes;
          delete L2_fes;
 
-         delete solver;
-         delete prec;
-
          delete w_coeff;
 
          delete bcs; // Solver takes ownership of the BCHandler
@@ -182,7 +179,7 @@ namespace mfem
       {
          HYPRE_BigInt size_h1 = H1_fes->GlobalTrueVSize();
          HYPRE_BigInt size_nd = HCurl_fes->GlobalTrueVSize();
-         if (Mpi::Root() && verbose)
+         if (Mpi::Root())
          {
             mfem::out << "Number of H1      unknowns: " << size_h1 << std::endl;
             mfem::out << "Number of H(Curl) unknowns: " << size_nd << std::endl;
@@ -194,9 +191,10 @@ namespace mfem
          assembly_level = level;
       }
 
-      void ElectrostaticsSolver::Setup(int prec_type_, int pl)
+      void ElectrostaticsSolver::Setup(int prec_type_, int pl_)
       {
          prec_type = prec_type_;
+         pl = pl_;
 
          sw_setup.Start();
 
@@ -302,8 +300,6 @@ namespace mfem
          // Add Robin boundary conditions
          if (bcs->GetRobinBcs().size() > 0)
          {
-            symmetric = false;
-
             for (auto &robin_bc : bcs->GetRobinBcs())
             {
                rhs_form->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(robin_bc.alpha2_u2)), robin_bc.attr);         // alpha2 * u
@@ -313,58 +309,14 @@ namespace mfem
 
          sw_setup.Stop();
 
-         // Assemble bilinear and linear forms
-         Assemble();
+         // Assemble bilinear and linear forms and setup the solver
+         AssembleAndSetupSolver();
 
 #ifdef MFEM_DEBUG
          if (Mpi::Root())
             mfem::out << "global problem size: " << this->GetProblemSize() << std::endl;
          mfem::out << "local problem size: " << this->GetLocalProblemSize() << " on rank " << my_id << std::endl;
 #endif
-
-         // Solver
-         if ( assembly_level == AssemblyLevel::PARTIAL )
-         {
-            switch (prec_type)
-            {
-            case 0: // Jacobi Smoother
-               prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
-               break;
-            case 1: // LOR
-               prec = new LORSolver<HypreBoomerAMG>(*divEpsGrad, ess_tdof_list);
-               static_cast<LORSolver<HypreBoomerAMG>*>(prec)->GetSolver().SetPrintLevel(0);
-               break;
-            default:
-               MFEM_ABORT("Unknown preconditioner type.");
-            }
-         }
-         else
-         {
-            switch (prec_type)
-            {
-            case 0:
-               prec = new HypreSmoother(*opA.As<HypreParMatrix>());
-               dynamic_cast<HypreSmoother *>(prec)->SetType(HypreSmoother::Jacobi, 1);
-               break;
-            case 1:
-               prec = new HypreBoomerAMG(*opA.As<HypreParMatrix>());
-               static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
-               break;
-            }
-         }
-
-         const real_t rel_tol = 1e-8;
-         if (symmetric)
-            solver = new CGSolver(H1_fes->GetComm());
-         else
-            solver = new GMRESSolver(H1_fes->GetComm());
-         solver->iterative_mode = false;
-         solver->SetRelTol(rel_tol);
-         solver->SetAbsTol(0.0);
-         solver->SetMaxIter(1000);
-         solver->SetPrintLevel(pl);
-         solver->SetOperator(*opA);
-         solver->SetPreconditioner(*prec);
       }
 
       void ElectrostaticsSolver::FixEssentialTDofs(Array<int> &ess_tdof_list)
@@ -434,7 +386,7 @@ namespace mfem
 #endif
       }
 
-      void ElectrostaticsSolver::Assemble()
+      void ElectrostaticsSolver::AssembleOperators()
       {
 
          sw_assemble.Start();
@@ -446,16 +398,7 @@ namespace mfem
 
          // Assemble the divEpsGrad operator
          divEpsGrad->Assemble();
-
          divEpsGrad->FormSystemMatrix(ess_tdof_list, opA);
-
-         // Assemble the mass matrix with conductivity
-         Array<int> empty;
-         if (hasHcurlMass)
-         {
-            SigmaMass->Assemble();
-            SigmaMass->FormSystemMatrix(empty, opM);
-         }
 
          // Assemble the ParDiscreteGradOperator to compute gradient of Phi
          grad->Assemble();
@@ -473,7 +416,55 @@ namespace mfem
                  << flush;
          }
 
+         assembled = true;
+
          sw_assemble.Stop();
+      }
+
+      void ElectrostaticsSolver::AssembleAndSetupSolver()
+      {
+         AssembleOperators();
+         assembled = true;
+
+         if ( assembly_level == AssemblyLevel::PARTIAL )
+         {
+            switch (prec_type)
+            {
+            case 0: // Jacobi Smoother
+               prec = std::make_unique<OperatorJacobiSmoother>(*divEpsGrad, ess_tdof_list);
+               break;
+            case 1: // LOR
+               prec = std::make_unique<LORSolver<HypreBoomerAMG>>(*divEpsGrad, ess_tdof_list);
+               static_cast<LORSolver<HypreBoomerAMG>*>(prec.get())->GetSolver().SetPrintLevel(0);
+               break;
+            default:
+               MFEM_ABORT("Unknown preconditioner type.");
+            }
+         }
+         else
+         {
+            switch (prec_type)
+            {
+            case 0:
+               prec = std::make_unique<HypreSmoother>(*opA.As<HypreParMatrix>());
+               dynamic_cast<HypreSmoother *>(prec.get())->SetType(HypreSmoother::Jacobi, 1);
+               break;
+            case 1:
+               prec = std::make_unique<HypreBoomerAMG>(*opA.As<HypreParMatrix>());
+               static_cast<HypreBoomerAMG *>(prec.get())->SetPrintLevel(0);
+               break;
+            }
+         }
+
+         const real_t rel_tol = 1e-8;
+         solver = std::make_unique<CGSolver>(H1_fes->GetComm());
+         solver->iterative_mode = false;
+         solver->SetRelTol(rel_tol);
+         solver->SetAbsTol(0.0);
+         solver->SetMaxIter(1000);
+         solver->SetPrintLevel(pl);
+         solver->SetOperator(*opA);
+         solver->SetPreconditioner(*prec);
       }
 
       void ElectrostaticsSolver::AssembleRHS()
@@ -500,7 +491,7 @@ namespace mfem
       }
 
       void
-      ElectrostaticsSolver::Update() // TODO: maybe for transient simulations we can add Update(real_t time) and update coeffs and bcs
+      ElectrostaticsSolver::Update() 
       {
          if (Mpi::Root() && verbose)
          {
@@ -521,48 +512,16 @@ namespace mfem
          // Inform the bilinear forms that the space has changed.
          divEpsGrad->Update();
          SigmaMass->Update();
+         opM.Clear();
 
          // Inform the other objects that the space has changed.
          grad->Update();
 
-         // Re-assemble the system
-         Assemble();
-
-         // Setup solver
-         solver->SetOperator(*opA);
-
-         delete prec;
-         prec = nullptr;
-         if (assembly_level == AssemblyLevel::PARTIAL)
-         {
-            switch (prec_type)
-            {
-            case 0: // Jacobi Smoother
-               prec = new OperatorJacobiSmoother(*divEpsGrad, ess_tdof_list);
-               break;
-            case 1: // LOR
-               prec = new LORSolver<HypreBoomerAMG>(*divEpsGrad, ess_tdof_list);
-               static_cast<LORSolver<HypreBoomerAMG>*>(prec)->GetSolver().SetPrintLevel(0);
-               break;
-            default:
-               MFEM_ABORT("Unknown preconditioner type.");
-            }
-         }
-         else
-         {
-            switch (prec_type)
-            {
-            case 0:
-               prec = new HypreSmoother(*opA.As<HypreParMatrix>());
-               dynamic_cast<HypreSmoother *>(prec)->SetType(HypreSmoother::Jacobi, 1);
-               break;
-            case 1:
-               prec = new HypreBoomerAMG(*opA.As<HypreParMatrix>());
-               static_cast<HypreBoomerAMG *>(prec)->SetPrintLevel(0);
-               break;
-            }
-         }
+         // Flag the system needs to be re-assembled on next solve
+         assembled = false;
+         assembled_hcurl_mass = false; 
       }
+
 
       void
       ElectrostaticsSolver::Solve(bool updateRhs)
@@ -575,7 +534,16 @@ namespace mfem
             mfem::out << "Running solver ... " << std::endl;
          }
 
-         /// 1. Project dirichlet BCs in the electric potential grid function
+
+         /// 1. Check if system is assembled, if not assemble it
+         // Note: this can happen if the user calls Update() when fe space or parameters change
+         if (!assembled)
+         {
+            AssembleAndSetupSolver();
+            assembled = true;
+         }
+
+         /// 2. Project dirichlet BCs in the electric potential grid function
          *phi = 0.0;
          Phi = 0.0;
          ProjectDirichletBCS(*phi);
@@ -586,7 +554,7 @@ namespace mfem
             AssembleRHS();
          }
 
-         /// 2. Apply essential boundary conditions
+         /// 3. Apply essential boundary conditions
          if (assembly_level == AssemblyLevel::PARTIAL)
          {
             auto *divEpsGrad_C = opA.As<ConstrainedOperator>();
@@ -597,13 +565,13 @@ namespace mfem
             divEpsGrad->EliminateVDofsInRHS(ess_tdof_list, Phi, B);
          }
 
-         /// 3. Solve the system
+         /// 4. Solve the system
          solver->Mult(B, Phi);
 
-         /// 4. Update the solution gf with the new values
+         /// 5. Update the solution gf with the new values
          phi->SetFromTrueDofs(Phi);
 
-         /// 5. Compute the negative Gradient of the solution vector.  This is
+         /// 6. Compute the negative Gradient of the solution vector.  This is
          // the electric field corresponding to the scalar potential
          // represented by phi.
          grad->Mult(*phi, *E);
@@ -677,23 +645,48 @@ namespace mfem
          AddVolumetricTerm(func, tmp_domain_attr);
       }
 
-      real_t ElectrostaticsSolver::ElectricLosses(ParGridFunction &E_gf) const
+      real_t ElectrostaticsSolver::ElectricLosses(ParGridFunction &E_gf)
       {
          MFEM_ASSERT( hasHcurlMass, "Electric losses not available for this problem." );
 
-         // Compute E^T M1 E, where M1 is the HCurl mass matrix with conductivity
-         real_t el = 0.0;
+         ///<--- Re-assemble the mass matrix with conductivity if needed
+         if (!assembled_hcurl_mass)
+         {
+            Array<int> empty;
+            SigmaMass->Assemble();
+            SigmaMass->FormSystemMatrix(empty, opM);
+            assembled_hcurl_mass = true;
+         }
 
-         int true_vsize =  HCurl_fes->GetTrueVSize(); 
+         ///<--- Compute E^T M1 E, where M1 is the HCurl mass matrix with conductivity
+         real_t losses = 0.0;
+         if (assembly_level == AssemblyLevel::PARTIAL)
+         {
+            // Compute x^T A y, with x = y = E vector and A = hcurl mass matrix with conductivity
+            Vector Ax(HCurl_fes->GetTrueVSize()), y(HCurl_fes->GetTrueVSize());
+            Ax.UseDevice(true);
+            y.UseDevice(true);
+            E_gf.GetTrueDofs(y);
+            opM->Mult(y, Ax);
+            losses = InnerProduct(HCurl_fes->GetComm(), y, Ax);
+         }
+         else 
+         {
+            losses = SigmaMass->TrueInnerProduct(E_gf, E_gf);
+         }
 
-         Vector x; x.SetSize(true_vsize);
-         Vector y; y.SetSize(true_vsize);
-         E_gf.GetTrueDofs(x);
-         opM->Mult(x, y);
-         el = InnerProduct(x, y);
-
-         return el;
+         return losses;
       }
+
+      real_t ElectrostaticsSolver::ElectricLosses()
+      {
+         MFEM_ASSERT( hasHcurlMass, "Electric losses not available for this problem." );
+
+         // Compute E^T M1 E, where M1 is the HCurl mass matrix with
+         // conductivity. This version uses the internal electric field grid function.
+         return this->ElectricLosses(*E);
+      }
+
 
       void ElectrostaticsSolver::GetJouleHeating(ParGridFunction &w_gf) const
       {

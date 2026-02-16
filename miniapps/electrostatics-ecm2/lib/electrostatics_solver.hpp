@@ -79,7 +79,7 @@ namespace mfem
          // Must be called before Setup()
          void DisableHCurlMass() { hasHcurlMass = false; }
 
-         void Setup(int prec_type = 1, int pl = 0);
+         void Setup(int prec_type = 1, int pl_ = 0);
 
          void Update();
 
@@ -94,7 +94,8 @@ namespace mfem
 
          // Compute E^T M1 E, where M1 is the H1 mass matrix with conductivity
          // coefficient.
-         real_t ElectricLosses(ParGridFunction &E_gf) const;
+         real_t ElectricLosses(ParGridFunction &E_gf);
+         real_t ElectricLosses();
 
          // w is the output which is L2 heating. This just projects the Joule heating coefficient which is already setup internally with the electric field and conductivity.
          void GetJouleHeating(ParGridFunction &w_gf) const;
@@ -138,7 +139,8 @@ namespace mfem
          // Check if any essential BCs were applied and fix at least one point since solution is not unique
          void FixEssentialTDofs( Array<int> &ess_tdof_list);
 
-         void Assemble();
+         void AssembleOperators();
+         void AssembleAndSetupSolver();
 
          void AssembleRHS();
 
@@ -172,10 +174,10 @@ namespace mfem
 
          AssemblyLevel assembly_level = AssemblyLevel::LEGACY;
          
-         IterativeSolver *solver;
-         Solver *prec;
+         std::unique_ptr<IterativeSolver> solver;
+         std::unique_ptr<Solver> prec;
          int prec_type;
-         bool symmetric = true;
+         int pl;
          bool hasHcurlMass = true; // If true, assembles the HCurl mass matrix (used to compute electric losses)
 
          ParGridFunction *phi; // Electric Scalar Potential
@@ -204,6 +206,9 @@ namespace mfem
 
          int my_id;
          int num_procs;
+
+         bool assembled = false; // Flag to check if system is assembled
+         bool assembled_hcurl_mass = false; // Flag to check if HCurl mass matrix is assembled
       };
 
    } // namespace electromagnetics

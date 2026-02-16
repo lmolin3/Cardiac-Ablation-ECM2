@@ -12,6 +12,9 @@
 if (MFEM_USE_MPI)
   #add_subdirectory(lib)
 
+  include_directories(
+    ${CMAKE_SOURCE_DIR}/miniapps/common-ecm2)
+
   list(APPEND ELECTROSTATICS_COMMON_SOURCES
       lib/electrostatics_solver.cpp
       bc/electrostatics_bchandler.cpp)
@@ -66,6 +69,11 @@ if (MFEM_USE_MPI)
 
   add_mfem_miniapp(test_welposedness
     MAIN tests/electrostatics_wellposedness.cpp
+    LIBRARIES electrostatics_ecm2)
+
+  add_mfem_miniapp(test_power_control
+    MAIN tests/electrostatics_test_power_control.cpp
+    ${ELECTROSTATICS_COMMON_FILES}
     LIBRARIES electrostatics_ecm2)
 
 endif () #MFEM_USE_MPI
