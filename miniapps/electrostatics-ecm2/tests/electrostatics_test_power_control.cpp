@@ -390,16 +390,16 @@ int main(int argc, char *argv[])
       cout << "Target Power: " << target_power << " W" << endl;
       cout << "Power Tolerance: " << power_tol * 100 << " %" << endl;
       cout << "Max Power Iterations: " << max_power_iter << endl;
-      cout << string(85, '=') << endl;
+      cout << string(88, '=') << endl;
       cout << "\n" << setw(8) << "Time"
            << setw(12) << "Temp (K)"
            << setw(12) << "Temp (°C)"
            << setw(14) << "Power (W)"
            << setw(14) << "Voltage (V)"
            << setw(12) << "PC Iters"
-           << setw(13) << "Rel Error"
+           << setw(16) << "Rel Error (%)"
            << endl;
-      cout << string(85, '-') << endl;
+      cout << string(88, '-') << endl;
    }
 
    if (paraview)
@@ -424,6 +424,7 @@ int main(int argc, char *argv[])
       int power_iter = 0;
       real_t computed_power = 0.0;
       real_t rel_error = 0.0;
+      real_t rel_error_initial = 0.0; 
 
       for (power_iter = 0; power_iter < max_power_iter; power_iter++)
       {
@@ -438,8 +439,10 @@ int main(int argc, char *argv[])
          {
             computed_power = RF_solver.ElectricLosses();
             rel_error = std::abs(computed_power - target_power) / target_power;
+            rel_error_initial = rel_error; // Store initial relative error for reporting
             if (rel_error < power_tol)
             {
+               power_iter--; // No iterations needed, so set iter count back to 0 for reporting
                power_converged = true;
                break;
             }
@@ -480,7 +483,7 @@ int main(int argc, char *argv[])
               << setw(14) << scientific << setprecision(4) << computed_power
               << setw(14) << fixed << setprecision(6) << current_voltage
               << setw(12) << (power_iter + 1)
-              << setw(13) << scientific << setprecision(2) << rel_error;
+              << setw(16) << fixed << setprecision(4) << rel_error_initial * 100;
 
          if (!power_converged)
          {
