@@ -30,7 +30,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddDirichletBC(Coefficient *coeff, Array<int> &attr);
+            void AddDirichletBC(Coefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for electric potential using Scalar function and list of essential mesh attributes.
@@ -54,7 +54,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddDirichletBC(Coefficient *coeff, int &attr);
+            void AddDirichletBC(Coefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Dirichlet BC for electric potential passing ScalarFuncT and specific mesh attribute.
@@ -115,7 +115,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddNeumannBC(Coefficient *coeff, Array<int> &attr);
+            void AddNeumannBC(Coefficient *coeff, Array<int> &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using ScalarFuncT and list of essential boundaries.
@@ -139,7 +139,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannBC(Coefficient *coeff, int &attr);
+            void AddNeumannBC(Coefficient *coeff, int &attr, bool own = true);
 
             /**
              * \brief Add Neumann BC using ScalarFuncT and specific mesh attribute.
@@ -192,7 +192,7 @@ namespace mfem
              * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
              *
              */
-            void AddNeumannVectorBC(VecFuncT *coeff, Array<int> &attr, bool own = true);
+            void AddNeumannVectorBC(VecFuncT *coeff, Array<int> &attr);
 
             /**
              * \brief Add Neumann BC using VectorCoefficient and specific mesh attribute.
@@ -220,7 +220,7 @@ namespace mfem
              * \param attr Boundary attribute
              *
              */
-            void AddNeumannVectorBC(VecFuncT *func, int &attr, bool own = true);
+            void AddNeumannVectorBC(VecFuncT *func, int &attr);
 
 
             /**

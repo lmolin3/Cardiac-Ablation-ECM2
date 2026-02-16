@@ -49,13 +49,13 @@ bool BCHandler::IsWellPosed()
     return well_posed_global;
 }
 
-void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
+void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
-    dirichlet_dbcs.emplace_back(attr, coeff);
+    dirichlet_dbcs.emplace_back(attr, coeff, own);
 
     // Check for duplicate
     for (int i = 0; i < attr.Size(); ++i)
@@ -85,28 +85,28 @@ void BCHandler::AddDirichletBC(Coefficient *coeff, Array<int> &attr)
 
 void BCHandler::AddDirichletBC(ScalarFuncT func, Array<int> &attr)
 {
-    AddDirichletBC(new FunctionCoefficient(func), attr);
+    AddDirichletBC(new FunctionCoefficient(func), attr, true);
 }
 
-void BCHandler::AddDirichletBC(Coefficient *coeff, int &attr)
+void BCHandler::AddDirichletBC(Coefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     dirichlet_attr_tmp = 0;
     dirichlet_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddDirichletBC(coeff, dirichlet_attr_tmp);
+    AddDirichletBC(coeff, dirichlet_attr_tmp, own);
 }
 
 void BCHandler::AddDirichletBC(ScalarFuncT func, int &attr)
 {
-    AddDirichletBC(new FunctionCoefficient(func), attr);
+    AddDirichletBC(new FunctionCoefficient(func), attr, true);
 }
 
 void BCHandler::AddDirichletBC(real_t coeff_val, int &attr)
 {
     auto coeff = new ConstantCoefficient(coeff_val);
-    AddDirichletBC(coeff, attr);
+    AddDirichletBC(coeff, attr, true);
 }
 
 void BCHandler::AddDirichletEFieldBC(Vector &EField, Array<int> &attr)
@@ -129,7 +129,7 @@ void BCHandler::AddDirichletEFieldBC(Vector &EField, Array<int> &attr)
 
     auto coeff = new FunctionCoefficient(func);
 
-    dirichlet_EField_dbcs.emplace_back(attr, coeff);
+    dirichlet_EField_dbcs.emplace_back(attr, coeff, true);
 
     // Check for duplicate
     for (int i = 0; i < attr.Size(); ++i)
@@ -168,13 +168,13 @@ void BCHandler::AddDirichletEFieldBC(Vector &EField, int &attr)
 }
 
 
-void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
+void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr, bool own)
 {
     // Check size of attributes provided
     MFEM_ASSERT(attr.Size() == max_bdr_attributes,
                 "Size of attributes array does not match mesh attributes.");
 
-    neumann_bcs.emplace_back(attr, coeff);
+    neumann_bcs.emplace_back(attr, coeff, own);
 
     for (int i = 0; i < attr.Size(); ++i)
     {
@@ -202,23 +202,23 @@ void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr)
 
 void BCHandler::AddNeumannBC(ScalarFuncT func, Array<int> &attr)
 {
-    AddNeumannBC(new FunctionCoefficient(func), attr);
+    AddNeumannBC(new FunctionCoefficient(func), attr, true);
 }
 
-void BCHandler::AddNeumannBC(Coefficient *coeff, int &attr)
+void BCHandler::AddNeumannBC(Coefficient *coeff, int &attr, bool own)
 {
     // Create array for attributes and mark given mark given mesh boundary
     neumann_attr_tmp = 0;
     neumann_attr_tmp[attr - 1] = 1;
 
     // Call AddDirichletBC accepting array of essential attributes
-    AddNeumannBC(coeff, neumann_attr_tmp);
+    AddNeumannBC(coeff, neumann_attr_tmp, own);
 }
 
 void BCHandler::AddNeumannBC(real_t val, int &attr)
 {
     auto coeff = new ConstantCoefficient(val);
-    AddNeumannBC(coeff, attr);
+    AddNeumannBC(coeff, attr, true);
 }
 
 /// Neumann Vector BCS
@@ -255,9 +255,9 @@ void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr, b
     }
 }
 
-void BCHandler::AddNeumannVectorBC(VecFuncT func, Array<int> &attr, bool own)
+void BCHandler::AddNeumannVectorBC(VecFuncT func, Array<int> &attr)
 {
-    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, own);
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, true);
 }
 
 void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, int &attr, bool own)
@@ -270,9 +270,9 @@ void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, int &attr, bool own
     AddNeumannVectorBC(coeff, neumann_attr_tmp, own);
 }
 
-void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr, bool own)
+void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr)
 {
-    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, own);
+    AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, true);
 }
 
 
