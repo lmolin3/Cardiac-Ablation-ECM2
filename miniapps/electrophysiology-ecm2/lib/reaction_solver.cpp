@@ -106,7 +106,7 @@ void ReactionSolver::SetThermalParameters(
 {
     if (!has_td_dependency && Mpi::Root())
     {
-        mfem_warning("ReactionSolver::SetTemperatureGridFunction(): The current ionic model does not support temperature dependency. The provided grid function will be ignored.");
+        mfem_warning("ReactionSolver::SetThermalParameters(): The current ionic model does not support temperature dependency. The provided grid function will be ignored.");
     }
 
     // NOTE: here we assume that the gf is defined on the same fes as the EP solver
@@ -358,17 +358,37 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
             real_t temperature = temperature_vec.Size() > 0 ? temperature_vec[i] : td_Tref; // Default to 37C if not provided
             real_t damage = damage_vec.Size() > 0 ? td_damage_func(damage_vec[i]) : 0.0;   // Default to no damage if not provided
 
-            // Update parameters based on temperature and damage
-            parameters[i][td_model->eta_idx] = td_A * (1.0 + td_B * (temperature - td_Tref));    // eta = A[1+B(T-Tref)]
-            parameters[i][td_model->Q_idx] = std::pow(td_Q10, (temperature - td_Tref) / 10.0);   // Q = Q10^((T - Tref)/10)
-            parameters[i][td_model->gamma_idx] = (1.0 - damage);                                 // gamma = (1-f(D))
+            // Damage effect on ionic currents: gamma = (1 - f(D))
+            parameters[i][td_model->gamma_idx] = (1.0 - damage);
 
-            // Update time constants with damage effect
+            // Moore term: eta = A * (1 + B * (T - Tref)), but clamp for partially damaged cells
+            real_t dT = temperature - td_Tref;
+            real_t eta = td_A * (1.0 + td_B * dT);
+            parameters[i][td_model->eta_idx] = eta;
+
+            // Q10 power-law scaling of gating kinetics: Q = Q10^(dT/10), but clamp for boundary
+            // Raised cosine low-pass filter for Q10 scaling (S2) above T_ref+10 K
+            // Tanh-based low-pass filter for Q10 scaling (S2) above T_ref+10 K
+            // Previous sharp sigmoid drop-off for Q10 (for reference):
+            // real_t T_border = 320.15; // K (47 °C)
+            // real_t deltaT_sharp = 0.5; // K, sharpness of transition
+            // real_t S = 1.0 / (1.0 + std::exp(-(temperature - T_border) / deltaT_sharp));
+            // Q10 scaling suppressed only above T_border
+            real_t T_cut = td_Tref + 10.0; // K, upper validity limit for Q10
+            real_t deltaT_tanh = 2.0; // K, width of transition
+            real_t Q_pow = std::pow(td_Q10, dT / 10.0);
+            real_t S2 = 0.5 * (1.0 - std::tanh((temperature - T_cut) / deltaT_tanh));
+            // S2 transitions from 1 (Q10 scaling) to 0 (no Q10 effect), so Q transitions from Q_pow to 1
+            real_t Q = Q_pow * S2 + 1.0 * (1.0 - S2);
+            parameters[i][td_model->Q_idx] = Q;
+
+            // Update time constants for damage only: tau_i = tau_healthy_i * (1 + delta_tau_i * G)
             auto time_constants_idxs = td_model->GetTimeConstantsIdxs();
             for (size_t idx = 0; idx < time_constants_idxs.size(); idx++)
             {
                 int param_idx = time_constants_idxs[idx];
-                parameters[i][param_idx] = td_healthy_tau[idx] * (1.0 + td_delta_tau[idx] * damage);
+                parameters[i][param_idx] = td_healthy_tau[idx]
+                                         * (1.0 + td_delta_tau[idx] * damage);
             }
         }
     }

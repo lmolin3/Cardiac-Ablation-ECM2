@@ -267,10 +267,10 @@ int main(int argc, char *argv[])
     {
         temperature_gf.SetSpace(&fespace);
         temperature_gf.ProjectDiscCoefficient(*temperature_coeff, GridFunction::ARITHMETIC);
+        real_t T_ref = 310.15; // K
         real_t A = 1.0;
         real_t B = 0.07;
-        real_t T_ref = 310.15; // K
-        real_t Q10 = 2.4;
+        real_t Q10 = 3.0;
         reaction_solver->SetThermalParameters(&temperature_gf, A, B, T_ref, Q10);
     }
 

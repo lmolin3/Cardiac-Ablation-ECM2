@@ -72,10 +72,10 @@ namespace mfem
             mutable Vector temperature_vec;              // Vector to hold temperature values at dofs
             mutable Vector damage_vec;                   // Vector to hold damage values at dofs
 
-            real_t td_A = 1.0;      // Moore term A
-            real_t td_B = 0.0;      // Moore term B
-            real_t td_Tref = 310.15; // Reference temperature
-            real_t td_Q10 = 1.0;    // Q10 coefficient
+            real_t td_A = 1.0;       // Moore term A (peak conductance scaling)
+            real_t td_B = 0.0;       // Moore term B (peak conductance T-sensitivity)
+            real_t td_Tref = 310.15;  // Reference temperature [K] (37 °C)
+            real_t td_Q10 = 1.0;      // Q10 coefficient for gating kinetics
             std::function<real_t(real_t)> td_damage_func = nullptr; // Damage function
             std::vector<real_t> td_delta_tau = {};                  // Delta tau values for damage dependency (might be different for each time constant)
             std::vector<real_t> td_healthy_tau = {};                   // Original values of time constants for undamaged tissue

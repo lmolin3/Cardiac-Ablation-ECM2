@@ -71,5 +71,9 @@ add_mfem_miniapp(test_thermal_coupling
   add_mfem_miniapp(test_constant_temperature
       MAIN tests/test_constant_temperature.cpp
       LIBRARIES electrophysiology)
-      
+
+  add_mfem_miniapp(test_thermal_damage_coupling
+      MAIN tests/test_thermal_damage_coupling.cpp
+      LIBRARIES electrophysiology celldeath-ecm2)
+
 endif () #MFEM_USE_MPI
