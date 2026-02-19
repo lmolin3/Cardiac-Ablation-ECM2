@@ -22,11 +22,9 @@ namespace mfem
          {
             CellDeathSolver::CellDeathSolver(int order_,
                                              ParGridFunction *T_,
-                                             real_t A1_, real_t A2_, real_t A3_,
-                                             real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                              bool verbose)
-                : A1(A1_), A2(A2_), A3(A3_),
-                  deltaE1(deltaE1_), deltaE2(deltaE2_), deltaE3(deltaE3_), T_gf(T_), verbose(verbose)
+                : A1(0), A2(0), A3(0),
+                  deltaE1(0), deltaE2(0), deltaE3(0), T_gf(T_), verbose(verbose)
             {
                // Extract mesh
                pmesh = T_gf->ParFESpace()->GetParMesh();
@@ -52,10 +50,12 @@ namespace mfem
                N_gf.SetSpace(fes);
                U_gf.SetSpace(fes);
                D_gf.SetSpace(fes);
+               G_gf.SetSpace(fes); // Grid function for damage variable G
 
                N.SetSize(fes_truevsize);
                U.SetSize(fes_truevsize);
                D.SetSize(fes_truevsize);
+               G.SetSize(fes_truevsize); // Vector for damage variable G   
                T.SetSize(fes_truevsize);
                Tsrc.SetSize(fesT_truevsize);
 
@@ -67,9 +67,29 @@ namespace mfem
                N_gf.ProjectCoefficient(one);
                U_gf.ProjectCoefficient(zero);
                D_gf.ProjectCoefficient(zero);
+               G_gf.ProjectCoefficient(zero); 
                N = 1.0;
                U = 0.0;
                D = 0.0;
+               G = 0.0;
+
+               // Default Arrhenius functions: return the constant members.
+               A1_fn  = [this](real_t) { return A1; };
+               A2_fn  = [this](real_t) { return A2; };
+               A3_fn  = [this](real_t) { return A3; };
+               dE1_fn = [this](real_t) { return deltaE1; };
+               dE2_fn = [this](real_t) { return deltaE2; };
+               dE3_fn = [this](real_t) { return deltaE3; };
+            }
+
+            CellDeathSolver::CellDeathSolver(int order_,
+                                             ParGridFunction *T_,
+                                             real_t A1_, real_t A2_, real_t A3_,
+                                             real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
+                                             bool verbose)
+                : CellDeathSolver(order_, T_, verbose)
+            {
+               SetArrheniusFunctions(A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_);
             }
 
             CellDeathSolver::~CellDeathSolver()
@@ -193,10 +213,8 @@ namespace mfem
 
             CellDeathSolverEigen::CellDeathSolverEigen(int order,
                                                        ParGridFunction *T_,
-                                                       real_t A1_, real_t A2_, real_t A3_,
-                                                       real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                                        bool verbose)
-                : CellDeathSolver(order, T_, A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_, verbose)
+                : CellDeathSolver(order, T_, verbose)
             {
                #ifndef MFEM_THREAD_SAFE
                Xn.SetSize(3); Xn = 0.0;
@@ -206,6 +224,16 @@ namespace mfem
                P.SetSize(3, 3);
                Plu.SetSize(3, 3);
                #endif
+            }
+
+            CellDeathSolverEigen::CellDeathSolverEigen(int order,
+                                                       ParGridFunction *T_,
+                                                       real_t A1_, real_t A2_, real_t A3_,
+                                                       real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
+                                                       bool verbose)
+                : CellDeathSolverEigen(order, T_, verbose)
+            {
+               SetArrheniusFunctions(A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_);
             }
 
             CellDeathSolverEigen::~CellDeathSolverEigen()
@@ -223,7 +251,7 @@ namespace mfem
 
                // Extract the data from the matrix P
                real_t *P_data = P.HostWrite();
-               real_t *Plu_data = Plu.HostWrite();
+               //real_t *Plu_data = Plu.HostWrite();
                real_t *lambda_data = lambda.HostWrite();
 
                // Create an index based on which ki are non-zero
@@ -399,6 +427,7 @@ namespace mfem
                N_gf.GetTrueDofs(N);
                U_gf.GetTrueDofs(U);
                D_gf.GetTrueDofs(D);
+               G_gf.GetTrueDofs(G);
 
                ProjectTemperature(Tsrc, T); // Project the temperature field
 
@@ -413,11 +442,11 @@ namespace mfem
 
                   // Precompute temperature-dependent coefficients
                   const real_t Tval = T[i];
-                  bool nnz = (Tval != 0);
+                  const bool nnz = (Tval != 0);
                   const real_t invTval = nnz ? (invR / Tval) : 0;
-                  real_t k1 = nnz ? (A1 * exp(-deltaE1 * invTval)) : 0.0;
-                  real_t k2 = nnz ? (A2 * exp(-deltaE2 * invTval)) : 0.0;
-                  real_t k3 = nnz ? (A3 * exp(-deltaE3 * invTval)) : 0.0;
+                  real_t k1 = nnz ? (A1_fn(Tval) * exp(-dE1_fn(Tval) * invTval)) : 0.0;
+                  real_t k2 = nnz ? (A2_fn(Tval) * exp(-dE2_fn(Tval) * invTval)) : 0.0;
+                  real_t k3 = nnz ? (A3_fn(Tval) * exp(-dE3_fn(Tval) * invTval)) : 0.0;
                   k1 = k1 < TOL ? 0.0 : k1;
                   k2 = k2 < TOL ? 0.0 : k2;
                   k3 = k3 < TOL ? 0.0 : k3;
@@ -447,23 +476,24 @@ namespace mfem
                   N[i] = X(0);
                   U[i] = X(1);
                   D[i] = X(2);
+
+                  G[i] = U[i] + D[i]; // Compute damage variable G for potential use in coupling with EP model
                }
 
                // Set updated solution fields
                N_gf.SetFromTrueDofs(N);
                U_gf.SetFromTrueDofs(U);
                D_gf.SetFromTrueDofs(D);
+
+               G_gf.SetFromTrueDofs(G);
             }
 
             CellDeathSolverGotran::CellDeathSolverGotran(int order_, ParGridFunction *T_,
-                                                         real_t A1_, real_t A2_, real_t A3_,
-                                                         real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
                                                          bool verbose)
-                : CellDeathSolver(order_, T_, A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_, verbose)
+                : CellDeathSolver(order_, T_, verbose)
             {
                // Initialize ODE model parameters
                parameters_nodes = new real_t[fes_truevsize][num_param];
-               // init_parameters_values(parameters);
                init_state_values(init_states);
 
                // Initialize state and parameters
@@ -471,6 +501,7 @@ namespace mfem
                N_gf.GetTrueDofs(N);
                U_gf.GetTrueDofs(U);
                D_gf.GetTrueDofs(D);
+               G_gf.GetTrueDofs(G);
                T_gf->GetTrueDofs(Tsrc);
                ProjectTemperature(Tsrc, T);
 
@@ -487,14 +518,23 @@ namespace mfem
 
                   // Set the parameters
                   real_t Tval = T[i];
-                  parameters_nodes[i][0] = A1 * exp(-deltaE1 / (R * Tval)); // k1
-                  parameters_nodes[i][1] = A2 * exp(-deltaE2 / (R * Tval)); // k2
-                  parameters_nodes[i][2] = A3 * exp(-deltaE3 / (R * Tval)); // k3
+                  parameters_nodes[i][0] = A1_fn(Tval) * exp(-dE1_fn(Tval) / (R * Tval)); // k1
+                  parameters_nodes[i][1] = A2_fn(Tval) * exp(-dE2_fn(Tval) / (R * Tval)); // k2
+                  parameters_nodes[i][2] = A3_fn(Tval) * exp(-dE3_fn(Tval) / (R * Tval)); // k3
                }
 
                N_gf.SetFromTrueDofs(N);
                U_gf.SetFromTrueDofs(U);
                D_gf.SetFromTrueDofs(D);
+            }
+
+            CellDeathSolverGotran::CellDeathSolverGotran(int order_, ParGridFunction *T_,
+                                                         real_t A1_, real_t A2_, real_t A3_,
+                                                         real_t deltaE1_, real_t deltaE2_, real_t deltaE3_,
+                                                         bool verbose)
+                : CellDeathSolverGotran(order_, T_, verbose)
+            {
+               SetArrheniusFunctions(A1_, A2_, A3_, deltaE1_, deltaE2_, deltaE3_);
             }
 
             CellDeathSolverGotran::~CellDeathSolverGotran()
@@ -535,9 +575,9 @@ namespace mfem
 
                   // Set the parameters
                   real_t Tval = T[i];
-                  parameters_nodes[i][0] = A1 * exp(-deltaE1 / (R * Tval)); // k1
-                  parameters_nodes[i][1] = A2 * exp(-deltaE2 / (R * Tval)); // k2
-                  parameters_nodes[i][2] = A3 * exp(-deltaE3 / (R * Tval)); // k3
+                  parameters_nodes[i][0] = A1_fn(Tval) * exp(-dE1_fn(Tval) / (R * Tval)); // k1
+                  parameters_nodes[i][1] = A2_fn(Tval) * exp(-dE2_fn(Tval) / (R * Tval)); // k2
+                  parameters_nodes[i][2] = A3_fn(Tval) * exp(-dE3_fn(Tval) / (R * Tval)); // k3
 
                   // Solve
                   real_t t_int = t;
@@ -569,11 +609,15 @@ namespace mfem
                   N[i] = states[i][0];
                   U[i] = states[i][1];
                   D[i] = states[i][2];
+
+                  G[i] = U[i] + D[i]; // Compute damage variable G for potential use in coupling with EP model
                }
 
                N_gf.SetFromTrueDofs(N);
                U_gf.SetFromTrueDofs(U);
                D_gf.SetFromTrueDofs(D);
+
+               G_gf.SetFromTrueDofs(G);
             }
 
          } // namespace celldeath
