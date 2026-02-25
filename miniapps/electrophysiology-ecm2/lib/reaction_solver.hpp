@@ -25,7 +25,8 @@ namespace mfem
         {
             MITCHELL_SCHAEFFER = 0,
             FENTON_KARMA = 1,
-            MITCHELL_SCHAEFFER_TD_DEPENDENT = 2
+            TEN_TUSCHER_PANFILOV = 2,
+            MITCHELL_SCHAEFFER_TD_DEPENDENT = 10
         };
 
 

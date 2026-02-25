@@ -76,4 +76,8 @@ add_mfem_miniapp(test_thermal_coupling
       MAIN tests/test_thermal_damage_coupling.cpp
       LIBRARIES electrophysiology celldeath-ecm2)
 
+  add_mfem_miniapp(test_niederer_benchmark
+      MAIN tests/test_niederer_benchmark.cpp
+      LIBRARIES electrophysiology)
+
 endif () #MFEM_USE_MPI

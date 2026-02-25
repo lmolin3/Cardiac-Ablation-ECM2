@@ -20,6 +20,8 @@
 //   With ParaView output:
 //     ./test_thermal_damage_coupling -hd -ht -pv -of ./Output/
 //
+// mpirun -np 8 ./test_thermal_damage_coupling -d 2 -tf 50 -fa -o 2 -rs 4 -dt 0.1 -sf 10 -of /home/shared/Output/Electrophysiology/TestThermalDamageCoupling/
+//
 
 #include "mfem.hpp"
 #include "../lib/reaction_solver.hpp"
