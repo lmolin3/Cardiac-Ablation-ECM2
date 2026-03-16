@@ -28,7 +28,7 @@ void conductivity_function(const Vector &x, DenseMatrix &Sigma);
 struct s_MeshContext // mesh
 {
     bool hex = true; // use quad/hex elements, otherwise tri/tet mesh
-    int n = 5;
+    Vector dx; 
     int serial_ref_levels = 0;   // rs=0  ~60k dofs,  rs=1  ~450k dofs for linear elements
     int parallel_ref_levels = 0;
 } Mesh_ctx;
@@ -93,9 +93,9 @@ int main(int argc, char *argv[])
 
     OptionsParser args(argc, argv);
     // Mesh related options
+    args.AddOption(&Mesh_ctx.dx, "-dx", "--mesh-size", "Mesh spacing in x, y, z directions. Default: [0.2, 0.2, 0.2]");
     args.AddOption(&Mesh_ctx.hex, "-hex", "--hex", "-tri", "--tri",
                    "Use hex/quad elements (default) or tri/tet elements");
-    args.AddOption(&Mesh_ctx.n, "-n", "--mesh-size", "Number of elements in one direction");
     args.AddOption(&Mesh_ctx.serial_ref_levels, "-rs", "--serial-ref-levels",
                    "Number of uniform refinement levels for the serial mesh");
     args.AddOption(&Mesh_ctx.parallel_ref_levels, "-rp", "--parallel-ref-levels",
@@ -132,6 +132,35 @@ int main(int argc, char *argv[])
     real_t sx = 20.0; int nx = 100;
     real_t sy = 7.0;  int ny = 35;
     real_t sz = 3.0;  int nz = 15;
+
+    // If dx is provided, override nx, ny, nz
+    // Check if dx has been provided, and id dx>0
+    if (Mesh_ctx.dx.Size() == 3 && Mesh_ctx.dx[0] > 0 && Mesh_ctx.dx[1] > 0 && Mesh_ctx.dx[2] > 0)
+    {
+        nx = static_cast<int>(sx / Mesh_ctx.dx[0]);
+        ny = static_cast<int>(sy / Mesh_ctx.dx[1]);
+        nz = static_cast<int>(sz / Mesh_ctx.dx[2]);
+
+        if (Mpi::Root())
+        {
+            out << "\nMesh spacing provided:" << endl;
+            out << "dx = [" << Mesh_ctx.dx[0] << ", " << Mesh_ctx.dx[1] << ", " << Mesh_ctx.dx[2] << "]" << endl;
+            out << "n = [" << nx << ", " << ny << ", " << nz << "]" << endl;
+        }
+    }
+    else
+    {
+        if (Mpi::Root())
+        {
+            real_t dx0 = sx / nx;
+            real_t dy0 = sy / ny;
+            real_t dz0 = sz / nz;
+            out << "\nUsing default mesh size:" << endl;
+            out << "dx = [" << dx0 << ", " << dy0 << ", " << dz0 << "]" << endl;
+            out << "n = [" << nx << ", " << ny << ", " << nz << "]" << endl;
+        }
+    }
+    
     auto type = Mesh_ctx.hex ? Element::HEXAHEDRON : Element::TETRAHEDRON;
     Mesh *serial_mesh = new Mesh(Mesh::MakeCartesian3D(nx, ny, nz, type, sx, sy, sz, true));
 
@@ -141,6 +170,10 @@ int main(int argc, char *argv[])
         serial_mesh->UniformRefinement();
     }
 
+    if(Mpi::Root())
+    {
+        out << "Number of elements: " << serial_mesh->GetNE() << "\n" << endl;
+    }
 
     // 4. Define a parallel mesh by a partitioning of the serial mesh. Refine
     //    this mesh once in parallel to increase the resolution.
@@ -247,15 +280,15 @@ int main(int argc, char *argv[])
     if (ep_ctx.model_type == IonicModelType::MITCHELL_SCHAEFFER || ep_ctx.model_type == IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT)
     {
         state_idx = reaction_solver->GetModel()->state_index("h");
-        parameters[reaction_solver->GetModel()->parameter_index("tau_close")] /= 4; //[ms]
-        parameters[reaction_solver->GetModel()->parameter_index("tau_open")] /= 4;  //[ms]
+        //parameters[reaction_solver->GetModel()->parameter_index("tau_close")] /= 4; //[ms]
+        //parameters[reaction_solver->GetModel()->parameter_index("tau_open")] /= 4;  //[ms]
     }
     else if (ep_ctx.model_type == IonicModelType::FENTON_KARMA)
     {
         state_idx = reaction_solver->GetModel()->state_index("v");
-        parameters[reaction_solver->GetModel()->parameter_index("tau_si")] *= 2.0;
-        parameters[reaction_solver->GetModel()->parameter_index("tau_w_plus")] /= 2.0;
-        parameters[reaction_solver->GetModel()->parameter_index("tau_v_plus")] *= 2.0;
+        //parameters[reaction_solver->GetModel()->parameter_index("tau_si")] *= 2.0;
+        //parameters[reaction_solver->GetModel()->parameter_index("tau_w_plus")] /= 2.0;
+        //parameters[reaction_solver->GetModel()->parameter_index("tau_v_plus")] *= 2.0;
     }
 
     // Modify initial states if needed
