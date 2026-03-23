@@ -91,6 +91,9 @@ if (MFEM_USE_MPI)
     ex39p.cpp
     ex40p.cpp
     ex41p.cpp
+    tutorial_emory_01.cpp
+    tutorial_emory_01_pa.cpp
+    tutorial_emory_01_convergence.cpp
   )
 endif()
 
