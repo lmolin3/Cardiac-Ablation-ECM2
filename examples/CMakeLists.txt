@@ -94,6 +94,7 @@ if (MFEM_USE_MPI)
     tutorial_emory_01.cpp
     tutorial_emory_01_pa.cpp
     tutorial_emory_01_convergence.cpp
+    tutorial_emory_02.cpp
   )
 endif()
 
