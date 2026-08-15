@@ -273,5 +273,69 @@ namespace mfem
       }
     };
 
+    /**
+     * @brief Symmetric counterpart of GridFunctionDependentMatrixFunctionCoefficient.
+     *
+     * Same behaviour -- a matrix coefficient whose value depends pointwise on a
+     * GridFunction (temperature, damage, ...) -- but declared as a
+     * SymmetricMatrixCoefficient so that it carries only the dim*(dim+1)/2 distinct
+     * entries.
+     *
+     * Prefer this one for conductivity/diffusivity tensors. They are symmetric:
+     *     sigma = s_f (f x f) + s_s (s x s) + s_n (n x n)
+     * is a sum of symmetric rank-one terms, so nothing is given up. The distinction
+     * matters to MFEM: DiffusionIntegrator::AssemblePA() decides its quadrature-data
+     * layout from the coefficient *type* (`symmetric = (coeff_dim != dim*dim)`), and
+     * the element-assembly kernels behind AssemblyLevel::FULL only understand the
+     * symmetric layout. Passing a general MatrixCoefficient there yields silently
+     * wrong element matrices, so MonodomainDiffusionSolver falls back to host
+     * (LEGACY) assembly unless the coefficient is a SymmetricMatrixCoefficient.
+     *
+     * ```
+     * GridFunctionDependentSymmetricMatrixFunctionCoefficient k_coeff(dim, &gf, f);
+     * ```
+     */
+    class GridFunctionDependentSymmetricMatrixFunctionCoefficient
+        : public SymmetricMatrixCoefficient
+    {
+    protected:
+      const GridFunction *gf;                                //< NOT OWNED
+      std::function<void(real_t, DenseSymmetricMatrix &)> coeff_func;
+
+    public:
+      GridFunctionDependentSymmetricMatrixFunctionCoefficient(
+          int dim, const GridFunction *gf_,
+          std::function<void(real_t, DenseSymmetricMatrix &)> coeff_func_)
+          : SymmetricMatrixCoefficient(dim), gf(gf_), coeff_func(coeff_func_)
+      {
+      }
+
+      // Overload constructor without GridFunction (provided later)
+      GridFunctionDependentSymmetricMatrixFunctionCoefficient(
+          int dim, std::function<void(real_t, DenseSymmetricMatrix &)> coeff_func_)
+          : SymmetricMatrixCoefficient(dim), gf(nullptr), coeff_func(coeff_func_)
+      {
+      }
+
+      using SymmetricMatrixCoefficient::Eval;
+
+      void Eval(DenseSymmetricMatrix &K, ElementTransformation &T,
+                const IntegrationPoint &ip) override
+      {
+        MFEM_ASSERT(gf != nullptr,
+                    "GridFunction must be provided for "
+                    "GridFunctionDependentSymmetricMatrixFunctionCoefficient.");
+
+        K.SetSize(height);
+        real_t val = gf->GetValue(T, ip);
+        coeff_func(val, K);
+      }
+
+      void SetGridFunction(const GridFunction *new_gf)
+      {
+        gf = new_gf;
+      }
+    };
+
   } // namespace heat
 } // namespace mfem

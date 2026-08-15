@@ -1,26 +1,3 @@
-/**
- * \file heat_bchandler.hpp
- * \brief This file contains the definition of the BCHandler class for managing boundary conditions in the Monodomain Diffusion problem.
- *
- * The BCHandler class is designed to handle various types of boundary conditions for heat transfer simulations, and is passed to the solver object.
- *
- * Boundary Conditions:
- * - Dirichlet Boundary Conditions:  u = ud
- *
- * - Neumann Boundary Conditions:    -σ∇u•n = g      (providing scalar field g) --> Applied as BoundaryLFIntegrator (f, v)
- *
- * - Neumann Boundary Conditions:    -σ∇u•n = F • n  (providing a vector field F for the flux) --> Applied as BoundaryNormalLFIntegrator ( F • n, v)
- *
- * - Robin Boundary Conditions:      -σ∇u•n + h(u - u0) = g
- *
- * The BCs value can be set using Coefficients, functions, constant values.
- * The BCs can be applied to specific mesh attributes or to a list of mesh attributes.
- *
- * By default the CoeffContainers take ownership of the Coefficients passed to them.
- * If this is not desired, the user can pass the Coefficients with the own flag set to false
- * (e.g. if using the same coefficient for different boundaries)
- */
-
 #pragma once
 
 #include <mfem.hpp>
@@ -211,67 +188,11 @@ namespace mfem
              */
             void AddNeumannVectorBC(VecFuncT *func, int &attr);
 
-            /**
-             * \brief Add Robin BC using two Coefficients and list of essential boundaries.
-             *
-             * Add a Robin boundary condition to internal list of Robin bcs,
-             * using two Coefficients and list of active mesh boundaries (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
-             *
-             * \param a Pointer to Coefficient h ()
-             * \param b Pointer to Coefficient T0 (Reference potential)
-             * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
-             *
-             */
-            void AddRobinBC(Coefficient *h_coeff, Coefficient *U0_coeff, Array<int> &attr, bool own = true);
-
-            /**
-             * \brief Add Robin BC using two ScalarFuncT h (heat transfer coefficient)nd list of essential boundaries.
-             *
-             * Add a Robin boundary condition to internal list of Robin bcs,
-             * using two ScalarFuncT h (heat transfer coefficient)nd list of active mesh boundaries (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
-             *
-             * \param a Pointer to ScalarFuncT h (heat transfer coefficient)
-             * \param b Pointer to ScalarFuncT T0 (Reference potential)
-             * \param attr Array of boundary attributes (0 or 1=marked bdry, size of pmesh->attributes.Max())
-             *
-             */
-            void AddRobinBC(ScalarFuncT *h_func, ScalarFuncT *U0_func, Array<int> &attr);
-
-            /**
-             * \brief Add Robin BC using two Coefficients and specific mesh attribute.
-             *
-             * Add a Robin boundary condition to internal list of Robin bcs,
-             * using two Coefficients, and specific mesh attribute (they will be applied at setup time by adding BoundaryIntegrators to the rhs).
-             *
-             * \param a Pointer to Coefficient h (heat transfer coefficent))
-             * \param b Pointer to Coefficient T0 (Reference potential)
-             * \param attr Boundary attribute
-             *
-             */
-            void AddRobinBC(Coefficient *h_coeff, Coefficient *U0_coeff, int &attr, bool own = true);
-
-            /**
-             * \brief Add Robin BC using two ScalarFuncT h (heat transfer coefficient)nd specific mesh attribute.
-             *
-             * Add a Robin boundary condition to internal list of Robin bcs,
-             * using two ScalarFuncT h (heat transfer coefficient)nd specific mesh attribute(they will be applied at setup time by adding BoundaryIntegrators to the rhs).
-             *
-             * \param a Pointer to ScalarFuncT h (heat transfer coefficient)
-             * \param b Pointer to ScalarFuncT T0 (Reference potential)
-             * \param attr Boundary attribute
-             *
-             */
-            void AddRobinBC(ScalarFuncT *h_func, ScalarFuncT *U0_func, int &attr);
 
 
-            /**
-             * \brief Set the time in the BCs coefficients.
-             *
-             * Set the time in the BCs coefficients (Dirichlet, Neumann, Robin).
-             *
-             * \param time Time value.
-             *
-             */
+
+
+
             void SetTime(real_t time);
 
             // Getters
@@ -294,11 +215,6 @@ namespace mfem
                 return neumann_vec_bcs;
             }
 
-            // Getter for Robin_bcs
-            std::vector<RobinCoeffContainer> &GetRobinBcs()
-            {
-                return robin_bcs;
-            }
 
             // Getter for potential dirichlet bcs
             Array<int> &GetDirichletAttr()
@@ -318,11 +234,6 @@ namespace mfem
                 return neumann_vec_attr;
             }
 
-            // Getter for Robin_attr
-            Array<int> &GetRobinAttr()
-            {
-                return robin_attr;
-            }
 
         private:
             /**
@@ -355,25 +266,7 @@ namespace mfem
              */
             void UpdateTimeNeumannVectorBCs(real_t new_time);
 
-            /**
-             * \brief Update the time in the Robin BCs coefficients.
-             *
-             * Update the time in the Robin BCs coefficients.
-             *
-             * \param new_time New time value.
-             *
-             */
-            void UpdateTimeRobinBCs(real_t new_time);
 
-            /**
-             * \brief Update the time in the general Robin BCs coefficients.
-             * 
-             * Update the time in the general Robin BCs coefficients.
-             * 
-             * \param new_time New time value.
-             * 
-             */
-            void UpdateTimeGeneralRobinBCs(real_t new_time);
 
 
             real_t time;
@@ -393,17 +286,13 @@ namespace mfem
             // Bookkeeping for Neumann vector bcs.
             std::vector<VecCoeffContainer> neumann_vec_bcs;
 
-            // Bookkeeping for Robin bcs.
-            std::vector<RobinCoeffContainer> robin_bcs;
 
             /// Array of attributes for parsing bcs
             Array<int> dirichlet_attr;     // Essential mesh attributes.
             Array<int> neumann_attr;       // Neumann mesh attributes.
             Array<int> neumann_vec_attr;   // Neumann vector mesh attributes.
-            Array<int> robin_attr;         // Robin mesh attributes.
             Array<int> dirichlet_attr_tmp; // Essential mesh attributes (temporary).
             Array<int> neumann_attr_tmp;   // Neumann mesh attributes (temporary).
-            Array<int> robin_attr_tmp;     // Robin mesh attributes (temporary).
 
             // Verbosity
             bool verbose;

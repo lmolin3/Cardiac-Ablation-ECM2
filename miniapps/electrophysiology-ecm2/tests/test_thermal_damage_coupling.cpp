@@ -103,6 +103,9 @@ int main(int argc, char *argv[])
     bool verbose = true;
 
     OptionsParser args(argc, argv);
+    const char *device_config = "cpu"; // MFEM device backend ("cpu", "cuda", ...)
+    int prec_type = 0;                 // 0: Jacobi, 1: LOR+AMG (PA implicit solver only)
+
     args.AddOption(&Mesh_ctx.dim, "-d", "--dim", "Mesh dimension (2 or 3)");
     args.AddOption(&Mesh_ctx.hex, "-hex", "--hex", "-tri", "--tri",
                    "Use hex/quad elements (default) or tri/tet");
@@ -143,7 +146,16 @@ int main(int argc, char *argv[])
                    "Save frequency (in time steps)");
     args.AddOption(&verbose, "-v", "--verbose", "-q", "--quiet",
                    "Enable or disable console output");
+    args.AddOption(&device_config, "-dev", "--device",
+                   "Device configuration string, see Device::Configure().");
+    args.AddOption(&prec_type, "-pt", "--prec-type",
+                   "Preconditioner for the PA implicit solver: 0-Jacobi, 1-LOR+AMG.");
     args.ParseCheck();
+
+    //<--- Configure the MFEM device backend. Must happen before any Vector/mesh
+    // allocation so that memory is placed in the right space.
+    Device device(device_config);
+    if (Mpi::Root()) { device.Print(); }
 
     /////////////////////////////////////////////////////////////////////////////
     //------     3. Create serial and parallel mesh (shared_ptr for CellDeath)
@@ -241,16 +253,19 @@ int main(int argc, char *argv[])
     ConstantCoefficient Cm_coeff(ep_ctx.Cm);
 
     // Conductivity modulated by damage: sigma = sigma_min + (sigma - sigma_min)*(1 - G)
-    GridFunctionDependentMatrixFunctionCoefficient sigma_coeff(
+    // Declared symmetric (as every conductivity tensor is) so that the diffusion
+    // solver can use device-side full assembly under a GPU backend; see the
+    // AssemblyLevel note in monodomain_solver.cpp.
+    GridFunctionDependentSymmetricMatrixFunctionCoefficient sigma_coeff(
         Mesh_ctx.dim, &G_gf,
-        [](real_t G, DenseMatrix &K) {
+        [](real_t G, DenseSymmetricMatrix &K) {
             G = std::min(1.0, std::max(0.0, G));
             real_t s = ep_ctx.sigma_min +
                        (ep_ctx.sigma - ep_ctx.sigma_min) * (1.0 - G);
             K = 0.0;
             K(0, 0) = s;
             K(1, 1) = s;
-            if (K.NumRows() > 2)
+            if (K.Height() > 2)
                 K(2, 2) = s;
         });
 
@@ -290,7 +305,7 @@ int main(int argc, char *argv[])
     //------     8. Setup diffusion and reaction solvers
     /////////////////////////////////////////////////////////////////////////////
 
-    diff_solver->Setup(dt);
+    diff_solver->Setup(dt, prec_type);
 
     std::vector<double> initial_states, parameters;
     reaction_solver->GetDefaultStates(initial_states);
@@ -316,7 +331,9 @@ int main(int argc, char *argv[])
 
     // Stimulation: plane wave in the x-direction at the left edge of the domain.
     FunctionCoefficient Istim_coeff(stimulation_plane_wave);
-    reaction_solver->SetStimulation(&Istim_coeff);
+    // stimulation_plane_wave() is a function of x only -- strategy (a); see
+    // "Enforcing the stimulation efficiently" in reaction_solver.hpp.
+    reaction_solver->SetStimulation(&Istim_coeff, true);
 
     /////////////////////////////////////////////////////////////////////////////
     //------     9. ParaView output
@@ -333,7 +350,9 @@ int main(int argc, char *argv[])
     pvdc.SetPrefixPath(outfolder);
     pvdc.SetDataFormat(VTKFormat::BINARY32);
     pvdc.SetCompression(true);
-    pvdc.SetCompressionLevel(9);
+    // zlib level 1: same output size as level 9 to within ~2%, ~2x faster to
+    // write. See electrophysiology-ecm2/PERFORMANCE.md, "Output (ParaView) cost".
+    pvdc.SetCompressionLevel(1);
     if (order > 1)
     {
         pvdc.SetHighOrderOutput(true);

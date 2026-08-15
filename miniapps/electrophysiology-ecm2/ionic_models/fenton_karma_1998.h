@@ -271,8 +271,29 @@ namespace mfem
                 states[1] = 1;
                 states[2] = 0;
             }
+            /**
+             * @brief Device-callable kernel for this model.
+             *
+             * Holds the model math as MFEM_HOST_DEVICE *static* functions and the
+             * model metadata as compile-time constants, so that ReactionSolver can
+             * instantiate an mfem::forall kernel over it with no virtual dispatch.
+             * The virtual methods of the enclosing class forward here, so the math
+             * has a single source of truth.
+             */
+            struct Kernel : IonicKernelDefaults
+            {
+                static constexpr int nstates = 3;
+                static constexpr int nparams = 21;
+                static constexpr int nmonitored = 12;
 
-            void rhs(const double t, const double *__restrict states, const double *__restrict parameters, double *values)
+                static constexpr int potential_idx = 2;
+                static constexpr int stim_ampl_idx = 1;
+
+                static constexpr bool dimensionless = true;
+                static constexpr real_t stim_sign = -1.0;
+
+
+            MFEM_HOST_DEVICE static void rhs(const double t, const double *__restrict states, const double *__restrict parameters, double *values)
             {
 
                 // Assign states
@@ -327,7 +348,7 @@ namespace mfem
                 values[2] = du_dt;
             }
 
-            void monitor_values(const double t, const double *__restrict states, const double *__restrict parameters,
+            MFEM_HOST_DEVICE static void monitor_values(const double t, const double *__restrict states, const double *__restrict parameters,
                                 double *values)
             {
 
@@ -393,7 +414,7 @@ namespace mfem
                 values[11] = du_dt;
             }
 
-            void explicit_euler(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void explicit_euler(const double *__restrict states, const double t, const double dt,
                                 const double *__restrict parameters, double *values)
             {
 
@@ -449,7 +470,7 @@ namespace mfem
                 values[2] = dt * du_dt + u;
             }
 
-            void generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
                                          const double *__restrict parameters, double *values)
             {
 
@@ -509,7 +530,7 @@ namespace mfem
                 values[2] = dt * du_dt + u;
             }
 
-            void forward_explicit_euler(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void forward_explicit_euler(const double *__restrict states, const double t, const double dt,
                                         const double *__restrict parameters, double *values)
             {
 
@@ -565,7 +586,7 @@ namespace mfem
                 values[2] = dt * du_dt + u;
             }
 
-            void forward_generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void forward_generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
                                                  const double *__restrict parameters, double *values)
             {
 
@@ -624,6 +645,8 @@ namespace mfem
                 const double du_dt = -(Istim + (J_si + (J_fi + J_so)));
                 values[2] = dt * du_dt + u;
             }
+
+            }; // struct Kernel
 
         }; // class FentonKarma
 

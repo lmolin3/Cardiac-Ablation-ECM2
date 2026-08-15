@@ -431,6 +431,18 @@ namespace mfem
 
                ProjectTemperature(Tsrc, T); // Project the temperature field
 
+               // This solver integrates the cell-death ODEs on host, indexing the
+               // vectors with operator[]. That returns the raw host pointer and does
+               // NOT sync from device, so under a device backend it would read stale
+               // memory (GetTrueDofs above runs the restriction on device). Request
+               // host access explicitly to force the transfer; the matching
+               // SetFromTrueDofs() calls below push the results back.
+               T.HostRead();
+               N.HostReadWrite();
+               U.HostReadWrite();
+               D.HostReadWrite();
+               G.HostReadWrite();
+
                static constexpr real_t TOL = 1e-8;
 
                for (int i = 0; i < fes_truevsize; ++i)

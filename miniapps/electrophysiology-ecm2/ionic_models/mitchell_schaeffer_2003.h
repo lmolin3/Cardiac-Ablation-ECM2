@@ -14,9 +14,9 @@ namespace mfem
             // Constructor to initialize the base class metadata
             MitchellSchaeffer() : GotranxODEModel()
             {
-                NUM_STATES = 2;
-                NUM_PARAMS = 10;
-                NUM_MONITORED = 5;
+                NUM_STATES = Kernel::nstates;
+                NUM_PARAMS = Kernel::nparams;
+                NUM_MONITORED = Kernel::nmonitored;
 
                 potential_idx = state_index("Vm");
                 stim_ampl_idx = parameter_index("IstimAmplitude");
@@ -25,8 +25,13 @@ namespace mfem
                 stim_end_idx = parameter_index("IstimEnd");
                 stim_period_idx = parameter_index("IstimPeriod");
 
+                // The device kernel hard-codes these as compile-time constants; keep
+                // the name-lookup path and the constants from drifting apart.
+                MFEM_ASSERT(potential_idx == Kernel::potential_idx, "potential_idx mismatch");
+                MFEM_ASSERT(stim_ampl_idx == Kernel::stim_ampl_idx, "stim_ampl_idx mismatch");
 
-                dimensionless = true; // Mitchell-Schaeffer model uses dimensionless potential
+                dimensionless = Kernel::dimensionless; // Mitchell-Schaeffer model uses dimensionless potential
+                stim_sign = Kernel::stim_sign;
             }
 
             // Set stimulation parameters - accepts variable number of parameters
@@ -175,7 +180,28 @@ namespace mfem
                 states[1] = 8.20413566106744e-06;
             }
 
-            void rhs(const double t, const double *__restrict states, const double *__restrict parameters, double *values)
+            /**
+             * @brief Device-callable kernel for this model.
+             *
+             * Holds the model math as MFEM_HOST_DEVICE *static* functions and the
+             * model metadata as compile-time constants, so that ReactionSolver can
+             * instantiate a templated mfem::forall kernel over it with no virtual
+             * dispatch and full inlining. The virtual methods of the enclosing class
+             * forward here, so the math has a single source of truth.
+             */
+            struct Kernel : IonicKernelDefaults
+            {
+                static constexpr int nstates = 2;
+                static constexpr int nparams = 10;
+                static constexpr int nmonitored = 5;
+
+                static constexpr int potential_idx = 1;   // "Vm"
+                static constexpr int stim_ampl_idx = 0;   // "IstimAmplitude"
+
+                static constexpr bool dimensionless = true;
+                static constexpr real_t stim_sign = 1.0;
+
+            MFEM_HOST_DEVICE static void rhs(const double t, const double *__restrict states, const double *__restrict parameters, double *values)
             {
 
                 // Assign states
@@ -209,7 +235,7 @@ namespace mfem
                 values[1] = dVm_dt;
             }
 
-            void monitor_values(const double t, const double *__restrict states, const double *__restrict parameters,
+            MFEM_HOST_DEVICE static void monitor_values(const double t, const double *__restrict states, const double *__restrict parameters,
                                 double *values)
             {
 
@@ -247,7 +273,7 @@ namespace mfem
                 values[4] = dVm_dt;
             }
 
-            void explicit_euler(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void explicit_euler(const double *__restrict states, const double t, const double dt,
                                 const double *__restrict parameters, double *values)
             {
 
@@ -282,7 +308,7 @@ namespace mfem
                 values[1] = Vm + dVm_dt * dt;
             }
 
-            void generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
                                          const double *__restrict parameters, double *values)
             {
 
@@ -318,6 +344,8 @@ namespace mfem
                 const double dVm_dt = (J_stim_J_stim + (J_in_J_in + J_out_J_out));
                 values[1] = Vm + dVm_dt * dt;
             }
+            }; // struct Kernel
+
         };
 
     } // namespace electrophysiology

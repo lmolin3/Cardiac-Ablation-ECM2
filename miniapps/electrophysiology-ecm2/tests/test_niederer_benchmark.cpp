@@ -23,7 +23,7 @@ using namespace mfem;
 using namespace electrophysiology;
 
 real_t stimulation_function(const Vector &x, real_t t);
-void conductivity_function(const Vector &x, DenseMatrix &Sigma);
+void conductivity_function(const Vector &x, DenseSymmetricMatrix &Sigma);
 
 struct s_MeshContext // mesh
 {
@@ -93,6 +93,9 @@ int main(int argc, char *argv[])
 
     OptionsParser args(argc, argv);
     // Mesh related options
+    const char *device_config = "cpu"; // MFEM device backend ("cpu", "cuda", ...)
+    int prec_type = 0;                 // 0: Jacobi, 1: LOR+AMG (PA implicit solver only)
+
     args.AddOption(&Mesh_ctx.dx, "-dx", "--mesh-size", "Mesh spacing in x, y, z directions. Default: [0.2, 0.2, 0.2]");
     args.AddOption(&Mesh_ctx.hex, "-hex", "--hex", "-tri", "--tri",
                    "Use hex/quad elements (default) or tri/tet elements");
@@ -117,7 +120,16 @@ int main(int argc, char *argv[])
     args.AddOption(&save_freq, "-sf", "--save-freq", "Save frequency (in time steps)");
     args.AddOption(&verbose, "-v", "--verbose", "-q", "--quiet",
                    "Enable or disable console output (default enabled)");
+    args.AddOption(&device_config, "-dev", "--device",
+                   "Device configuration string, see Device::Configure().");
+    args.AddOption(&prec_type, "-pt", "--prec-type",
+                   "Preconditioner for the PA implicit solver: 0-Jacobi, 1-LOR+AMG.");
     args.ParseCheck();
+
+    //<--- Configure the MFEM device backend. Must happen before any Vector/mesh
+    // allocation so that memory is placed in the right space.
+    Device device(device_config);
+    if (Mpi::Root()) { device.Print(); }
 
     /////////////////////////////////////////////////////////////////////////////
     //------     3. Create serial and parallel mesh
@@ -217,7 +229,7 @@ int main(int argc, char *argv[])
     ConstantCoefficient Cm_coeff(ep_ctx.Cm);   // membrane capacitance
 
     //<--- 5.2 Define the conductivity coefficient
-    MatrixFunctionCoefficient sigma_coeff(3, conductivity_function);
+    SymmetricMatrixFunctionCoefficient sigma_coeff(3, conductivity_function);
 
     chrono.Stop();
     t_misc += chrono.RealTime();
@@ -250,7 +262,7 @@ int main(int argc, char *argv[])
     // This setup the diffusion solver (assembles operators and setup ODESolver)           chi Cm dudt = div(sigma grad u) + bcs
     chrono.Clear();
     chrono.Start();
-    diff_solver->Setup(dt);
+    diff_solver->Setup(dt, prec_type);
     chrono.Stop();
     t_assembly = chrono.RealTime();
 
@@ -301,6 +313,13 @@ int main(int argc, char *argv[])
     Coefficient *Istim_coeff = new FunctionCoefficient(stimulation_function);
     reaction_solver->SetStimulation(Istim_coeff);
 
+    // stimulation_function() gates on t internally, so it is not time independent,
+    // but it is identically zero outside the S1 pulse. Declaring that window lets
+    // the solver skip the per-substep projection for the rest of the simulation.
+    // See the "Enforcing the stimulation efficiently" note in reaction_solver.hpp.
+    reaction_solver->SetStimulationWindow(stim_ctx.t_start,
+                                          stim_ctx.t_start + stim_ctx.t_duration);
+
     chrono.Stop();
     t_setup_reaction = chrono.RealTime();
 
@@ -325,7 +344,9 @@ int main(int argc, char *argv[])
     pvdc.SetPrefixPath(outfolder);
     pvdc.SetDataFormat(VTKFormat::BINARY32);
     pvdc.SetCompression(true);
-    pvdc.SetCompressionLevel(9);
+    // zlib level 1: same output size as level 9 to within ~2%, ~2x faster to
+    // write. See electrophysiology-ecm2/PERFORMANCE.md, "Output (ParaView) cost".
+    pvdc.SetCompressionLevel(1);
     if (order > 1)
     {
         pvdc.SetHighOrderOutput(true);
@@ -505,7 +526,7 @@ int main(int argc, char *argv[])
     return 0; 
 }
 
-void conductivity_function(const Vector &x, DenseMatrix &Sigma)
+void conductivity_function(const Vector &x, DenseSymmetricMatrix &Sigma)
 {
     Sigma = 0.0;
     // Monodomain conductivities [S/mm]

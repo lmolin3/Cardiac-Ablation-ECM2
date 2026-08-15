@@ -9,6 +9,40 @@ namespace mfem
     namespace electrophysiology
     {
 
+        /**
+         * @brief Fallback time integration schemes for a model's device Kernel.
+         *
+         * gotranx only emits the schemes requested when the model was generated, so
+         * not every model provides all of them (e.g. Mitchell-Schaeffer has no
+         * forward_* variants). Each model's `Kernel` derives from this struct and
+         * defines only what was generated; C++ name hiding then selects the real
+         * implementation, and any scheme the model lacks resolves to the stub here
+         * and aborts with a clear message.
+         *
+         * This is what lets ReactionSolver's scheme dispatch name all schemes
+         * unconditionally, with no per-model capability flag to keep in sync and no
+         * `if constexpr` guards.
+         */
+        struct IonicKernelDefaults
+        {
+#define MFEM_EP_UNAVAILABLE_SCHEME(NAME)                                          \
+    MFEM_HOST_DEVICE static void NAME(const real_t *__restrict, const real_t,     \
+                                      const real_t, const real_t *__restrict,     \
+                                      real_t *)                                   \
+    {                                                                             \
+        MFEM_ABORT_KERNEL("ionic model was not generated with the '" #NAME "' "    \
+                          "integration scheme\n");                                \
+    }
+
+            MFEM_EP_UNAVAILABLE_SCHEME(explicit_euler)
+            MFEM_EP_UNAVAILABLE_SCHEME(generalized_rush_larsen)
+            MFEM_EP_UNAVAILABLE_SCHEME(forward_explicit_euler)
+            MFEM_EP_UNAVAILABLE_SCHEME(forward_generalized_rush_larsen)
+            MFEM_EP_UNAVAILABLE_SCHEME(hybrid_rush_larsen)
+
+#undef MFEM_EP_UNAVAILABLE_SCHEME
+        };
+
 
         /**  
          * @brief  Base class for Gotranx-generated ODE models.
@@ -60,52 +94,24 @@ namespace mfem
                            "   is not implemented for this class.");
             }*/
 
-            // Core ODE methods - must be implemented by derived classes
-            virtual void rhs(const double t, const double *__restrict states,
-                             const double *__restrict parameters, double *values) = 0;
-
-            virtual void monitor_values(const double t, const double *__restrict states,
-                                        const double *__restrict parameters, double *values) = 0;
-
             // Model metadata accessors - these will access the member variables
             int GetNumStates() const { return NUM_STATES; }
             int GetNumParameters() const { return NUM_PARAMS; }
             int GetNumMonitored() const { return NUM_MONITORED; }
 
-            virtual void explicit_euler(const double *__restrict states, const double t, const double dt,
-                                        const double *__restrict parameters, double *values)
-            {
-                MFEM_ABORT("GotranxODEModel::explicit_euler()\n"
-                           "   is not implemented for this class.");
-            }
-
-            virtual void generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
-                                                 const double *__restrict parameters, double *values)
-            {
-                MFEM_ABORT("GotranxODEModel::generalized_rush_larsen()\n"
-                           "   is not implemented for this class.");
-            }
-
-            virtual void forward_explicit_euler(const double *__restrict states, const double t, const double dt,
-                                                const double *__restrict parameters, double *values)
-            {
-                MFEM_ABORT("GotranxODEModel::forward_explicit_euler()\n"
-                           "   is not implemented for this class.");
-            }
-
-            virtual void forward_generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
-                                                         const double *__restrict parameters, double *values)
-            {
-                MFEM_ABORT("GotranxODEModel::forward_generalized_rush_larsen()\n"
-                           "   is not implemented for this class.");
-            }
-
-            virtual void hybrid_rush_larsen(const double *__restrict states, const double t, const double dt,
-                                            const double *__restrict parameters, double *values)
-            {
-                MFEM_ABORT("GotranxODEModel::hybrid_rush_larsen()\n"
-                           "   is not implemented for this class.");
-            }
+            // NOTE: the model math (rhs, monitor_values and the time integration
+            // schemes) is deliberately NOT part of this interface. It lives in each
+            // model's nested `Kernel` struct as MFEM_HOST_DEVICE static functions,
+            // which are callable from both host and device code:
+            //
+            //     MitchellSchaeffer::Kernel::generalized_rush_larsen(s, t, dt, p, v);
+            //
+            // A virtual method cannot be called from a device kernel (the vtable is
+            // host-side), and it would also block inlining, so ReactionSolver
+            // dispatches on the model type once and instantiates a templated
+            // mfem::forall over the Kernel instead. This base class is therefore a
+            // host-side metadata/introspection interface only: name lookup, default
+            // states and parameters, and the index/flag metadata below.
 
         protected:
             int NUM_STATES = -1;

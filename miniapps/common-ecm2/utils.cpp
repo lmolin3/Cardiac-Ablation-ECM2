@@ -130,7 +130,7 @@ namespace mfem
             ParaViewDataCollection paraview_dc("Partitioning", &mesh);
             paraview_dc.SetPrefixPath(outfolder);
             paraview_dc.SetDataFormat(VTKFormat::BINARY);
-            paraview_dc.SetCompressionLevel(9);
+            paraview_dc.SetCompressionLevel(1);
             paraview_dc.RegisterField("partitioning", &attr);
             paraview_dc.Save();
 

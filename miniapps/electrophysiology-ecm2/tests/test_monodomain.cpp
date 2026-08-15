@@ -57,7 +57,7 @@ real_t stimulation_spiral_wave_v3(const Vector &x, real_t t);
 
 inline bool CheckS1ReachedCenter(real_t potential_left, real_t potential_right, real_t recovery_left, real_t recovery_right);
 
-void conductivity_function(const Vector &x, DenseMatrix &Sigma);
+void conductivity_function(const Vector &x, DenseSymmetricMatrix &Sigma);
 
 enum class StimulationType : int
 {
@@ -127,6 +127,9 @@ int main(int argc, char *argv[])
     // Finite element
     int order = 1;
     bool pa = false; // partial assembly
+    const char *device_config = "cpu"; // MFEM device backend ("cpu", "cuda", ...)
+    int prec_type = 0;                 // 0: Jacobi, 1: LOR+AMG (PA implicit solver only)
+    bool substep_stim = false;         // re-project the stimulus at every ODE substep
     // Timestepping
     bool last_step = false;
     real_t dt = 0.05;         // Time step (ms)
@@ -138,6 +141,9 @@ int main(int argc, char *argv[])
     bool paraview = true;
     const char *outfolder = "./Output/";
     int save_freq = 1; // save solution every save_freq time steps
+    int compression_level = 1; // zlib level for ParaView data arrays (0 = off)
+    int lod = -1;              // ParaView levels of detail (-1 = use `order`)
+    bool high_order_output = true; // write VTK Lagrange cells instead of subdividing
     bool verbose = true;
     // Timing
     real_t t_setup_reaction = 0.0;
@@ -165,6 +171,14 @@ int main(int argc, char *argv[])
     args.AddOption(&order, "-o", "--order", "Finite element polynomial degree");
     args.AddOption(&pa, "-pa", "--partial-assembly", "-fa", "--full-assembly",
                    "Enable or disable partial assembly (default disabled)");
+    args.AddOption(&device_config, "-dev", "--device",
+                   "Device configuration string, see Device::Configure().");
+    args.AddOption(&prec_type, "-pt", "--prec-type",
+                   "Preconditioner for the PA implicit solver: 0-Jacobi, 1-LOR+AMG.");
+    args.AddOption(&substep_stim, "-ssp", "--substep-stim-projection",
+                   "-no-ssp", "--no-substep-stim-projection",
+                   "Re-project the stimulation coefficient at every ODE substep "
+                   "instead of once per time step (only matters with -dode > 1).");
     // Time stepping related options
     args.AddOption(&dt, "-dt", "--time-step", "Time step size");
     args.AddOption(&t_final, "-tf", "--time-final", "Final time");
@@ -187,9 +201,27 @@ int main(int argc, char *argv[])
                    "Enable or disable Paraview output (default enabled)");
     args.AddOption(&outfolder, "-of", "--output-folder", "Output folder.");
     args.AddOption(&save_freq, "-sf", "--save-freq", "Save frequency (in time steps)");
+    args.AddOption(&compression_level, "-cl", "--compression-level",
+                   "zlib level for ParaView data arrays: 0 (off) to 9 (max). "
+                   "Levels above ~1 cost a lot of time for very little size.");
+    args.AddOption(&lod, "-lod", "--levels-of-detail",
+                   "ParaView levels of detail (-1 uses the FE order). Lowering it "
+                   "below the order subsamples the field and shrinks the output.");
+    args.AddOption(&high_order_output, "-hoo", "--high-order-output",
+                   "-no-hoo", "--no-high-order-output",
+                   "Write VTK Lagrange cells (default) instead of subdividing each "
+                   "element into linear cells.");
     args.AddOption(&verbose, "-v", "--verbose", "-q", "--quiet",
                    "Enable or disable console output (default enabled)");
     args.ParseCheck();
+
+    //<--- Configure the MFEM device backend. Must happen before any Vector/mesh
+    // allocation so that memory is placed in the right space.
+    Device device(device_config);
+    if (Mpi::Root() && verbose)
+    {
+        device.Print();
+    }
 
     /////////////////////////////////////////////////////////////////////////////
     //------     3. Create serial and parallel mesh
@@ -299,7 +331,7 @@ int main(int argc, char *argv[])
     ConstantCoefficient Cm_coeff(ep_ctx.Cm);   // membrane capacitance
 
     //<--- 5.2 Define the conductivity coefficient
-    MatrixFunctionCoefficient sigma_coeff(Mesh_ctx.dim, conductivity_function);
+    SymmetricMatrixFunctionCoefficient sigma_coeff(Mesh_ctx.dim, conductivity_function);
 
     chrono.Stop();
     t_misc += chrono.RealTime();
@@ -331,7 +363,7 @@ int main(int argc, char *argv[])
     // This setup the diffusion solver (assembles operators and setup ODESolver)           chi Cm dudt = div(sigma grad u) + bcs
     chrono.Clear();
     chrono.Start();
-    diff_solver->Setup(dt);
+    diff_solver->Setup(dt, prec_type);
     chrono.Stop();
     t_assembly = chrono.RealTime();
 
@@ -403,7 +435,17 @@ int main(int argc, char *argv[])
         mfem_error("Unknown stimulation type!");
     }
 
-    reaction_solver->SetStimulation(Istim_coeff);
+    // The CORNER and PLANE_WAVE coefficients are functions of x only: they are fixed
+    // spatial masks whose temporal gating is done inside the ionic model via
+    // IstimStart / IstimEnd / IstimPulseDuration. Flagging them as time independent
+    // lets the solver project them once instead of on every ODE substep, which
+    // otherwise dominates the reaction step. The spiral coefficients do take t.
+    const bool stim_is_time_independent =
+        (stim_ctx.stim_type == StimulationType::CORNER ||
+         stim_ctx.stim_type == StimulationType::PLANE_WAVE);
+
+    reaction_solver->SetStimulation(Istim_coeff, stim_is_time_independent);
+    reaction_solver->EnableSubstepStimulusProjection(substep_stim);
 
     chrono.Stop();
     t_setup_reaction = chrono.RealTime();
@@ -427,12 +469,15 @@ int main(int argc, char *argv[])
     ParaViewDataCollection pvdc("EP", &mesh);
     pvdc.SetPrefixPath(outfolder);
     pvdc.SetDataFormat(VTKFormat::BINARY32);
-    pvdc.SetCompression(true);
-    pvdc.SetCompressionLevel(9);
+    // zlib level: 1 already gets nearly all of the achievable compression on
+    // float32 field data, while level 9 costs several times as much CPU time
+    // per save. See PERFORMANCE.md, "Output (ParaView) cost".
+    pvdc.SetCompression(compression_level != 0);
+    pvdc.SetCompressionLevel(compression_level);
     if (order > 1)
     {
-        pvdc.SetHighOrderOutput(true);
-        pvdc.SetLevelsOfDetail(order);
+        pvdc.SetHighOrderOutput(high_order_output);
+        pvdc.SetLevelsOfDetail(lod > 0 ? lod : order);
     }
     pvdc.RegisterField("potential", u_gf);
     pvdc.RegisterField("Istim", Istim_gf);
@@ -554,6 +599,37 @@ int main(int argc, char *argv[])
     chrono_total.Stop();
     t_total = chrono_total.RealTime();
 
+    //<--- Whole-field checksums of the final solution. The per-step table only
+    // reports the potential at a single probe point, which is too weak to catch a
+    // regression that leaves the probe untouched; these norms cover every dof and
+    // are what regression comparisons across backends/assembly levels should use.
+    {
+        real_t loc_l2 = 0.0, loc_l1 = 0.0, loc_min = infinity(), loc_max = -infinity();
+        const real_t *h_u = u.HostRead();
+        for (int i = 0; i < u.Size(); i++)
+        {
+            loc_l2 += h_u[i] * h_u[i];
+            loc_l1 += std::abs(h_u[i]);
+            loc_min = std::min(loc_min, h_u[i]);
+            loc_max = std::max(loc_max, h_u[i]);
+        }
+        real_t g_l2, g_l1, g_min, g_max;
+        MPI_Allreduce(&loc_l2, &g_l2, 1, MFEM_MPI_REAL_T, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&loc_l1, &g_l1, 1, MFEM_MPI_REAL_T, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&loc_min, &g_min, 1, MFEM_MPI_REAL_T, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&loc_max, &g_max, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
+
+        if (Mpi::Root())
+        {
+            out << std::scientific << std::setprecision(14)
+                << "\nFinal solution checksums (all dofs):"
+                << "\n  ||u||_2  = " << std::sqrt(g_l2)
+                << "\n  ||u||_1  = " << g_l1
+                << "\n  min(u)   = " << g_min
+                << "\n  max(u)   = " << g_max << std::endl;
+        }
+    }
+
     t_total_solution = t_diffusion + t_reaction;
     t_diffusion /= count;
     t_reaction /= count;
@@ -632,7 +708,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void conductivity_function(const Vector &x, DenseMatrix &Sigma)
+void conductivity_function(const Vector &x, DenseSymmetricMatrix &Sigma)
 {
     Sigma = 0.0;
     Sigma(0, 0) = ep_ctx.matrix_factor * ep_ctx.sigma;

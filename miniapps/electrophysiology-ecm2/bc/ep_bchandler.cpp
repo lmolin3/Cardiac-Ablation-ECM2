@@ -17,12 +17,8 @@ BCHandler::BCHandler(ParMesh *mesh, bool verbose)
     neumann_attr = 0;
     neumann_vec_attr.SetSize(max_bdr_attributes);
     neumann_vec_attr = 0;
-    robin_attr.SetSize(max_bdr_attributes);
-    robin_attr = 0;
     neumann_attr_tmp.SetSize(max_bdr_attributes);
     neumann_attr_tmp = 0;
-    robin_attr_tmp.SetSize(max_bdr_attributes);
-    robin_attr_tmp = 0;
 }
 
 /// Dirichlet BCS
@@ -40,7 +36,7 @@ void BCHandler::AddDirichletBC(Coefficient *coeff, Coefficient *coeff_dudt, Arra
     // Check for duplicate
     for (int i = 0; i < attr.Size(); ++i)
     {
-        MFEM_ASSERT((dirichlet_attr[i] && robin_attr[i] && neumann_attr[i] && neumann_vec_attr[i] && attr[i]) == 0,
+        MFEM_ASSERT((dirichlet_attr[i] && neumann_attr[i] && neumann_vec_attr[i] && attr[i]) == 0,
                     "Duplicate boundary definition detected.");
         if (attr[i] == 1)
         {
@@ -96,7 +92,7 @@ void BCHandler::AddNeumannBC(Coefficient *coeff, Array<int> &attr, bool own)
 
     for (int i = 0; i < attr.Size(); ++i)
     {
-        MFEM_ASSERT((dirichlet_attr[i] || robin_attr[i]  || neumann_attr[i] || neumann_vec_attr[i] && attr[i]) == 0,
+        MFEM_ASSERT((dirichlet_attr[i] || neumann_attr[i] || neumann_vec_attr[i] && attr[i]) == 0,
                     "Trying to enforce Neumann bc on dirichlet boundary.");
         if (attr[i] == 1)
         {
@@ -151,7 +147,7 @@ void BCHandler::AddNeumannVectorBC(VectorCoefficient *coeff, Array<int> &attr, b
 
     for (int i = 0; i < attr.Size(); ++i)
     {
-        MFEM_ASSERT((dirichlet_attr[i] || robin_attr[i]  || neumann_attr[i] || neumann_vec_attr[i] && attr[i]) == 0,
+        MFEM_ASSERT((dirichlet_attr[i] || neumann_attr[i] || neumann_vec_attr[i] && attr[i]) == 0,
                     "Trying to enforce Neumann bc on dirichlet boundary.");
         if (attr[i] == 1)
         {
@@ -193,55 +189,6 @@ void BCHandler::AddNeumannVectorBC(VecFuncT func, int &attr)
     AddNeumannVectorBC(new VectorFunctionCoefficient(pmesh->Dimension(), func), attr, true);
 }
 
-/// Robin BCS
-void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *U0_coeff, Array<int> &attr, bool own)
-{
-    // Check size of attributes provided
-    MFEM_ASSERT(attr.Size() == max_bdr_attributes,
-                "Size of attributes array does not match mesh attributes.");
-
-    // Append to the list of Robin BCs
-    robin_bcs.emplace_back(attr, h_coeff, U0_coeff, own);
-
-    for (int i = 0; i < attr.Size(); ++i)
-    {
-        MFEM_ASSERT((dirichlet_attr[i] || robin_attr[i]  || neumann_attr[i] || neumann_vec_attr[i] && attr[i]) == 0,
-                    "Trying to enforce Robin bc on dirichlet boundary.");
-        if (attr[i] == 1)
-        {
-            robin_attr[i] = 1;
-        }
-    }
-
-    if (verbose && pmesh->GetMyRank() == 0)
-    {
-        mfem::out << "Adding Robin BC to boundary attributes: ";
-        for (int i = 0; i < attr.Size(); ++i)
-        {
-            if (attr[i] == 1)
-            {
-                mfem::out << i + 1 << " ";
-            }
-        }
-        mfem::out << std::endl;
-    }
-}
-
-void BCHandler::AddRobinBC(ScalarFuncT *h_func, ScalarFuncT *U0_func, Array<int> &attr)
-{
-    AddRobinBC(new FunctionCoefficient(h_func), new FunctionCoefficient(U0_func), attr, true);
-}
-
-void BCHandler::AddRobinBC(Coefficient *h_coeff, Coefficient *U0_coeff, int &attr, bool own)
-{
-    // Create array for attributes and mark given mark given mesh boundary
-    robin_attr_tmp = 0;
-    robin_attr_tmp[attr - 1] = 1;
-
-    // Call AddDirichletBC accepting array of essential attributes
-    AddRobinBC(h_coeff, U0_coeff, robin_attr_tmp, own);
-}
-
 /// Update time dependent boundary conditions
 void BCHandler::UpdateTimeDirichletBCs(real_t new_time)
 {
@@ -267,20 +214,10 @@ void BCHandler::UpdateTimeNeumannVectorBCs(real_t new_time)
     }
 }
 
-void BCHandler::UpdateTimeRobinBCs(real_t new_time)
-{
-    for (auto &robin_bc : robin_bcs)
-    {
-        robin_bc.h_coeff->SetTime(new_time);
-        robin_bc.T0_coeff->SetTime(new_time);
-    }
-}
-
 void BCHandler::SetTime(real_t new_time)
 {
     time = new_time;
     UpdateTimeDirichletBCs(new_time);
     UpdateTimeNeumannBCs(new_time);
     UpdateTimeNeumannVectorBCs(new_time);
-    UpdateTimeRobinBCs(new_time);
 }

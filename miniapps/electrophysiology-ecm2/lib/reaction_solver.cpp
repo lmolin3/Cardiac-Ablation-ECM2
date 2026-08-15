@@ -1,8 +1,114 @@
 #include "reaction_solver.hpp"
+#include "../../../general/forall.hpp"
 #include <iostream>
 
 using namespace mfem;
 using namespace mfem::electrophysiology;
+
+namespace
+{
+
+// Select the integration scheme for kernel K. The branch is uniform across all
+// threads, so it costs nothing in terms of divergence; keeping it at runtime
+// avoids instantiating the kernel once per (model, scheme) pair.
+template <typename IonicModelKernel>
+MFEM_HOST_DEVICE inline void ApplyScheme(int scheme,
+                                         const real_t *__restrict s, real_t t, real_t dt,
+                                         const real_t *__restrict p, real_t *v)
+{
+    if (scheme == (int)TimeIntegrationScheme::EXPLICIT_EULER)
+    {
+        IonicModelKernel::explicit_euler(s, t, dt, p, v);
+    }
+    else if (scheme == (int)TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN)
+    {
+        IonicModelKernel::generalized_rush_larsen(s, t, dt, p, v);
+    }
+    else if (scheme == (int)TimeIntegrationScheme::FORWARD_EXPLICIT_EULER)
+    {
+        IonicModelKernel::forward_explicit_euler(s, t, dt, p, v);
+    }
+    else if (scheme == (int)TimeIntegrationScheme::FORWARD_GENERALIZED_RUSH_LARSEN)
+    {
+        IonicModelKernel::forward_generalized_rush_larsen(s, t, dt, p, v);
+    }
+}
+
+// One ODE substep for every dof: copy values -> states, override the stimulation
+// amplitude, then integrate states -> values.
+template <typename IonicModelKernel>
+void ReactionSubstep(int n, int scheme, real_t t, real_t dt, real_t vrange,
+                     const real_t *d_stim, const real_t *d_chi, const real_t *d_Cm,
+                     real_t *d_states, real_t *d_values, real_t *d_params)
+{
+   constexpr int NS = IonicModelKernel::nstates;
+   constexpr int NP = IonicModelKernel::nparams;
+
+   mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
+   {
+      real_t s[NS], v[NS], p[NP];
+
+      for (int k = 0; k < NS; k++) { s[k] = d_values[k * n + i]; v[k] = s[k]; }
+      for (int k = 0; k < NP; k++) { p[k] = d_params[k * n + i]; }
+
+      const real_t Jscaling = IonicModelKernel::dimensionless
+                              ? IonicModelKernel::stim_sign * (d_chi[i] * d_Cm[i] * vrange)
+                              : IonicModelKernel::stim_sign;
+      p[IonicModelKernel::stim_ampl_idx] = IonicModelKernel::dimensionless ? d_stim[i] / Jscaling : d_stim[i];
+
+      ApplyScheme<IonicModelKernel>(scheme, s, t, dt, p, v);
+
+      for (int k = 0; k < NS; k++)
+      {
+         d_states[k * n + i] = s[k];
+         d_values[k * n + i] = v[k];
+      }
+      d_params[IonicModelKernel::stim_ampl_idx * n + i] = p[IonicModelKernel::stim_ampl_idx];
+   });
+}
+
+// Temperature/damage dependent parameter update. gamma/eta/Q and the damaged time
+// constants are recomputed per dof before the substep loop. `d_damage` holds the
+// damage function f(D) already evaluated on host (it is a std::function, so it
+// cannot be called from device code).
+void UpdateThermalDamageParams(int n, int nparams,
+                               const real_t *d_temperature, const real_t *d_damage,
+                               bool have_temperature, bool have_damage,
+                               real_t A, real_t B, real_t Tref, real_t Q10,
+                               int eta_idx, int gamma_idx, int Q_idx,
+                               int ntau, const int *d_tau_idx,
+                               const real_t *d_healthy_tau, const real_t *d_delta_tau,
+                               real_t *d_params)
+{
+   mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
+   {
+      const real_t temperature = have_temperature ? d_temperature[i] : Tref;
+      const real_t damage = have_damage ? d_damage[i] : 0.0;
+
+      // Damage effect on ionic currents: gamma = (1 - f(D))
+      d_params[gamma_idx * n + i] = 1.0 - damage;
+
+      // Moore term: eta = A * (1 + B * (T - Tref))
+      const real_t dT = temperature - Tref;
+      d_params[eta_idx * n + i] = A * (1.0 + B * dT);
+
+      // Q10 power-law scaling of gating kinetics, tanh low-pass filtered above
+      // Tref + 10 K where the Q10 law stops being valid.
+      const real_t T_cut = Tref + 10.0;
+      const real_t deltaT_tanh = 2.0;
+      const real_t Q_pow = pow(Q10, dT / 10.0);
+      const real_t S2 = 0.5 * (1.0 - tanh((temperature - T_cut) / deltaT_tanh));
+      d_params[Q_idx * n + i] = Q_pow * S2 + 1.0 * (1.0 - S2);
+
+      // Time constants for damage only: tau_i = tau_healthy_i * (1 + delta_tau_i * G)
+      for (int k = 0; k < ntau; k++)
+      {
+         d_params[d_tau_idx[k] * n + i] = d_healthy_tau[k] * (1.0 + d_delta_tau[k] * damage);
+      }
+   });
+}
+
+} // anonymous namespace
 
 ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coeff_, Coefficient *Cm_coeff_, IonicModelType model_type_, TimeIntegrationScheme scheme_type, int ode_substeps_)
     : fes(fes_), fes_truevsize(fes_->GetTrueVSize()), model_type(model_type_), scheme(scheme_type), ode_substeps(ode_substeps_), chi_coeff(chi_coeff_), Cm_coeff(Cm_coeff_)
@@ -33,9 +139,11 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coe
 
     //<--- Setup grid functions and vectors for stimulation, chi, and Cm
     // Stimulation
-    stimulation_gf.SetSpace(fes); 
+    stimulation_gf.SetSpace(fes);
     stimulation_gf = 0.0;
     stimulation_gf.GetTrueDofs(stimulation_vec);
+    // These three are read by the reaction kernel every substep; keep them on device.
+    stimulation_vec.UseDevice(true);
 
     // Chi and Cm
     chi_gf.SetSpace(fes);
@@ -50,8 +158,10 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coe
     // Outside the step, because FOR NOW we assume they are time-independent (potentially heterogeneous)
     chi_gf.ProjectCoefficient(*chi_coeff);
     chi_gf.GetTrueDofs(chi_vec);
+    chi_vec.UseDevice(true);
     Cm_gf.ProjectCoefficient(*Cm_coeff);
     Cm_gf.GetTrueDofs(Cm_vec);
+    Cm_vec.UseDevice(true);
 
     //<--- Setup grid functions and vectors for states (except potential)
     int num_states = model->GetNumStates();
@@ -163,29 +273,25 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
     invVrange = 1.0 / Vrange;
 
     // Get number of states and parameters from the model
-    int num_states = model->GetNumStates();
-    int num_param = model->GetNumParameters();
+    const int num_states = model->GetNumStates();
+    const int num_param = model->GetNumParameters();
+    const int n = fes_truevsize;
 
-    // Pre-allocate all vectors at once
-    states.resize(fes_truevsize);
-    values.resize(fes_truevsize);
-    parameters.resize(fes_truevsize);
-    
-    // Pre-allocate inner vectors to avoid repeated allocations
-    for (int i = 0; i < fes_truevsize; i++)
-    {
-        states[i].resize(num_states);
-        values[i].resize(num_states);
-        parameters[i].resize(num_param);
-    }
+    // Pre-allocate the flat SoA arrays: entry k of dof i lives at [k*n + i].
+    // Read()/Write()/ReadWrite() would set the device flag on first use anyway, but
+    // setting it here means the initial allocation already has a device backing and
+    // any vector algebra on these takes the device path from the start.
+    states.SetSize(num_states * n);     states.UseDevice(true);
+    values.SetSize(num_states * n);     values.UseDevice(true);
+    parameters.SetSize(num_param * n);  parameters.UseDevice(true);
 
     // Get default values once to avoid repeated function calls
     std::vector<double> default_states(num_states);
     std::vector<double> default_params(num_param);
-    
+
     bool use_provided_states = !initial_states.empty() && initial_states.size() == num_states;
     bool use_provided_params = !params.empty() && params.size() == num_param;
-    
+
     if (!use_provided_states) {
         model->init_state_values(default_states.data());
     }
@@ -201,29 +307,28 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
         std::copy(params.begin(), params.end(), parameters_default.begin());
     }
 
-    // Initialize all DOFs with optimized loop
-    for (int i = 0; i < fes_truevsize; i++)
-    {
-        // Initialize states
-        if (use_provided_states)
-        {
-            std::copy(initial_states.begin(), initial_states.end(), states[i].begin());
-            std::copy(initial_states.begin(), initial_states.end(), values[i].begin());
-        }
-        else
-        {
-            std::copy(default_states.begin(), default_states.end(), states[i].begin());
-            std::copy(default_states.begin(), default_states.end(), values[i].begin());
-        }
+    // Every dof starts from the same states and parameters, so fill on host once
+    // (this is setup, not a hot path) and let the memory manager move it to device
+    // on first kernel launch.
+    const std::vector<double> &s0 = use_provided_states ? initial_states : default_states;
 
-        // Initialize parameters
-        if (use_provided_params)
+    real_t *h_states = states.HostWrite();
+    real_t *h_values = values.HostWrite();
+    real_t *h_params = parameters.HostWrite();
+
+    for (int k = 0; k < num_states; k++)
+    {
+        for (int i = 0; i < n; i++)
         {
-            std::copy(params.begin(), params.end(), parameters[i].begin());
+            h_states[k * n + i] = s0[k];
+            h_values[k * n + i] = s0[k];
         }
-        else
+    }
+    for (int k = 0; k < num_param; k++)
+    {
+        for (int i = 0; i < n; i++)
         {
-            std::copy(default_params.begin(), default_params.end(), parameters[i].begin());
+            h_params[k * n + i] = parameters_default[k];
         }
     }
 
@@ -239,27 +344,42 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
     }
 
     // Initialize stimulation vector once, outside the loop
-    if (!parameters.empty()) {
-        stimulation_vec = parameters[0][model->stim_ampl_idx];
-    }
+    stimulation_vec = parameters_default[model->stim_ampl_idx];
 }
 
 void ReactionSolver::GetPotential(Vector &u)
 {
-    u.SetSize(fes_truevsize);
-    for (int i = 0; i < fes_truevsize; i++)
+    const int n = fes_truevsize;
+    const int off = model->potential_idx * n;
+    const bool dimless = model->dimensionless;
+    const real_t vmin = Vmin, vrange = Vrange;
+
+    u.SetSize(n);
+    const real_t *d_states = states.Read();
+    real_t *d_u = u.Write();
+
+    mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
     {
-        u[i] = model->dimensionless ? FromDimensionless(states[i][model->potential_idx]) : states[i][model->potential_idx];
-    }
+        const real_t s = d_states[off + i];
+        d_u[i] = dimless ? (s * vrange + vmin) : s;
+    });
 }
 
 void ReactionSolver::SetPotential(const Vector &u)
 {
     MFEM_ASSERT(u.Size() == fes_truevsize, "Incompatible sizes in ReactionSolver::SetPotential");
-    for (int i = 0; i < fes_truevsize; i++)
+    const int n = fes_truevsize;
+    const int off = model->potential_idx * n;
+    const bool dimless = model->dimensionless;
+    const real_t vmin = Vmin, invvrange = invVrange;
+
+    const real_t *d_u = u.Read();
+    real_t *d_states = states.ReadWrite();
+
+    mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
     {
-        states[i][model->potential_idx] = model->dimensionless ? ToDimensionless(u[i]) : u[i];
-    }
+        d_states[off + i] = dimless ? fabs((d_u[i] - vmin) * invvrange) : d_u[i];
+    });
 }
 
 void ReactionSolver::GetDefaultStates(std::vector<double> &default_states)
@@ -276,9 +396,11 @@ void ReactionSolver::GetDefaultParameters(std::vector<double> &default_params)
     model->init_parameter_values(default_params.data());
 }
 
-void ReactionSolver::SetStimulation(Coefficient *stim)
+void ReactionSolver::SetStimulation(Coefficient *stim, bool time_independent)
 {
     stimulation_coeff = stim;
+    stim_time_independent = time_independent;
+    stim_projected = false;
 }
 
 
@@ -321,165 +443,186 @@ ParGridFunction *ReactionSolver::GetStateGridFunction(int state_index)
     return states_gfs[adjusted_index];
 }
 
+// Project the stimulation coefficient onto the t-dof vector for time `t_stim`,
+// unless one of the opt-in strategies says it can be skipped.
+//
+// This is the single most expensive operation in the reaction step: it is a *host*
+// sweep over every dof (~225 ns/dof, i.e. ~48 ms for 216k dofs) and, under a device
+// backend, a synchronisation point too. Done naively it outweighs the actual ODE
+// integration by roughly three orders of magnitude. See "Enforcing the stimulation
+// efficiently" in reaction_solver.hpp for which strategy applies when.
+void ReactionSolver::ProjectStimulation(real_t t_stim)
+{
+    if (!stimulation_coeff) { return; }
+
+    // A time-independent coefficient only has to be projected once; a time
+    // dependent one only while it can be nonzero, if a window was declared.
+    const bool needs_projection =
+        stim_time_independent
+        ? !stim_projected
+        : (!has_stim_window ||
+           (t_stim >= stim_window_begin && t_stim <= stim_window_end));
+
+    if (needs_projection)
+    {
+        stimulation_coeff->SetTime(t_stim);
+        stimulation_gf.ProjectCoefficient(*stimulation_coeff);
+        stimulation_gf.GetTrueDofs(stimulation_vec);
+        stim_projected = true;
+        stim_vec_is_zero = false;
+    }
+    else if (!stim_time_independent && !stim_vec_is_zero)
+    {
+        // Outside the declared window the caller guarantees the stimulus is zero;
+        // zero the vector once and then leave it alone.
+        stimulation_vec = 0.0;
+        stim_vec_is_zero = true;
+    }
+}
+
 void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
 {
     // Inner loop time step
-    double dt_ode = dt / ode_substeps;
-    double current_time = t;
+    const real_t dt_ode = dt / ode_substeps;
+    real_t current_time = t;
 
     // Cache frequently used values OUTSIDE the substep loop
-    int num_states = model->GetNumStates();
+    const int n = fes_truevsize;
+    const bool use_dimensionless = model->dimensionless;
+    const int potential_idx = model->potential_idx;
+    const int pot_off = potential_idx * n;
 
-    bool use_dimensionless = model->dimensionless;
-    int potential_idx = model->potential_idx;
-    int stim_ampl_idx = model->stim_ampl_idx;
-
-    // If has temperature/damage dependency, get the temperature and damage vectors
-    if (temperature_gf)
+    //<--- Seed the potential entry of `values` from the incoming vector x
     {
-        temperature_gf->GetTrueDofs(temperature_vec);
-    }
-    if (damage_gf)
-    {
-        damage_gf->GetTrueDofs(damage_vec);
-    }
-
-    // Initialize values of x (potential) from the input vector, and update temperature/damage dependent parameters if needed
-    for (int i = 0; i < fes_truevsize; i++)
-    {
-
-        values[i][potential_idx] = use_dimensionless ? ToDimensionless(x[i]) : x[i];
-
-        // Temperature and damage dependency update
-        if (has_td_dependency)
+        const real_t vmin = Vmin, invvrange = invVrange;
+        const real_t *d_x = x.Read();
+        real_t *d_values = values.ReadWrite();
+        mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
         {
-            auto td_model = dynamic_cast<GotranxODEModelWithThermalDamage*>(model.get());
+            d_values[pot_off + i] = use_dimensionless
+                                    ? fabs((d_x[i] - vmin) * invvrange)
+                                    : d_x[i];
+        });
+    }
 
-            real_t temperature = temperature_vec.Size() > 0 ? temperature_vec[i] : td_Tref; // Default to 37C if not provided
-            real_t damage = damage_vec.Size() > 0 ? td_damage_func(damage_vec[i]) : 0.0;   // Default to no damage if not provided
+    //<--- Temperature/damage dependent parameter update (once per step)
+    if (has_td_dependency)
+    {
+        auto *td_model = dynamic_cast<GotranxODEModelWithThermalDamage *>(model.get());
 
-            // Damage effect on ionic currents: gamma = (1 - f(D))
-            parameters[i][td_model->gamma_idx] = (1.0 - damage);
-
-            // Moore term: eta = A * (1 + B * (T - Tref)), but clamp for partially damaged cells
-            real_t dT = temperature - td_Tref;
-            real_t eta = td_A * (1.0 + td_B * dT);
-            parameters[i][td_model->eta_idx] = eta;
-
-            // Q10 power-law scaling of gating kinetics: Q = Q10^(dT/10), but clamp for boundary
-            // Raised cosine low-pass filter for Q10 scaling (S2) above T_ref+10 K
-            // Tanh-based low-pass filter for Q10 scaling (S2) above T_ref+10 K
-            // Previous sharp sigmoid drop-off for Q10 (for reference):
-            // real_t T_border = 320.15; // K (47 °C)
-            // real_t deltaT_sharp = 0.5; // K, sharpness of transition
-            // real_t S = 1.0 / (1.0 + std::exp(-(temperature - T_border) / deltaT_sharp));
-            // Q10 scaling suppressed only above T_border
-            real_t T_cut = td_Tref + 10.0; // K, upper validity limit for Q10
-            real_t deltaT_tanh = 2.0; // K, width of transition
-            real_t Q_pow = std::pow(td_Q10, dT / 10.0);
-            real_t S2 = 0.5 * (1.0 - std::tanh((temperature - T_cut) / deltaT_tanh));
-            // S2 transitions from 1 (Q10 scaling) to 0 (no Q10 effect), so Q transitions from Q_pow to 1
-            real_t Q = Q_pow * S2 + 1.0 * (1.0 - S2);
-            parameters[i][td_model->Q_idx] = Q;
-
-            // Update time constants for damage only: tau_i = tau_healthy_i * (1 + delta_tau_i * G)
-            auto time_constants_idxs = td_model->GetTimeConstantsIdxs();
-            for (size_t idx = 0; idx < time_constants_idxs.size(); idx++)
+        if (!td_device_data_ready)
+        {
+            auto idxs = td_model->GetTimeConstantsIdxs();
+            const int ntau = static_cast<int>(idxs.size());
+            td_tau_idx_d.SetSize(ntau);
+            td_healthy_tau_d.SetSize(ntau);
+            td_delta_tau_d.SetSize(ntau);
+            for (int k = 0; k < ntau; k++)
             {
-                int param_idx = time_constants_idxs[idx];
-                parameters[i][param_idx] = td_healthy_tau[idx]
-                                         * (1.0 + td_delta_tau[idx] * damage);
+                td_tau_idx_d[k] = idxs[k];
+                td_healthy_tau_d[k] = td_healthy_tau[k];
+                td_delta_tau_d[k] = td_delta_tau[k];
             }
-        }
-    }
-    // Pre-compute stimulation scaling factor
-    auto stimulation_data = stimulation_vec.GetData();
-
-    for (int i = 0; i < ode_substeps; i++) // Loop for ODE solver inner time stepping
-    {
-        // Project stimulation current once per substep
-        if (stimulation_coeff)
-        {
-            stimulation_coeff->SetTime(current_time + dt_ode);
-            stimulation_gf.ProjectCoefficient(*stimulation_coeff);
-            stimulation_gf.GetTrueDofs(stimulation_vec);
-            stimulation_data = stimulation_vec.GetData(); // Update pointer after projection
+            td_device_data_ready = true;
         }
 
-        // Main computational loop - optimize memory access patterns
-        for (int j = 0; j < fes_truevsize; j++)
+        if (temperature_gf) { temperature_gf->GetTrueDofs(temperature_vec); }
+
+        // Apply the (host-only) damage function before entering the kernel.
+        if (damage_gf)
         {
-            // Compute Jscaling based on chi and Cm
-            double Jscaling = model->dimensionless ? model->stim_sign * (chi_vec[j] * Cm_vec[j] * Vrange) : model->stim_sign;
-
-            // Copy states efficiently - avoid std::copy overhead for small vectors
-            double *state_ptr = states[j].data();
-            double *value_ptr = values[j].data();
-
-            // Manual unrolled copy for small num_states (typically 2-4 for states cardiac models)
-            if (num_states <= 4)
-            {
-                for (int k = 0; k < num_states; k++)
-                {
-                    state_ptr[k] = value_ptr[k];
-                }
-            }
-            else
-            {
-                std::memcpy(state_ptr, value_ptr, num_states * sizeof(double));
-            }
-
-            // Update stimulation current in parameters
-            parameters[j][stim_ampl_idx] = use_dimensionless ? stimulation_data[j] / Jscaling : stimulation_data[j];
-
-            // Call the appropriate time integration scheme
-            switch (scheme)
-            {
-            case TimeIntegrationScheme::EXPLICIT_EULER:
-                model->explicit_euler(state_ptr, current_time, dt_ode,
-                                      parameters[j].data(), value_ptr);
-                break;
-            case TimeIntegrationScheme::FORWARD_EXPLICIT_EULER:
-                model->forward_explicit_euler(state_ptr, current_time, dt_ode,
-                                              parameters[j].data(), value_ptr);
-                break;
-            case TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN:
-                model->generalized_rush_larsen(state_ptr, current_time, dt_ode,
-                                               parameters[j].data(), value_ptr);
-                break;
-            case TimeIntegrationScheme::FORWARD_GENERALIZED_RUSH_LARSEN:
-                model->forward_generalized_rush_larsen(state_ptr, current_time, dt_ode,
-                                                       parameters[j].data(), value_ptr);
-                break;
-            case TimeIntegrationScheme::HYBRID_RUSH_LARSEN:
-                model->hybrid_rush_larsen(state_ptr, current_time, dt_ode,
-                                          parameters[j].data(), value_ptr);
-                break;
-            default:
-                break;
-            }
+            damage_gf->GetTrueDofs(damage_vec);
+            damage_transformed.SetSize(damage_vec.Size());
+            const real_t *h_d = damage_vec.HostRead();
+            real_t *h_dt = damage_transformed.HostWrite();
+            for (int i = 0; i < damage_vec.Size(); i++) { h_dt[i] = td_damage_func(h_d[i]); }
         }
+
+        const bool have_T = temperature_vec.Size() > 0;
+        const bool have_D = damage_gf && damage_transformed.Size() > 0;
+
+        UpdateThermalDamageParams(
+            n, model->GetNumParameters(),
+            have_T ? temperature_vec.Read() : nullptr,
+            have_D ? damage_transformed.Read() : nullptr,
+            have_T, have_D,
+            td_A, td_B, td_Tref, td_Q10,
+            td_model->eta_idx, td_model->gamma_idx, td_model->Q_idx,
+            td_tau_idx_d.Size(), td_tau_idx_d.Read(),
+            td_healthy_tau_d.Read(), td_delta_tau_d.Read(),
+            parameters.ReadWrite());
+    }
+
+    //<--- Stimulation: by default the coefficient is sampled once for the whole
+    // outer time step, at its end (t + dt). With ode_substeps == 1 that is exactly
+    // the same evaluation the substep loop would do, so the default costs nothing in
+    // accuracy; with ode_substeps == N it divides the projection cost by N.
+    if (!substep_stim_projection)
+    {
+        ProjectStimulation(t + dt);
+    }
+
+    //<--- Substep loop: integrate the pointwise ODEs on device
+    for (int sub = 0; sub < ode_substeps; sub++)
+    {
+        // Re-sample the stimulation at every substep, if the caller asked for it.
+        if (substep_stim_projection)
+        {
+            ProjectStimulation(current_time + dt_ode);
+        }
+
+        const real_t *d_stim = stimulation_vec.Read();
+        const real_t *d_chi = chi_vec.Read();
+        const real_t *d_Cm = Cm_vec.Read();
+        real_t *d_states = states.ReadWrite();
+        real_t *d_values = values.ReadWrite();
+        real_t *d_params = parameters.ReadWrite();
+
+        switch (model_type)
+        {
+        case IonicModelType::MITCHELL_SCHAEFFER:
+            ReactionSubstep<MitchellSchaeffer::Kernel>(
+                n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_states, d_values, d_params);
+            break;
+        case IonicModelType::FENTON_KARMA:
+            ReactionSubstep<FentonKarma::Kernel>(
+                n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_states, d_values, d_params);
+            break;
+        case IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT:
+            ReactionSubstep<MitchellSchaefferTD::Kernel>(
+                n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_states, d_values, d_params);
+            break;
+        default:
+            mfem_error("Unsupported ionic model type in ReactionSolver::Step");
+        }
+
         current_time += dt_ode;
     }
 
-    // Optimized final update loop - Combined loop for better cache locality
-    for (int i = 0; i < fes_truevsize; i++)
+    //<--- Write the potential back into x, clamped to the physical range
     {
-        // Update potential
-        x[i] = use_dimensionless ? FromDimensionless(values[i][potential_idx]) : values[i][potential_idx];
-        x[i] = std::clamp(x[i], Vmin, Vmax);
-
-        // Update fields in the same loop
-        for (size_t k = 0; k < states_vectors.size(); k++)
+        const real_t vmin = Vmin, vmax = Vmax, vrange = Vrange;
+        const real_t *d_values = values.Read();
+        real_t *d_x = x.Write();
+        mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
         {
-            int state_idx = (k >= static_cast<size_t>(potential_idx)) ? k + 1 : k;
-            (*states_vectors[k])[i] = values[i][state_idx];
-        }
+            real_t val = d_values[pot_off + i];
+            if (use_dimensionless) { val = val * vrange + vmin; }
+            d_x[i] = fmin(fmax(val, vmin), vmax);
+        });
     }
 
-    // Update all states ParGridFunctions from their vectors
-    for (size_t k = 0; k < states_gfs.size(); k++)
+    //<--- Scatter the non-potential states into their own vectors / grid functions
+    for (size_t k = 0; k < states_vectors.size(); k++)
     {
+        const int state_idx = (k >= static_cast<size_t>(potential_idx)) ? (int)k + 1 : (int)k;
+        const int off = state_idx * n;
+        const real_t *d_values = values.Read();
+        real_t *d_sv = states_vectors[k]->Write();
+        mfem::forall(n, [=] MFEM_HOST_DEVICE (int i) { d_sv[i] = d_values[off + i]; });
         states_gfs[k]->SetFromTrueDofs(*states_vectors[k]);
     }
 
@@ -509,37 +652,39 @@ void ReactionSolver::Update()
         states_gfs[k]->GetTrueDofs(*states_vectors[k]);
     }
 
-    // Resize internal data structures
-    states.resize(fes_truevsize);
-    values.resize(fes_truevsize);
-    parameters.resize(fes_truevsize);
-
     // Cache model properties
-    int num_states = model->GetNumStates();
-    int num_param = model->GetNumParameters();
-    int potential_idx = model->potential_idx;
+    const int num_states = model->GetNumStates();
+    const int num_param = model->GetNumParameters();
+    const int potential_idx = model->potential_idx;
+    const int n = fes_truevsize;
 
-    // Initialize inner vectors only for NEW elements (when mesh was refined)
-    for (int i = old_size; i < fes_truevsize; i++)
+    // Resize internal data structures. The SoA stride changes with the dof count,
+    // so the arrays are rebuilt rather than resized in place; the states are
+    // restored below from states_vectors, which were just interpolated onto the
+    // new mesh, and the parameters are reset to their defaults.
+    states.SetSize(num_states * n);     states.UseDevice(true);
+    values.SetSize(num_states * n);     values.UseDevice(true);
+    parameters.SetSize(num_param * n);  parameters.UseDevice(true);
+
+    real_t *h_params = parameters.HostWrite();
+    for (int k = 0; k < num_param; k++)
     {
-        states[i].resize(num_states);
-        values[i].resize(num_states);
-        parameters[i].resize(num_param);
-        
-        // Initialize parameters for new DOFs immediately
-        std::copy(parameters_default.begin(), parameters_default.end(), parameters[i].begin());
+        for (int i = 0; i < n; i++) { h_params[k * n + i] = parameters_default[k]; }
     }
 
-    // Update all DOFs from states_vectors - optimized loop order for cache locality
-    for (int i = 0; i < fes_truevsize; i++)
+    // Restore all non-potential states from states_vectors
+    for (size_t k = 0; k < states_vectors.size(); k++)
     {
-        for (size_t k = 0; k < states_vectors.size(); k++)
+        const int state_idx = (k >= static_cast<size_t>(potential_idx)) ? (int)k + 1 : (int)k;
+        const int off = state_idx * n;
+        const real_t *d_sv = states_vectors[k]->Read();
+        real_t *d_states = states.ReadWrite();
+        real_t *d_values = values.ReadWrite();
+        mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
         {
-            int state_idx = (k >= static_cast<size_t>(potential_idx)) ? k + 1 : k;
-            double value = (*states_vectors[k])[i];
-            states[i][state_idx] = value;
-            values[i][state_idx] = value;
-        }
+            d_states[off + i] = d_sv[i];
+            d_values[off + i] = d_sv[i];
+        });
     }
 }
 

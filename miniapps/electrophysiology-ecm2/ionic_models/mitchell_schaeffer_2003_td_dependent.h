@@ -184,8 +184,29 @@ namespace mfem
                 states[0] = 0.8789655121804799;
                 states[1] = 8.20413566106744e-06;
             }
+            /**
+             * @brief Device-callable kernel for this model.
+             *
+             * Holds the model math as MFEM_HOST_DEVICE *static* functions and the
+             * model metadata as compile-time constants, so that ReactionSolver can
+             * instantiate an mfem::forall kernel over it with no virtual dispatch.
+             * The virtual methods of the enclosing class forward here, so the math
+             * has a single source of truth.
+             */
+            struct Kernel : IonicKernelDefaults
+            {
+                static constexpr int nstates = 2;
+                static constexpr int nparams = 13;
+                static constexpr int nmonitored = 5;
 
-            void rhs(const double t, const double *__restrict states, const double *__restrict parameters, double *values)
+                static constexpr int potential_idx = 1;
+                static constexpr int stim_ampl_idx = 0;
+
+                static constexpr bool dimensionless = true;
+                static constexpr real_t stim_sign = 1.0;
+
+
+            MFEM_HOST_DEVICE static void rhs(const double t, const double *__restrict states, const double *__restrict parameters, double *values)
             {
 
                 // Assign states
@@ -222,7 +243,7 @@ namespace mfem
                 values[1] = dVm_dt;
             }
 
-            void monitor_values(const double t, const double *__restrict states, const double *__restrict parameters,
+            MFEM_HOST_DEVICE static void monitor_values(const double t, const double *__restrict states, const double *__restrict parameters,
                                 double *values)
             {
 
@@ -263,7 +284,7 @@ namespace mfem
                 values[4] = dVm_dt;
             }
 
-            void explicit_euler(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void explicit_euler(const double *__restrict states, const double t, const double dt,
                                 const double *__restrict parameters, double *values)
             {
 
@@ -301,7 +322,7 @@ namespace mfem
                 values[1] = Vm + dVm_dt * dt;
             }
 
-            void generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
                                          const double *__restrict parameters, double *values)
             {
 
@@ -341,7 +362,7 @@ namespace mfem
                 values[1] = Vm + dVm_dt * dt;
             }
 
-            void forward_explicit_euler(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void forward_explicit_euler(const double *__restrict states, const double t, const double dt,
                                         const double *__restrict parameters, double *values)
             {
 
@@ -379,7 +400,7 @@ namespace mfem
                 values[1] = Vm + dVm_dt * dt;
             }
 
-            void forward_generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
+            MFEM_HOST_DEVICE static void forward_generalized_rush_larsen(const double *__restrict states, const double t, const double dt,
                                                  const double *__restrict parameters, double *values)
             {
 
@@ -418,6 +439,8 @@ namespace mfem
                 const double dVm_dt = J_stim_J_stim + (eta * gamma) * (J_in_J_in + J_out_J_out);
                 values[1] = Vm + dVm_dt * dt;
             }
+            }; // struct Kernel
+
         };
 
     } // namespace electrophysiology

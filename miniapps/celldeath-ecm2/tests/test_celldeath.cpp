@@ -183,13 +183,13 @@ int main(int argc, char *argv[])
    {
       paraview_dc.SetPrefixPath(outfolder);
       paraview_dc.SetDataFormat(VTKFormat::BINARY);
-      paraview_dc.SetCompressionLevel(9);
+    paraview_dc.SetCompressionLevel(1);
       solver.RegisterParaviewFields(paraview_dc);
       solver.AddParaviewField("Temperature", T_gf);
 
       paraview_dc_gotran.SetPrefixPath(outfolder);
       paraview_dc_gotran.SetDataFormat(VTKFormat::BINARY);
-      paraview_dc_gotran.SetCompressionLevel(9);
+      paraview_dc_gotran.SetCompressionLevel(1);
       solver_gotran.RegisterParaviewFields(paraview_dc_gotran);
       solver_gotran.AddParaviewField("Temperature", T_gf);
    }

@@ -24,7 +24,7 @@
 // where:
 // - M is the mass matrix, scaled by chi * Cm.
 // - K is the stiffness matrix, defined as K = ∇•(sigma∇).
-// - f is the right-hand side, representing including Neumann and Robin boundary conditions.
+// - f is the right-hand side, representing Neumann boundary conditions.
 //
 
 #pragma once
@@ -68,7 +68,6 @@ namespace mfem
        * @note: this needs to be called before Setup()
        * Rebuild of the implicit solver is required under the following conditions:
        * - The parameters are time-dependent (chi, Cm, sigma)
-       * - It has time-dependent Robin BCs
        *
        * The rhs is assembled at every time step anyway, so Neumann and Dirichlet BCs are not a problem.
        * The implicit solver T is automatically reassembled, regardless of this flag if:
@@ -78,9 +77,16 @@ namespace mfem
 
       /** Set up the MonodomainDiffusionSolver.
        * This involves adding all the necessary integrators to the linear form for
-       * the rhs (neumann, robin contribution)
+       * the rhs (neumann contribution)
        */
-      virtual void Setup( real_t dt = 0.0, int prec_type = 1);
+      /** @param prec_type Preconditioner for the PA implicit solve:
+       *    0 - Jacobi (default), 1 - LOR + BoomerAMG.
+       *
+       * Jacobi is the default because the monodomain implicit operator
+       * T = chi*Cm*M + dt*sigma*K is strongly mass dominated: with cardiac values
+       * chi*Cm ~ 1.4 while dt*sigma ~ 1e-4, so T is close to a (well conditioned)
+       * mass matrix. */
+      virtual void Setup( real_t dt = 0.0, int prec_type = 0);
 
       /** Update the MonodomainDiffusionSolver in case of changes in Mesh or FiniteElementSpace */
       void Update();
@@ -89,6 +95,20 @@ namespace mfem
           If provisional is true, the time step is not counted (used for
           predictor-corrector methods). */
       void Step(Vector &x, real_t &t, real_t &dt, bool provisional = false);
+
+      /** @brief Memory space this operator wants its input/output vectors in.
+       *
+       * Operator::GetMemoryClass() defaults to MemoryClass::HOST. ODESolver sizes
+       * its work vectors with GetMemoryType(f.GetMemoryClass()), so without this
+       * override the time integrator's work vectors (e.g. BackwardEulerSolver::k)
+       * are allocated in host memory even under a device backend, and every step
+       * pays to migrate them. Reporting the device memory class keeps them
+       * resident where the PA operators and the CG solver actually work.
+       *
+       * Device::GetDeviceMemoryClass() is MemoryClass::HOST unless a device
+       * backend was configured, so this is a no-op for CPU runs. */
+      MemoryClass GetMemoryClass() const override
+      { return Device::GetDeviceMemoryClass(); }
 
       /** Compute action of the MonodomainDiffusionSolver: du_dt = M^{-1}*(-K(u)). */
       virtual void Mult(const Vector &u, Vector &du_dt) const;
@@ -138,7 +158,6 @@ namespace mfem
       std::unique_ptr<ParLinearForm> fform;
       std::unique_ptr<ParBilinearForm> M_form;
       std::unique_ptr<ParBilinearForm> K_form;
-      std::unique_ptr<ParBilinearForm> RobinMass_form;
 
       // ParGridFunctions
       mutable ParGridFunction u_gf;      // Current solution
@@ -151,11 +170,14 @@ namespace mfem
       OperatorHandle opM;
       OperatorHandle opMe;
       OperatorHandle opK;
-      OperatorHandle opRobinMass; // Mass matrix with Robin BCs
       HypreParMatrix *Mfull = nullptr;
 
       real_t cached_dt = 0.0;
       int current_step = 0;
+
+      // Preconditioner type for the PA implicit solver (0: Jacobi, 1: LOR+AMG).
+      // Stored from Setup() so that BuildImplicitSolver() can honor it.
+      int prec_type = 0;
 
       // ODESolver
       std::unique_ptr<ODESolver> ode_solver;

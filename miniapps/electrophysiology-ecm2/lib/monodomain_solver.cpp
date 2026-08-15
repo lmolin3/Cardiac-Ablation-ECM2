@@ -42,8 +42,11 @@ MonodomainDiffusionSolver::MonodomainDiffusionSolver(ParFiniteElementSpace *fes_
    du_dt_gf = 0.0;
 
    //<--- Vectors
-   z.SetSize(fes_truevsize); z = 0.0;
-   b.SetSize(fes_truevsize); b = 0.0;
+   // Mark them as device vectors up front: these are only ever consumed by the PA
+   // operators and the CG solver, and without the flag the first vector algebra on
+   // them (z.Neg(), z.Add(), ...) would take the host path and force a migration.
+   z.SetSize(fes_truevsize); z.UseDevice(true); z = 0.0;
+   b.SetSize(fes_truevsize); b.UseDevice(true); b = 0.0;
 
    //<--- Initialize the ODEStateDataVector for previous solution
    //auto mem_type = GetMemoryType(this->GetMemoryClass());
@@ -73,20 +76,25 @@ MonodomainDiffusionSolver::~MonodomainDiffusionSolver()
 // ----- Setup API -----
 ////////////////////////////////////////////////////////////////////////////
 
-void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type)
+void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type_)
 {
    cached_dt = dt;
+   prec_type = prec_type_;
 
    ///<--- Check partial assembly
    bool tensor = UsesTensorBasis(*fes);
    MFEM_VERIFY(!(pa && !tensor), "Partial assembly is only supported for tensor elements.");
 
+   // NOTE: "full assembly" here means "assemble a matrix" (the -fa driver flag), as
+   // opposed to matrix-free partial assembly. That is a different axis from MFEM's
+   // AssemblyLevel::FULL vs ::LEGACY, which selects *how* that matrix is built and
+   // is decided below.
    if (pmesh->GetMyRank() == 0 && verbose)
    {
       if (pa)
-         out << "Using Partial Assembly. " << std::endl;
+         out << "Using Partial Assembly (matrix-free). " << std::endl;
       else
-         out << "Using Full Assembly. " << std::endl;
+         out << "Using assembled matrix. " << std::endl;
    }
 
    ///<--- Extract the list of essential BC degrees of freedom
@@ -102,18 +110,68 @@ void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type)
    // Diffusion matrix
    K_form = std::make_unique<ParBilinearForm>(fes);
    K_form->AddDomainIntegrator(new DiffusionIntegrator(*sigma_coeff));
-   // Robin mass
-   RobinMass_form = std::make_unique<ParBilinearForm>(fes);
-   for (auto &robin_bc : bcs->GetRobinBcs())
-   {
-      RobinMass_form->AddBoundaryIntegrator(new MassIntegrator(*robin_bc.h_coeff), robin_bc.attr);
-   }
    // Finalize (based on assembly level)
    if (pa)
    {
       M_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
       K_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
-      RobinMass_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
+   }
+   else
+   {
+      // Non-PA path: choose between LEGACY (host) and FULL (device) assembly.
+      //
+      // FULL builds the same sparse matrix but fills it with device kernels via the
+      // EA path, which is ~4x faster than LEGACY on GPU (measured 4.79 s -> 1.14 s
+      // for 216k dofs) and *slower* on CPU, hence the device-backend condition.
+      //
+      // The symmetry condition is a correctness guard, not an optimisation.
+      // DiffusionIntegrator::AssemblePA() sets `symmetric = (coeff_dim != dim*dim)`,
+      // so a general MatrixCoefficient stores dim*dim entries per quadrature point
+      // (bilininteg_diffusion_pa.cpp:136-137), while the EA kernels unconditionally
+      // reshape pa_data as the symmetric dim*(dim+1)/2 layout -- the string
+      // "symmetric" does not occur anywhere in bilininteg_diffusion_ea.cpp. With a
+      // non-symmetric-typed coefficient the element matrices are built from misread
+      // data, with no assert and no warning: measured ||u||_2 = 8.487e+03 against a
+      // correct 1.259e+04, a ~33% error. So we only opt in when sigma is declared as
+      // a SymmetricMatrixCoefficient, and fall back to LEGACY otherwise.
+      //
+      // This is not a restriction in practice: a conductivity tensor is symmetric by
+      // Onsager reciprocity, and fiber-based orthotropy
+      //     sigma = s_f (f x f) + s_s (s x s) + s_n (n x n)
+      // is a sum of symmetric rank-one terms, hence symmetric. It must also be SPD
+      // for the CG solvers used here to be valid at all.
+      // The tensor condition is a second correctness guard. The EA kernels go
+      // through FiniteElement::GetDofToQuad(ir, DofToQuad::FULL), which only
+      // tensor-product bases implement; on simplices the base-class version
+      // aborts with "invalid mode requested" (fem/fe/fe_base.cpp:379).
+      const bool on_device = Device::Allows(Backend::DEVICE_MASK);
+      const bool sym_sigma =
+         dynamic_cast<SymmetricMatrixCoefficient *>(sigma_coeff) != nullptr;
+
+      if (on_device && sym_sigma && tensor)
+      {
+         M_form->SetAssemblyLevel(AssemblyLevel::FULL);
+         K_form->SetAssemblyLevel(AssemblyLevel::FULL);
+         if (pmesh->GetMyRank() == 0 && verbose)
+         {
+            out << "Using Full Assembly (device kernels). " << std::endl;
+         }
+      }
+      else if (on_device && pmesh->GetMyRank() == 0 && verbose)
+      {
+         out << "Using Legacy Assembly (host): device-side full assembly needs ";
+         if (!tensor)
+         {
+            out << "tensor-product\n  elements (quad/hex); the element-assembly "
+                << "kernels have no simplex path." << std::endl;
+         }
+         else
+         {
+            out << "the conductivity\n  declared as a SymmetricMatrixCoefficient, "
+                << "because DiffusionIntegrator's\n  element-assembly kernels assume "
+                << "the symmetric quadrature-data layout." << std::endl;
+         }
+      }
    }
 
    // Assemble
@@ -151,12 +209,6 @@ void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type)
       fform->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(neumann_bc.coeff)), neumann_bc.attr);
    }
 
-   // Adding robin bcs
-   for (auto &robin_bc : bcs->GetRobinBcs())
-   {
-      fform->AddBoundaryIntegrator(new BoundaryLFIntegrator(*(robin_bc.hT0_coeff)), robin_bc.attr);
-   }
-
    //<--- Setup ODE solver
    ode_solver->Init(*this);
 
@@ -178,11 +230,6 @@ void MonodomainDiffusionSolver::Update()
    M_form->Update();
    K_form->Update();
 
-   if (bcs->GetRobinBcs().size() > 0)
-   {
-      RobinMass_form->Update(); 
-   }
-
    //<--- Update the linear form for the rhs (assembly will be done on next time step)
    fform->Update();
 
@@ -190,8 +237,8 @@ void MonodomainDiffusionSolver::Update()
    fes_truevsize = fes->GetTrueVSize();
    this->height = fes_truevsize;
    this->width = fes_truevsize;
-   z.SetSize(fes_truevsize); 
-   b.SetSize(fes_truevsize);
+   z.SetSize(fes_truevsize); z.UseDevice(true);
+   b.SetSize(fes_truevsize); b.UseDevice(true);
 
    //<--- Update the ODE solver
    ode_solver->Init(*this);
@@ -235,11 +282,11 @@ void MonodomainDiffusionSolver::BuildImplicitSolver()
 
    if (pa)
    {
-      T_solver = std::make_unique<ImplicitSolverPA>(fes, cached_dt, bcs, ess_tdof_list, sigma_coeff, chi_Cm_coeff.get());
+      T_solver = std::make_unique<ImplicitSolverPA>(fes, cached_dt, bcs, ess_tdof_list, sigma_coeff, chi_Cm_coeff.get(), prec_type);
    }
    else
    {
-      T_solver = std::make_unique<ImplicitSolverFA>(ess_tdof_list, pmesh->Dimension(), cached_dt, Mfull, opK.As<HypreParMatrix>(), opRobinMass.As<HypreParMatrix>());
+      T_solver = std::make_unique<ImplicitSolverFA>(ess_tdof_list, pmesh->Dimension(), cached_dt, Mfull, opK.As<HypreParMatrix>(), prec_type);
    }
 }
 
@@ -295,11 +342,6 @@ void MonodomainDiffusionSolver::Mult(const Vector &u, Vector &du_dt) const
    z.Neg();         // z = -K(u)
    z.Add(1.0, b);  // z = -K(u) + f
 
-   if (bcs->GetRobinBcs().size() > 0)
-   {
-      opRobinMass->AddMult(u, z, -1.0);
-   }
-
    //<--- Apply bcs
    du_dt_gf = 0.0;
    for (auto &ess_bc : bcs->GetDirichletDbcs())   
@@ -348,11 +390,6 @@ void MonodomainDiffusionSolver::ImplicitSolve(const real_t dt, const Vector &u,
    opK->Mult(u, z); // z = K_form(u)
    z.Neg();         // z = -K_form(u)
    z.Add(1.0, b);  // z = -K_form(u) + f
-
-   if (bcs->GetRobinBcs().size() > 0) // Mass matrix for Robin bc
-   {
-      opRobinMass->AddMult(u, z, -1.0);
-   }
 
    //<--- Apply bcs
    du_dt_gf = 0.0;
@@ -436,14 +473,6 @@ inline void MonodomainDiffusionSolver::AssembleOperators()
    K_form->Update();
    K_form->Assemble(skip_zeros);
    K_form->FormSystemMatrix(empty, opK);
-
-   // Assemble matrix for robin bcs
-   if (bcs->GetRobinBcs().size() > 0)
-   {
-      RobinMass_form->Update();
-      RobinMass_form->Assemble(skip_zeros);
-      RobinMass_form->FormSystemMatrix(empty, opRobinMass);
-   }
 
    // Delete the implicit solver
    T_solver.reset();
