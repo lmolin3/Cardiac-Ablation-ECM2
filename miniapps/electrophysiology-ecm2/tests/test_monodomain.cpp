@@ -15,27 +15,56 @@
 // 3D example:
 //   mpirun -np 8 ./test_monodomain -d 3 -o 2 -rs 1 -sf 1 -of ./Output/
 //
+// GPU (single rank, one device). -dev selects the MFEM backend:
+//   ./test_monodomain -d 3 -rs 3 -o 2 -tf 1 -dev cuda -no-pv
+//
+// Fast 3D run -- everything below is on by default except the looser tolerance:
+//   ./test_monodomain -d 3 -rs 3 -o 2 -tf 5 -dev cuda -rtol 1e-4 \
+//                     -pv -sf 20 -cl 1 -lod 2 -of ./Output/
+//
 // Different stimulation types can be selected with -st option:
 //   0 - Corner stimulation (default)
 //   1 - Plane wave stimulation
 //
-// Test assembly type: (~230k dofs, 2x speedup with implicit time integrator, 3x speedup with explicit time integrator)
-// - Full assembly (default): -fa
-//       mpirun -np 4 ./test_monodomain -tf 1 -fa -o 6 -rs 5 --no-paraview -of ./Output/Electrophysiology/TestAssembly/FA
-// - Partial assembly: -pa
-//       mpirun -np 4 ./test_monodomain -tf 1 -pa -o 6 -rs 5 --no-paraview -of ./Output/Electrophysiology/TestAssembly/PA
+// Assembly type. Partial assembly (-pa) is the default: it is matrix-free, so it
+// scales to meshes where the assembled matrix does not fit (~106M nonzeros at 1.7M
+// dofs). Assembled (-fa) is faster per step on meshes that do fit -- measured at
+// 216k dofs, 3D hex order 2, CUDA: 15.5 ms/step against 26.9 ms/step for -pa.
+//   ./test_monodomain -d 3 -rs 3 -o 2 -tf 1 -dev cuda -fa -no-pv
+//   ./test_monodomain -d 3 -rs 3 -o 2 -tf 1 -dev cuda -pa -no-pv
 //
+// Solver options:
+//   -rtol <t>   CG relative tolerance (default 1e-6). The solve sits inside a
+//               first-order operator splitting whose error is O(dt), so 1e-4 is
+//               defensible and ~1.7x faster; 1e-8 was the historical value.
+//   -ws/-no-ws  warm-start the implicit solve from the previous step (default on,
+//               ~1.16x); see ImplicitSolverBase::EnableWarmStart.
+//   -pt <n>     preconditioner: 0 Jacobi (default), 1 LOR+AMG (-pa only).
+//   -dode <n>   ODE substeps per diffusion step. Raising -dt with a matching -dode
+//               keeps the reaction resolution while doing fewer diffusion solves:
+//               -dt 0.2 -dode 4 was 2.8x faster end to end, at ~5e-4 relative
+//               change in the solution -- validate against your own quantity of
+//               interest before relying on it.
+//   -het        allocate per-dof ionic parameters (spatially varying tau_close,
+//               scar regions, ...). Uniform by default; ~30% on the ODE kernel.
+//
+// Output options:
+//   -cl <0-9>   zlib level for ParaView data (default 1; level 9 costs ~2x the
+//               write time for ~2% smaller files).
+//   -lod <n>    ParaView levels of detail (default = order). Lowering it subsamples
+//               the field: at order 5, -lod 2 is ~8x less data.
+//   -no-hoo     write subdivided linear cells instead of VTK Lagrange cells.
 //
 // Spiral examples (2D, but can be run in 3D as well) using S1-S2 cross-field protocol:
 //
 // 1) Single spiral wave initiation, S2 from a line in the bottom half-domain:
-//    mpirun -np 4 ./test_monodomain -st 2 -d 2 -tf 500 -mt 1 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output 
+//    mpirun -np 4 ./test_monodomain -st 2 -d 2 -tf 500 -mt 1 -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output
 //
 // 2) Multiple spiral wave initiations, S2 from rectangular area in the center:
-//    mpirun -np 4 ./test_monodomain -st 3 -d 2 -tf 500 -mt 1 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
-// 
+//    mpirun -np 4 ./test_monodomain -st 3 -d 2 -tf 500 -mt 1 -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
+//
 // 3) Multiple spiral wave initiations, S2 from two rectangular areas (top center and bottom edge):
-//    mpirun -np 4 ./test_monodomain -st 4 -d 2 -tf 500 -mt 0 -fa -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
+//    mpirun -np 4 ./test_monodomain -st 4 -d 2 -tf 500 -mt 0 -o 8 -rs 1 -dt 0.1 -sf 10 -of ./Output  -ems
 //
 
 #include "mfem.hpp"
@@ -126,9 +155,13 @@ int main(int argc, char *argv[])
 
     // Finite element
     int order = 1;
-    bool pa = false; // partial assembly
+    bool pa = true;  // partial assembly: matrix-free, the only path that scales to
+                     // large meshes (the assembled matrix is ~106M nnz at 1.7M dofs)
     const char *device_config = "cpu"; // MFEM device backend ("cpu", "cuda", ...)
     int prec_type = 0;                 // 0: Jacobi, 1: LOR+AMG (PA implicit solver only)
+    real_t lin_rtol = 1e-6;            // CG relative tolerance for the implicit diffusion solve
+    bool het_params = false;           // allocate per-dof ionic parameters
+    bool warm_start = true;            // warm-start the implicit CG solve
     bool substep_stim = false;         // re-project the stimulus at every ODE substep
     // Timestepping
     bool last_step = false;
@@ -175,6 +208,16 @@ int main(int argc, char *argv[])
                    "Device configuration string, see Device::Configure().");
     args.AddOption(&prec_type, "-pt", "--prec-type",
                    "Preconditioner for the PA implicit solver: 0-Jacobi, 1-LOR+AMG.");
+    args.AddOption(&het_params, "-het", "--heterogeneous-params",
+                   "-no-het", "--uniform-params",
+                   "Allocate per-dof ionic model parameters, allowing spatially varying "
+                   "electrophysiology (scar, transmural gradients). Costs kernel bandwidth; "
+                   "the thermal/damage models enable it automatically.");
+    args.AddOption(&warm_start, "-ws", "--warm-start", "-no-ws", "--no-warm-start",
+                   "Warm-start the implicit CG solve from the previous step's du/dt "
+                   "(with an absolute stopping test).");
+    args.AddOption(&lin_rtol, "-rtol", "--linear-rel-tol",
+                   "Relative tolerance of the CG solve in the implicit diffusion step.");
     args.AddOption(&substep_stim, "-ssp", "--substep-stim-projection",
                    "-no-ssp", "--no-substep-stim-projection",
                    "Re-project the stimulation coefficient at every ODE substep "
@@ -363,7 +406,7 @@ int main(int argc, char *argv[])
     // This setup the diffusion solver (assembles operators and setup ODESolver)           chi Cm dudt = div(sigma grad u) + bcs
     chrono.Clear();
     chrono.Start();
-    diff_solver->Setup(dt, prec_type);
+    diff_solver->Setup(dt, prec_type, lin_rtol, warm_start);
     chrono.Stop();
     t_assembly = chrono.RealTime();
 
@@ -408,6 +451,7 @@ int main(int argc, char *argv[])
 
     // Modify initial states if needed
     // initial_states[reaction_solver->GetModel()->state_index("h")] = 1.0; // initial h []
+    if (het_params) { reaction_solver->EnableHeterogeneousParameters(); }
     reaction_solver->Setup(initial_states, parameters);
 
     //<--- 7.3 Define and set the stimulation current
@@ -490,6 +534,7 @@ int main(int argc, char *argv[])
         // Save initial condition
         pvdc.SetCycle(0);
         pvdc.SetTime(t);
+        reaction_solver->SyncStateGridFunctions();
         pvdc.Save();
     }
 
@@ -548,6 +593,7 @@ int main(int argc, char *argv[])
 
         //<--- Compute potential at the reference point (center of the domain)
         // Only evaluate grid functions if the point was found on this rank
+        reaction_solver->SyncStateGridFunctions();
         real_t potential_loc = (elem_ids[0] >= 0) ? u_gf->GetValue(elem_ids[0], ips[0]) : 0.0;
         real_t recovery_loc = (elem_ids[0] >= 0) ? state_gf->GetValue(elem_ids[0], ips[0]) : 0.0;
 
@@ -575,6 +621,7 @@ int main(int argc, char *argv[])
         {
             pvdc.SetCycle(step + 1);
             pvdc.SetTime(t);
+            reaction_solver->SyncStateGridFunctions();
             pvdc.Save();
         }
         chrono.Stop();

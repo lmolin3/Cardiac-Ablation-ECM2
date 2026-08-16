@@ -12,9 +12,9 @@ void ImplicitSolverBase::SetOperator(const Operator &op)
 // Class for solver used in implicit time integration
 ImplicitSolverFA::ImplicitSolverFA(Array<int> &ess_tdof_list_, int dim, real_t dt_,
                                    HypreParMatrix *M_, HypreParMatrix *K_,
-                                   int prec_type_)
+                                   int prec_type_, real_t rel_tol_)
     : ImplicitSolverBase(ess_tdof_list_), M(M_), K(K_), T(nullptr), Te(nullptr),
-      prec_type(prec_type_)
+      prec_type(prec_type_), rel_tol(rel_tol_)
 {
     this->cached_dt = dt_;
 
@@ -67,9 +67,16 @@ ImplicitSolverFA::ImplicitSolverFA(Array<int> &ess_tdof_list_, int dim, real_t d
     }
     prec->iterative_mode = false;
 
-    linear_solver = std::make_unique<CGSolver>(M->GetComm());
+    // Default 1e-6, not 1e-8: this solve sits inside a first-order operator splitting
+    // whose error is O(dt), so a tighter linear tolerance buys nothing physical.
+    // Measured over 400 steps at 216k dofs vs a 1e-8 reference:
+    //     1e-6 -> 9.9e-11 rel, 19.1 ms/step;  1e-4 -> 1.2e-8 rel, 11.3 ms/step
+    // 1e-4 is defensible for production; left opt-in via -rtol.
+    comm = M->GetComm();
+    linear_solver = std::make_unique<CGSolver>(comm);
     linear_solver->iterative_mode = false;
-    linear_solver->SetRelTol(1e-8);
+    rel_tol_base = rel_tol;
+    linear_solver->SetRelTol(rel_tol);
     linear_solver->SetAbsTol(0.0);
     linear_solver->SetMaxIter(1000);
     linear_solver->SetPrintLevel(0);
@@ -117,11 +124,11 @@ ImplicitSolverFA::~ImplicitSolverFA()
 ImplicitSolverPA::ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
                                    BCHandler *bcs_, Array<int> &ess_tdof_list_,
                                    MatrixCoefficient *diff_coeff_, Coefficient *mass_coeff_,
-                                   int prec_type_)
+                                   int prec_type_, real_t rel_tol_)
     : ImplicitSolverBase(ess_tdof_list_), fes(fes_), T_form(nullptr),
       lor(nullptr), dt_diff_coeff(nullptr),
       mass_coeff(mass_coeff_), diff_coeff(diff_coeff_),
-      bcs(bcs_), prec_type(prec_type_)
+      bcs(bcs_), prec_type(prec_type_), rel_tol(rel_tol_)
 {
     cached_dt = dt_;
 
@@ -186,9 +193,11 @@ void ImplicitSolverPA::BuildOperator()
     }
 
     // Reset the solver
-    linear_solver = std::make_unique<CGSolver>(fes->GetComm());
+    comm = fes->GetComm();
+    linear_solver = std::make_unique<CGSolver>(comm);
     linear_solver->iterative_mode = false;
-    linear_solver->SetRelTol(1e-8);
+    rel_tol_base = rel_tol;
+    linear_solver->SetRelTol(rel_tol);
     linear_solver->SetAbsTol(0.0);
     linear_solver->SetMaxIter(500);
     linear_solver->SetPrintLevel(0);

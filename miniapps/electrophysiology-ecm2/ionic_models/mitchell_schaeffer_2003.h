@@ -221,7 +221,7 @@ namespace mfem
                 const double tau_out = parameters[9];
 
                 // Assign expressions
-                const double J_in_J_in = (h * (pow(Vm, 2.0) * (1.0 - Vm))) / tau_in;
+                const double J_in_J_in = (h * ((Vm * Vm) * (1.0 - Vm))) / tau_in;
                 const double J_out_J_out = (-Vm) / tau_out;
                 const double J_stim_J_stim =
                     (IstimEnd >= t &&
@@ -256,7 +256,7 @@ namespace mfem
                 const double tau_out = parameters[9];
 
                 // Assign expressions
-                const double J_in_J_in = (h * (pow(Vm, 2.0) * (1.0 - Vm))) / tau_in;
+                const double J_in_J_in = (h * ((Vm * Vm) * (1.0 - Vm))) / tau_in;
                 values[0] = J_in_J_in;
                 const double J_out_J_out = (-Vm) / tau_out;
                 values[1] = J_out_J_out;
@@ -294,7 +294,7 @@ namespace mfem
                 const double tau_out = parameters[9];
 
                 // Assign expressions
-                const double J_in_J_in = (h * (pow(Vm, 2.0) * (1.0 - Vm))) / tau_in;
+                const double J_in_J_in = (h * ((Vm * Vm) * (1.0 - Vm))) / tau_in;
                 const double J_out_J_out = (-Vm) / tau_out;
                 const double J_stim_J_stim =
                     (IstimEnd >= t &&
@@ -329,7 +329,7 @@ namespace mfem
                 const double tau_out = parameters[9];
 
                 // Assign expressions
-                const double J_in_J_in = (h * (pow(Vm, 2.0) * (1.0 - Vm))) / tau_in;
+                const double J_in_J_in = (h * ((Vm * Vm) * (1.0 - Vm))) / tau_in;
                 const double J_out_J_out = (-Vm) / tau_out;
                 const double J_stim_J_stim =
                     (IstimEnd >= t &&

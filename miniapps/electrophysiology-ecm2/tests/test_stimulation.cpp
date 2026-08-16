@@ -15,6 +15,20 @@
 // Disable internal time management of gotranx, and manage time from provided function:
 //   mpirun -np 8 ./test_stimulation -dgm -of ./Output/MFEMTime
 //
+// GPU:
+//   ./test_stimulation -dev cuda -of ./Output/GotranxTime
+//
+//
+// Backend: -dev selects the MFEM device ("cpu" default, "cuda" for GPU). Assembly is
+// partial (-pa) by default -- matrix-free, so it scales to meshes where the assembled
+// matrix does not fit; -fa is faster per step on meshes that do.
+//
+// Solver: -rtol <t> CG relative tolerance (default 1e-6; 1e-4 is defensible inside the
+// operator splitting and ~1.7x faster). -ws/-no-ws warm-starts the implicit solve from
+// the previous step (default on).
+//
+// Output: -cl <0-9> zlib level (default 1), -lod <n> ParaView levels of detail.
+//
 
 #include "mfem.hpp"
 #include "../lib/reaction_solver.hpp"
@@ -99,6 +113,8 @@ int main(int argc, char *argv[])
     // Time stepping related options
     const char *device_config = "cpu"; // MFEM device backend ("cpu", "cuda", ...)
     int prec_type = 0;                 // 0: Jacobi, 1: LOR+AMG (PA implicit solver only)
+    real_t lin_rtol = 1e-6;            // CG relative tolerance for the implicit diffusion solve
+    bool warm_start = true;            // warm-start the implicit CG solve
 
     args.AddOption(&disable_gotranx_time_management, "-dgm", "--disable-gotranx-time-management", "-no-dgm", "--enable-gotranx-time-management",
                    "Disable internal time management of gotranx ionic models.");
@@ -113,6 +129,10 @@ int main(int argc, char *argv[])
                    "Device configuration string, see Device::Configure().");
     args.AddOption(&prec_type, "-pt", "--prec-type",
                    "Preconditioner for the PA implicit solver: 0-Jacobi, 1-LOR+AMG.");
+    args.AddOption(&lin_rtol, "-rtol", "--linear-rel-tol",
+                   "Relative tolerance of the CG solve in the implicit diffusion step.");
+    args.AddOption(&warm_start, "-ws", "--warm-start", "-no-ws", "--no-warm-start",
+                   "Warm-start the implicit CG solve from the previous step's du/dt.");
     args.ParseCheck();
 
     //<--- Configure the MFEM device backend. Must happen before any Vector/mesh
@@ -231,7 +251,7 @@ int main(int argc, char *argv[])
     //<--- 7.2 Setup the Diffusion and Reaction solvers
 
     // This setup the diffusion solver (assembles operators and setup ODESolver)           chi Cm dudt = div(sigma grad u) + bcs
-    diff_solver->Setup(dt, prec_type);
+    diff_solver->Setup(dt, prec_type, lin_rtol, warm_start);
 
     // This setup the reaction solver (initializes states and parameters with defaults)    dudt = -Iion + Iapp; dwdt = f(u,w)
     // If needed, initial states and parameters can be passed as std::vector<double>
@@ -320,6 +340,7 @@ int main(int argc, char *argv[])
         // Save initial condition
         pvdc.SetCycle(0);
         pvdc.SetTime(t);
+        reaction_solver->SyncStateGridFunctions();
         pvdc.Save();
     }
 
@@ -379,6 +400,7 @@ int main(int argc, char *argv[])
         {
             pvdc.SetCycle(step + 1);
             pvdc.SetTime(t);
+            reaction_solver->SyncStateGridFunctions();
             pvdc.Save();
         }
         chrono.Stop();

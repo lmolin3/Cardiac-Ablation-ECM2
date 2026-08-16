@@ -76,10 +76,13 @@ MonodomainDiffusionSolver::~MonodomainDiffusionSolver()
 // ----- Setup API -----
 ////////////////////////////////////////////////////////////////////////////
 
-void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type_)
+void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type_, real_t rel_tol_,
+                                     bool warm_start_)
 {
    cached_dt = dt;
    prec_type = prec_type_;
+   lin_rel_tol = rel_tol_;
+   warm_start = warm_start_;
 
    ///<--- Check partial assembly
    bool tensor = UsesTensorBasis(*fes);
@@ -282,11 +285,11 @@ void MonodomainDiffusionSolver::BuildImplicitSolver()
 
    if (pa)
    {
-      T_solver = std::make_unique<ImplicitSolverPA>(fes, cached_dt, bcs, ess_tdof_list, sigma_coeff, chi_Cm_coeff.get(), prec_type);
+      T_solver = std::make_unique<ImplicitSolverPA>(fes, cached_dt, bcs, ess_tdof_list, sigma_coeff, chi_Cm_coeff.get(), prec_type, lin_rel_tol);
    }
    else
    {
-      T_solver = std::make_unique<ImplicitSolverFA>(ess_tdof_list, pmesh->Dimension(), cached_dt, Mfull, opK.As<HypreParMatrix>(), prec_type);
+      T_solver = std::make_unique<ImplicitSolverFA>(ess_tdof_list, pmesh->Dimension(), cached_dt, Mfull, opK.As<HypreParMatrix>(), prec_type, lin_rel_tol);
    }
 }
 
@@ -400,8 +403,20 @@ void MonodomainDiffusionSolver::ImplicitSolve(const real_t dt, const Vector &u,
    du_dt_gf.GetTrueDofs(du_dt);
    T_solver->EliminateBC(du_dt, z);
 
-   //<---  Solve
+   //<---  Solve. With warm starting the previous du/dt replaces the (zero) initial
+   // guess; see ImplicitSolverBase::SetWarmStart for why this needs an absolute
+   // stopping test. The first solve necessarily runs cold and calibrates it.
+   if (warm_start && du_dt_prev.Size() == du_dt.Size())
+   {
+      du_dt = du_dt_prev;
+      T_solver->EnableWarmStart(z);
+   }
+   else
+   {
+      T_solver->DisableWarmStart();
+   }
    T_solver->Mult(z, du_dt);
+   if (warm_start) { du_dt_prev = du_dt; du_dt_prev.UseDevice(true); }
 
    //<---  Enforce essential boundary conditions again (avoid round-off)
    du_dt_gf.SetFromTrueDofs(du_dt);

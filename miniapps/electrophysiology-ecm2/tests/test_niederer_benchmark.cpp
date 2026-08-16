@@ -9,6 +9,21 @@
 //
 // Sample runs:
 //
+//   ./test_niederer_benchmark -tf 100 -of ./Output/Niederer
+//
+// GPU:
+//   ./test_niederer_benchmark -tf 100 -dev cuda -of ./Output/Niederer
+//
+//
+// Backend: -dev selects the MFEM device ("cpu" default, "cuda" for GPU). Assembly is
+// partial (-pa) by default -- matrix-free, so it scales to meshes where the assembled
+// matrix does not fit; -fa is faster per step on meshes that do.
+//
+// Solver: -rtol <t> CG relative tolerance (default 1e-6; 1e-4 is defensible inside the
+// operator splitting and ~1.7x faster). -ws/-no-ws warm-starts the implicit solve from
+// the previous step (default on).
+//
+// Output: -cl <0-9> zlib level (default 1), -lod <n> ParaView levels of detail.
 //
 
 #include "mfem.hpp"
@@ -22,7 +37,8 @@ using namespace std;
 using namespace mfem;
 using namespace electrophysiology;
 
-real_t stimulation_function(const Vector &x, real_t t);
+real_t stimulation_mask(const Vector &x);
+real_t stimulation_amplitude(real_t t);
 void conductivity_function(const Vector &x, DenseSymmetricMatrix &Sigma);
 
 struct s_MeshContext // mesh
@@ -66,7 +82,8 @@ int main(int argc, char *argv[])
 
     // Finite element
     int order = 1;
-    bool pa = false; // partial assembly
+    bool pa = true;  // partial assembly: matrix-free, the only path that scales to
+                     // large meshes (the assembled matrix is ~106M nnz at 1.7M dofs)
     // Timestepping
     bool last_step = false;
     real_t dt = 0.05;         // Time step (ms)
@@ -95,6 +112,8 @@ int main(int argc, char *argv[])
     // Mesh related options
     const char *device_config = "cpu"; // MFEM device backend ("cpu", "cuda", ...)
     int prec_type = 0;                 // 0: Jacobi, 1: LOR+AMG (PA implicit solver only)
+    real_t lin_rtol = 1e-6;            // CG relative tolerance for the implicit diffusion solve
+    bool warm_start = true;            // warm-start the implicit CG solve
 
     args.AddOption(&Mesh_ctx.dx, "-dx", "--mesh-size", "Mesh spacing in x, y, z directions. Default: [0.2, 0.2, 0.2]");
     args.AddOption(&Mesh_ctx.hex, "-hex", "--hex", "-tri", "--tri",
@@ -124,6 +143,10 @@ int main(int argc, char *argv[])
                    "Device configuration string, see Device::Configure().");
     args.AddOption(&prec_type, "-pt", "--prec-type",
                    "Preconditioner for the PA implicit solver: 0-Jacobi, 1-LOR+AMG.");
+    args.AddOption(&lin_rtol, "-rtol", "--linear-rel-tol",
+                   "Relative tolerance of the CG solve in the implicit diffusion step.");
+    args.AddOption(&warm_start, "-ws", "--warm-start", "-no-ws", "--no-warm-start",
+                   "Warm-start the implicit CG solve from the previous step's du/dt.");
     args.ParseCheck();
 
     //<--- Configure the MFEM device backend. Must happen before any Vector/mesh
@@ -262,7 +285,7 @@ int main(int argc, char *argv[])
     // This setup the diffusion solver (assembles operators and setup ODESolver)           chi Cm dudt = div(sigma grad u) + bcs
     chrono.Clear();
     chrono.Start();
-    diff_solver->Setup(dt, prec_type);
+    diff_solver->Setup(dt, prec_type, lin_rtol, warm_start);
     chrono.Stop();
     t_assembly = chrono.RealTime();
 
@@ -310,15 +333,10 @@ int main(int argc, char *argv[])
     //<--- 7.3 Define and set the stimulation current
     // switch case stim_ctx.stim_type, pick one of the defined stimulation functions
 
-    Coefficient *Istim_coeff = new FunctionCoefficient(stimulation_function);
-    reaction_solver->SetStimulation(Istim_coeff);
-
-    // stimulation_function() gates on t internally, so it is not time independent,
-    // but it is identically zero outside the S1 pulse. Declaring that window lets
-    // the solver skip the per-substep projection for the rest of the simulation.
-    // See the "Enforcing the stimulation efficiently" note in reaction_solver.hpp.
-    reaction_solver->SetStimulationWindow(stim_ctx.t_start,
-                                          stim_ctx.t_start + stim_ctx.t_duration);
+    // The S1 stimulus is a fixed spatial region switched on for a fixed window, i.e.
+    // separable: the mask is projected once and each step only rescales it on device.
+    Coefficient *Istim_coeff = new FunctionCoefficient(stimulation_mask);
+    reaction_solver->SetSeparableStimulation(Istim_coeff, stimulation_amplitude);
 
     chrono.Stop();
     t_setup_reaction = chrono.RealTime();
@@ -363,6 +381,7 @@ int main(int argc, char *argv[])
         // Save initial condition
         pvdc.SetCycle(0);
         pvdc.SetTime(t);
+        reaction_solver->SyncStateGridFunctions();
         pvdc.Save();
     }
 
@@ -425,6 +444,7 @@ int main(int argc, char *argv[])
         {
             pvdc.SetCycle(step + 1);
             pvdc.SetTime(t);
+            reaction_solver->SyncStateGridFunctions();
             pvdc.Save();
         }
         chrono.Stop();
@@ -453,6 +473,30 @@ int main(int argc, char *argv[])
     t_reaction /= count;
 
     // Compute global times
+    //<--- Final whole-field checksums, for comparing runs across backends/settings.
+    {
+        real_t l2 = 0.0, l1 = 0.0, vmin = 0.0, vmax = 0.0;
+        {
+            Vector uh(u); uh.HostRead();
+            const real_t *h = uh.HostRead();
+            real_t s2 = 0.0, s1 = 0.0, mn = h[0], mx = h[0];
+            for (int i = 0; i < uh.Size(); i++)
+            { s2 += h[i]*h[i]; s1 += std::abs(h[i]); mn = std::min(mn,h[i]); mx = std::max(mx,h[i]); }
+            MPI_Allreduce(&s2, &l2, 1, MFEM_MPI_REAL_T, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&s1, &l1, 1, MFEM_MPI_REAL_T, MPI_SUM, MPI_COMM_WORLD);
+            MPI_Allreduce(&mn, &vmin, 1, MFEM_MPI_REAL_T, MPI_MIN, MPI_COMM_WORLD);
+            MPI_Allreduce(&mx, &vmax, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
+        }
+        if (Mpi::Root())
+        {
+            out << "\nFinal solution checksums (all dofs):\n"
+                << "  ||u||_2  = " << std::scientific << std::setprecision(14) << std::sqrt(l2) << "\n"
+                << "  ||u||_1  = " << std::scientific << std::setprecision(14) << l1 << "\n"
+                << "  min(u)   = " << std::scientific << std::setprecision(14) << vmin << "\n"
+                << "  max(u)   = " << std::scientific << std::setprecision(14) << vmax << "\n" << std::endl;
+        }
+    }
+
     real_t t_setup_reaction_g, t_diffusion_g, t_reaction_g, t_total_solution_g, t_misc_g, t_mesh_g, t_total_g, t_io_g;
     MPI_Allreduce(&t_io, &t_io_g, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&t_misc, &t_misc_g, 1, MFEM_MPI_REAL_T, MPI_MAX, MPI_COMM_WORLD);
@@ -543,17 +587,24 @@ void conductivity_function(const Vector &x, DenseSymmetricMatrix &Sigma)
 
 // Define the stimulation current as a function
 // Stimulate a 1.5 x 1.5 x 1.5 mm cube at the origin (corner)
-real_t stimulation_function(const Vector &x, real_t t)
+// Spatial mask only: the 1.5 mm corner cube of the benchmark. Kept separate from the
+// time gate so the solver can project it once -- see SetSeparableStimulation().
+real_t stimulation_mask(const Vector &x)
 {
     real_t x0 = 0.0, y0 = 0.0, z0 = 0.0;
     real_t L = 1.5; // mm, cube side length
 
-    // Check if point is inside the cube
     bool inside = (x(0) >= x0 && x(0) <= x0 + L) &&
                   (x(1) >= y0 && x(1) <= y0 + L) &&
                   (x.Size() < 3 || (x(2) >= z0 && x(2) <= z0 + L));
 
-    bool active = (stim_ctx.t_start <= t) && (t <= stim_ctx.t_start + stim_ctx.t_duration);
+    return inside ? stim_ctx.Iampl : 0.0;
+}
 
-    return (inside && active) ? stim_ctx.Iampl : 0.0;
+// Scalar time gate: the S1 pulse.
+real_t stimulation_amplitude(real_t t)
+{
+    const bool active = (stim_ctx.t_start <= t) &&
+                        (t <= stim_ctx.t_start + stim_ctx.t_duration);
+    return active ? 1.0 : 0.0;
 }

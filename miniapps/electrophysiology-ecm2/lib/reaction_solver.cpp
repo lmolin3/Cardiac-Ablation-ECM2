@@ -34,12 +34,15 @@ MFEM_HOST_DEVICE inline void ApplyScheme(int scheme,
     }
 }
 
-// One ODE substep for every dof: copy values -> states, override the stimulation
-// amplitude, then integrate states -> values.
-template <typename IonicModelKernel>
+// One ODE substep for every dof: read the state, override the stimulation amplitude,
+// integrate, and write the new state back in place.
+//
+// PerDofParams=false reads NP uniform values (a broadcast load from cache); true reads
+// the full NP x n array. Templated rather than a runtime flag so neither carries a branch.
+template <typename IonicModelKernel, bool PerDofParams>
 void ReactionSubstep(int n, int scheme, real_t t, real_t dt, real_t vrange,
                      const real_t *d_stim, const real_t *d_chi, const real_t *d_Cm,
-                     real_t *d_states, real_t *d_values, real_t *d_params)
+                     real_t *d_values, const real_t *d_params)
 {
    constexpr int NS = IonicModelKernel::nstates;
    constexpr int NP = IonicModelKernel::nparams;
@@ -49,7 +52,14 @@ void ReactionSubstep(int n, int scheme, real_t t, real_t dt, real_t vrange,
       real_t s[NS], v[NS], p[NP];
 
       for (int k = 0; k < NS; k++) { s[k] = d_values[k * n + i]; v[k] = s[k]; }
-      for (int k = 0; k < NP; k++) { p[k] = d_params[k * n + i]; }
+      if (PerDofParams)
+      {
+         for (int k = 0; k < NP; k++) { p[k] = d_params[k * n + i]; }
+      }
+      else
+      {
+         for (int k = 0; k < NP; k++) { p[k] = d_params[k]; }
+      }
 
       const real_t Jscaling = IonicModelKernel::dimensionless
                               ? IonicModelKernel::stim_sign * (d_chi[i] * d_Cm[i] * vrange)
@@ -58,13 +68,29 @@ void ReactionSubstep(int n, int scheme, real_t t, real_t dt, real_t vrange,
 
       ApplyScheme<IonicModelKernel>(scheme, s, t, dt, p, v);
 
-      for (int k = 0; k < NS; k++)
-      {
-         d_states[k * n + i] = s[k];
-         d_values[k * n + i] = v[k];
-      }
-      d_params[IonicModelKernel::stim_ampl_idx * n + i] = p[IonicModelKernel::stim_ampl_idx];
+      // Only the updated state is stored: ApplyScheme takes `s` by const pointer, so
+      // writing it back to a second array would just record the previous substep.
+      for (int k = 0; k < NS; k++) { d_values[k * n + i] = v[k]; }
    });
+}
+
+// Dispatch on the parameter layout, keeping the model switch in one place.
+template <typename IonicModelKernel>
+static inline void ReactionSubstepDispatch(
+   bool per_dof_params, int n, int scheme, real_t t, real_t dt, real_t vrange,
+   const real_t *d_stim, const real_t *d_chi, const real_t *d_Cm,
+   real_t *d_values, const real_t *d_params)
+{
+   if (per_dof_params)
+   {
+      ReactionSubstep<IonicModelKernel, true>(
+         n, scheme, t, dt, vrange, d_stim, d_chi, d_Cm, d_values, d_params);
+   }
+   else
+   {
+      ReactionSubstep<IonicModelKernel, false>(
+         n, scheme, t, dt, vrange, d_stim, d_chi, d_Cm, d_values, d_params);
+   }
 }
 
 // Temperature/damage dependent parameter update. gamma/eta/Q and the damaged time
@@ -281,9 +307,20 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
     // Read()/Write()/ReadWrite() would set the device flag on first use anyway, but
     // setting it here means the initial allocation already has a device backing and
     // any vector algebra on these takes the device path from the start.
-    states.SetSize(num_states * n);     states.UseDevice(true);
     values.SetSize(num_states * n);     values.UseDevice(true);
-    parameters.SetSize(num_param * n);  parameters.UseDevice(true);
+
+    // Either the caller asked for per-dof parameters, or the model writes them itself
+    // (thermal/damage). Must not clobber the caller's request.
+    per_dof_params = per_dof_params || has_td_dependency;
+    uniform_params.SetSize(num_param);  uniform_params.UseDevice(true);
+    if (per_dof_params)
+    {
+        parameters.SetSize(num_param * n);  parameters.UseDevice(true);
+    }
+    else
+    {
+        parameters.SetSize(0);
+    }
 
     // Get default values once to avoid repeated function calls
     std::vector<double> default_states(num_states);
@@ -312,23 +349,21 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
     // on first kernel launch.
     const std::vector<double> &s0 = use_provided_states ? initial_states : default_states;
 
-    real_t *h_states = states.HostWrite();
     real_t *h_values = values.HostWrite();
-    real_t *h_params = parameters.HostWrite();
-
     for (int k = 0; k < num_states; k++)
     {
-        for (int i = 0; i < n; i++)
-        {
-            h_states[k * n + i] = s0[k];
-            h_values[k * n + i] = s0[k];
-        }
+        for (int i = 0; i < n; i++) { h_values[k * n + i] = s0[k]; }
     }
-    for (int k = 0; k < num_param; k++)
+
+    real_t *h_uparams = uniform_params.HostWrite();
+    for (int k = 0; k < num_param; k++) { h_uparams[k] = parameters_default[k]; }
+
+    if (per_dof_params)
     {
-        for (int i = 0; i < n; i++)
+        real_t *h_params = parameters.HostWrite();
+        for (int k = 0; k < num_param; k++)
         {
-            h_params[k * n + i] = parameters_default[k];
+            for (int i = 0; i < n; i++) { h_params[k * n + i] = parameters_default[k]; }
         }
     }
 
@@ -355,12 +390,12 @@ void ReactionSolver::GetPotential(Vector &u)
     const real_t vmin = Vmin, vrange = Vrange;
 
     u.SetSize(n);
-    const real_t *d_states = states.Read();
+    const real_t *d_values = values.Read();
     real_t *d_u = u.Write();
 
     mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
     {
-        const real_t s = d_states[off + i];
+        const real_t s = d_values[off + i];
         d_u[i] = dimless ? (s * vrange + vmin) : s;
     });
 }
@@ -374,12 +409,13 @@ void ReactionSolver::SetPotential(const Vector &u)
     const real_t vmin = Vmin, invvrange = invVrange;
 
     const real_t *d_u = u.Read();
-    real_t *d_states = states.ReadWrite();
+    real_t *d_values = values.ReadWrite();
 
     mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
     {
-        d_states[off + i] = dimless ? fabs((d_u[i] - vmin) * invvrange) : d_u[i];
+        d_values[off + i] = dimless ? fabs((d_u[i] - vmin) * invvrange) : d_u[i];
     });
+    states_gfs_stale = true;
 }
 
 void ReactionSolver::GetDefaultStates(std::vector<double> &default_states)
@@ -433,6 +469,10 @@ ParGridFunction *ReactionSolver::GetStateGridFunction(int state_index)
     MFEM_ASSERT(state_index != model->potential_idx,
                 "Cannot get potential through GetStateGridFunction, use GetPotential instead");
 
+    // The caller is about to read this grid function, so make it current. It will go
+    // stale again on the next Step(); see SyncStateGridFunctions().
+    SyncStateGridFunctions();
+
     int adjusted_index = state_index;
     if (state_index > model->potential_idx)
     {
@@ -451,8 +491,43 @@ ParGridFunction *ReactionSolver::GetStateGridFunction(int state_index)
 // backend, a synchronisation point too. Done naively it outweighs the actual ODE
 // integration by roughly three orders of magnitude. See "Enforcing the stimulation
 // efficiently" in reaction_solver.hpp for which strategy applies when.
+void ReactionSolver::SetSeparableStimulation(Coefficient *mask,
+                                             std::function<real_t(real_t)> amplitude)
+{
+    MFEM_VERIFY(mask && amplitude, "SetSeparableStimulation needs both a mask and an amplitude.");
+    stim_mask_coeff = mask;
+    stim_amplitude = std::move(amplitude);
+    stim_mask_projected = false;
+    stimulation_coeff = nullptr;   // the separable path replaces the space-time coefficient
+}
+
 void ReactionSolver::ProjectStimulation(real_t t_stim)
 {
+    // Separable stimulus: project the spatial mask once, then only rescale it.
+    if (stim_mask_coeff)
+    {
+        if (!stim_mask_projected)
+        {
+            stimulation_gf.ProjectCoefficient(*stim_mask_coeff);
+            stimulation_gf.GetTrueDofs(stim_mask_vec);
+            stim_mask_vec.UseDevice(true);
+            stim_mask_projected = true;
+        }
+        const real_t a = stim_amplitude(t_stim);
+        // Skip the kernel entirely across the (common) stretches where the stimulus is
+        // off and the vector is already zero.
+        if (a == 0.0)
+        {
+            if (!stim_vec_is_zero) { stimulation_vec = 0.0; stim_vec_is_zero = true; }
+        }
+        else
+        {
+            stimulation_vec.Set(a, stim_mask_vec);
+            stim_vec_is_zero = false;
+        }
+        return;
+    }
+
     if (!stimulation_coeff) { return; }
 
     // A time-independent coefficient only has to be projected once; a time
@@ -574,26 +649,26 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         const real_t *d_stim = stimulation_vec.Read();
         const real_t *d_chi = chi_vec.Read();
         const real_t *d_Cm = Cm_vec.Read();
-        real_t *d_states = states.ReadWrite();
         real_t *d_values = values.ReadWrite();
-        real_t *d_params = parameters.ReadWrite();
+        const real_t *d_params = per_dof_params ? parameters.Read()
+                                                : uniform_params.Read();
 
         switch (model_type)
         {
         case IonicModelType::MITCHELL_SCHAEFFER:
-            ReactionSubstep<MitchellSchaeffer::Kernel>(
-                n, (int)scheme, current_time, dt_ode, Vrange,
-                d_stim, d_chi, d_Cm, d_states, d_values, d_params);
+            ReactionSubstepDispatch<MitchellSchaeffer::Kernel>(
+                per_dof_params, n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_values, d_params);
             break;
         case IonicModelType::FENTON_KARMA:
-            ReactionSubstep<FentonKarma::Kernel>(
-                n, (int)scheme, current_time, dt_ode, Vrange,
-                d_stim, d_chi, d_Cm, d_states, d_values, d_params);
+            ReactionSubstepDispatch<FentonKarma::Kernel>(
+                per_dof_params, n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_values, d_params);
             break;
         case IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT:
-            ReactionSubstep<MitchellSchaefferTD::Kernel>(
-                n, (int)scheme, current_time, dt_ode, Vrange,
-                d_stim, d_chi, d_Cm, d_states, d_values, d_params);
+            ReactionSubstepDispatch<MitchellSchaefferTD::Kernel>(
+                per_dof_params, n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_values, d_params);
             break;
         default:
             mfem_error("Unsupported ionic model type in ReactionSolver::Step");
@@ -615,7 +690,42 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         });
     }
 
-    //<--- Scatter the non-potential states into their own vectors / grid functions
+    //<--- Refreshing the state grid functions is deferred to SyncStateGridFunctions().
+    states_gfs_stale = true;
+
+    t = provisional ? t : current_time;
+}
+
+void ReactionSolver::EnableHeterogeneousParameters(bool enable)
+{
+    MFEM_VERIFY(values.Size() == 0,
+                "EnableHeterogeneousParameters() must be called before Setup().");
+    per_dof_params = enable;
+}
+
+void ReactionSolver::SetParameterField(int param_idx, const Vector &vals)
+{
+    const int n = fes_truevsize;
+    const int np = model->GetNumParameters();
+    MFEM_VERIFY(per_dof_params,
+                "SetParameterField() requires EnableHeterogeneousParameters() before Setup().");
+    MFEM_VERIFY(param_idx >= 0 && param_idx < np, "Invalid parameter index.");
+    MFEM_VERIFY(vals.Size() == n, "Parameter field must be a true-dof vector.");
+    MFEM_VERIFY(parameters.Size() == np * n, "Per-dof parameter storage not allocated.");
+
+    const int off = param_idx * n;
+    const real_t *d_v = vals.Read();
+    real_t *d_p = parameters.ReadWrite();
+    mfem::forall(n, [=] MFEM_HOST_DEVICE (int i) { d_p[off + i] = d_v[i]; });
+}
+
+void ReactionSolver::SyncStateGridFunctions()
+{
+    if (!states_gfs_stale) { return; }
+
+    const int n = fes_truevsize;
+    const int potential_idx = model->potential_idx;
+
     for (size_t k = 0; k < states_vectors.size(); k++)
     {
         const int state_idx = (k >= static_cast<size_t>(potential_idx)) ? (int)k + 1 : (int)k;
@@ -626,7 +736,7 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         states_gfs[k]->SetFromTrueDofs(*states_vectors[k]);
     }
 
-    t = provisional ? t : current_time;
+    states_gfs_stale = false;
 }
 
 void ReactionSolver::Update()
@@ -662,14 +772,24 @@ void ReactionSolver::Update()
     // so the arrays are rebuilt rather than resized in place; the states are
     // restored below from states_vectors, which were just interpolated onto the
     // new mesh, and the parameters are reset to their defaults.
-    states.SetSize(num_states * n);     states.UseDevice(true);
     values.SetSize(num_states * n);     values.UseDevice(true);
-    parameters.SetSize(num_param * n);  parameters.UseDevice(true);
 
-    real_t *h_params = parameters.HostWrite();
-    for (int k = 0; k < num_param; k++)
+    uniform_params.SetSize(num_param);  uniform_params.UseDevice(true);
+    real_t *h_uparams = uniform_params.HostWrite();
+    for (int k = 0; k < num_param; k++) { h_uparams[k] = parameters_default[k]; }
+
+    if (per_dof_params)
     {
-        for (int i = 0; i < n; i++) { h_params[k * n + i] = parameters_default[k]; }
+        parameters.SetSize(num_param * n);  parameters.UseDevice(true);
+        real_t *h_params = parameters.HostWrite();
+        for (int k = 0; k < num_param; k++)
+        {
+            for (int i = 0; i < n; i++) { h_params[k * n + i] = parameters_default[k]; }
+        }
+    }
+    else
+    {
+        parameters.SetSize(0);
     }
 
     // Restore all non-potential states from states_vectors
@@ -678,14 +798,12 @@ void ReactionSolver::Update()
         const int state_idx = (k >= static_cast<size_t>(potential_idx)) ? (int)k + 1 : (int)k;
         const int off = state_idx * n;
         const real_t *d_sv = states_vectors[k]->Read();
-        real_t *d_states = states.ReadWrite();
         real_t *d_values = values.ReadWrite();
-        mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
-        {
-            d_states[off + i] = d_sv[i];
-            d_values[off + i] = d_sv[i];
-        });
+        mfem::forall(n, [=] MFEM_HOST_DEVICE (int i) { d_values[off + i] = d_sv[i]; });
     }
+
+    // states_vectors/states_gfs were just rebuilt on the new mesh and match `values`.
+    states_gfs_stale = false;
 }
 
 void ReactionSolver::PrintIndexTable()

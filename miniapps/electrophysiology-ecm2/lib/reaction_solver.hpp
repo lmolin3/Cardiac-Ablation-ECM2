@@ -25,7 +25,6 @@ namespace mfem
         {
             MITCHELL_SCHAEFFER = 0,
             FENTON_KARMA = 1,
-            TEN_TUSCHER_PANFILOV = 2,
             MITCHELL_SCHAEFFER_TD_DEPENDENT = 10
         };
 
@@ -52,9 +51,15 @@ namespace mfem
             // lives at [k * fes_truevsize + i]. Using mfem::Vector (rather than
             // std::vector<std::vector<>>) puts these under the MFEM memory manager, so
             // host/device placement and transfers are handled automatically.
-            Vector states;     // states (input) for each dof,  size [num_states * fes_truevsize]
-            Vector values;     // values (output) for each dof, size [num_states * fes_truevsize]
-            Vector parameters; // params for each dof,          size [num_params * fes_truevsize]
+            Vector values;     // state values for each dof,    size [num_states * fes_truevsize]
+
+            // Most ionic parameters are material constants, so an ndof-long copy of each
+            // is pure kernel bandwidth (55% of it for Mitchell-Schaeffer). Uniform is the
+            // default; `parameters` is only allocated for models that genuinely vary in
+            // space. See EnableHeterogeneousParameters().
+            Vector uniform_params;   // size [num_params]
+            Vector parameters;       // size [num_params * fes_truevsize], or empty
+            bool per_dof_params = false;
 
             std::vector<real_t> parameters_default; // Default parameters from the model
 
@@ -70,6 +75,13 @@ namespace mfem
             // is projected once instead of on every ODE substep.
             bool stim_time_independent = false;
             mutable bool stim_projected = false;
+            // Separable stimulus S(x,t) = amplitude(t) * mask(x): the mask is projected
+            // once and each step only rescales the device vector, turning a host-side
+            // ProjectCoefficient over every element into one O(ndof) device kernel.
+            Coefficient *stim_mask_coeff = nullptr;   //< NOT OWNED
+            std::function<real_t(real_t)> stim_amplitude = nullptr;
+            mutable Vector stim_mask_vec;
+            mutable bool stim_mask_projected = false;
             // When false (default) the stimulation is sampled once per outer time
             // step; when true it is re-sampled at every ODE substep. See
             // EnableSubstepStimulusProjection().
@@ -111,6 +123,11 @@ namespace mfem
             // We need this to: 1) possibly use it for output in DataCollection, 2) Update the state after change in Mesh/FESpace (AMR)
             std::vector<ParGridFunction *> states_gfs; // States grid functions for all states except potential
             std::vector<Vector *> states_vectors;      // Corresponding vectors for states
+
+            // states_gfs/states_vectors are a view of `values` for output and probing, not
+            // part of the integration; refreshing them costs a scatter plus a parallel
+            // prolongation per state. Step() only marks them stale.
+            mutable bool states_gfs_stale = true;
 
             real_t Vmin = -80;
             real_t Vmax = -20;
@@ -168,6 +185,48 @@ namespace mfem
             void Setup() { Setup({}, {}); }
 
             /**
+             * @brief Declare a separable stimulus, S(x,t) = amplitude(t) * mask(x).
+             *
+             * Most stimulation protocols are a fixed spatial region switched on and off in
+             * time. Projecting the full space-time coefficient every step re-evaluates a
+             * host-side Coefficient over every element and copies the result to device --
+             * measured at 267 ms/step for 420k elements, which dominated the reaction step
+             * while the pulse was active. Declaring the stimulus separable projects mask(x)
+             * once and reduces each subsequent step to a scaled device copy.
+             *
+             * @param mask      spatial pattern, projected once (NOT owned, must outlive
+             *                  the solver)
+             * @param amplitude scalar function of time, evaluated on host each step
+             *
+             * Use SetStimulation() instead when the spatial pattern itself moves in time.
+             */
+            void SetSeparableStimulation(Coefficient *mask,
+                                         std::function<real_t(real_t)> amplitude);
+
+            /**
+             * @brief Allocate per-dof parameter storage, allowing parameters to vary in space.
+             *
+             * Parameters are uniform by default (the per-dof copies cost kernel bandwidth).
+             * Enable this for spatially varying electrophysiology -- transmural gradients,
+             * scar or ischaemic regions, regionally scaled conductances. The thermal/damage
+             * models enable it automatically.
+             *
+             * Must be called before Setup(); then use SetParameterField() to write values.
+             */
+            void EnableHeterogeneousParameters(bool enable = true);
+
+            /**
+             * @brief Set one parameter to a spatially varying field.
+             * @param param_idx Index of the parameter (see GotranxODEModel::parameter_index).
+             * @param values    True-dof vector, size fes->GetTrueVSize().
+             *
+             * Requires EnableHeterogeneousParameters() before Setup(). The stimulus
+             * amplitude is not settable this way -- the kernel overwrites it from the
+             * projected stimulation coefficient each substep; use SetStimulation().
+             */
+            void SetParameterField(int param_idx, const Vector &values);
+
+            /**
              * @brief Update the MonodomainDiffusionSolver in case of changes in Mesh or FiniteElementSpace
              */
             void Update();
@@ -193,12 +252,30 @@ namespace mfem
 
             /**
              * @brief Get a ParGridFunction representing a specific state variable.
+             *
+             * Refreshes the grid functions if stale. The returned pointer stays valid across
+             * time steps, but its contents do NOT track Step() -- call
+             * SyncStateGridFunctions() to bring them current.
+             *
              * @param state_index Index of the state variable to retrieve.
              */
             ParGridFunction *GetStateGridFunction(int state_index);
 
             /**
+             * @brief Bring the state grid functions and vectors up to date with the
+             * integrated solution.
+             *
+             * Step() does not do this itself -- it is pure overhead for runs that only
+             * write output every N steps. Call before saving a DataCollection or reading a
+             * ParGridFunction from GetStateGridFunction(). No-op if nothing changed.
+             */
+            void SyncStateGridFunctions();
+
+            /**
              * @brief Register fields for output.
+             *
+             * The registered grid functions are only refreshed by
+             * SyncStateGridFunctions(), so call that before DataCollection::Save().
              */
             void RegisterFields(DataCollection &dc);
 

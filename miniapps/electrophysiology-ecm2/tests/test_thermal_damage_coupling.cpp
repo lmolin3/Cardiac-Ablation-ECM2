@@ -20,7 +20,26 @@
 //   With ParaView output:
 //     ./test_thermal_damage_coupling -hd -ht -pv -of ./Output/
 //
-// mpirun -np 8 ./test_thermal_damage_coupling -d 2 -tf 50 -fa -o 2 -rs 4 -dt 0.1 -sf 10 -of /home/shared/Output/Electrophysiology/TestThermalDamageCoupling/
+//   mpirun -np 8 ./test_thermal_damage_coupling -d 2 -tf 50 -o 2 -rs 4 -dt 0.1 -sf 10 \
+//                                               -of ./Output/ThermalDamage/
+//
+//   GPU:
+//     ./test_thermal_damage_coupling -d 2 -tf 50 -o 2 -rs 4 -dt 0.1 -sf 10 -dev cuda \
+//                                    -of ./Output/ThermalDamage/
+//
+// The thermal/damage models allocate per-dof ionic parameters automatically, so the
+// temperature and damage fields vary in space as intended.
+//
+//
+// Backend: -dev selects the MFEM device ("cpu" default, "cuda" for GPU). Assembly is
+// partial (-pa) by default -- matrix-free, so it scales to meshes where the assembled
+// matrix does not fit; -fa is faster per step on meshes that do.
+//
+// Solver: -rtol <t> CG relative tolerance (default 1e-6; 1e-4 is defensible inside the
+// operator splitting and ~1.7x faster). -ws/-no-ws warm-starts the implicit solve from
+// the previous step (default on).
+//
+// Output: -cl <0-9> zlib level (default 1), -lod <n> ParaView levels of detail.
 //
 
 #include "mfem.hpp"
@@ -90,7 +109,8 @@ int main(int argc, char *argv[])
     /////////////////////////////////////////////////////////////////////////////
 
     int order = 1;
-    bool pa = false;
+    bool pa = true;  // partial assembly: matrix-free, the only path that scales to
+                     // large meshes (the assembled matrix is ~106M nnz at 1.7M dofs)
     bool last_step = false;
     real_t dt = 0.05;       // [ms]
     real_t t = 0.0;         // [ms]
@@ -105,6 +125,8 @@ int main(int argc, char *argv[])
     OptionsParser args(argc, argv);
     const char *device_config = "cpu"; // MFEM device backend ("cpu", "cuda", ...)
     int prec_type = 0;                 // 0: Jacobi, 1: LOR+AMG (PA implicit solver only)
+    real_t lin_rtol = 1e-6;            // CG relative tolerance for the implicit diffusion solve
+    bool warm_start = true;            // warm-start the implicit CG solve
 
     args.AddOption(&Mesh_ctx.dim, "-d", "--dim", "Mesh dimension (2 or 3)");
     args.AddOption(&Mesh_ctx.hex, "-hex", "--hex", "-tri", "--tri",
@@ -150,6 +172,10 @@ int main(int argc, char *argv[])
                    "Device configuration string, see Device::Configure().");
     args.AddOption(&prec_type, "-pt", "--prec-type",
                    "Preconditioner for the PA implicit solver: 0-Jacobi, 1-LOR+AMG.");
+    args.AddOption(&lin_rtol, "-rtol", "--linear-rel-tol",
+                   "Relative tolerance of the CG solve in the implicit diffusion step.");
+    args.AddOption(&warm_start, "-ws", "--warm-start", "-no-ws", "--no-warm-start",
+                   "Warm-start the implicit CG solve from the previous step's du/dt.");
     args.ParseCheck();
 
     //<--- Configure the MFEM device backend. Must happen before any Vector/mesh
@@ -305,7 +331,7 @@ int main(int argc, char *argv[])
     //------     8. Setup diffusion and reaction solvers
     /////////////////////////////////////////////////////////////////////////////
 
-    diff_solver->Setup(dt, prec_type);
+    diff_solver->Setup(dt, prec_type, lin_rtol, warm_start);
 
     std::vector<double> initial_states, parameters;
     reaction_solver->GetDefaultStates(initial_states);
@@ -371,6 +397,7 @@ int main(int argc, char *argv[])
     {
         pvdc.SetCycle(0);
         pvdc.SetTime(t);
+        reaction_solver->SyncStateGridFunctions();
         pvdc.Save();
     }
 
@@ -440,6 +467,7 @@ int main(int argc, char *argv[])
         {
             pvdc.SetCycle(step + 1);
             pvdc.SetTime(t);
+            reaction_solver->SyncStateGridFunctions();
             pvdc.Save();
         }
 
