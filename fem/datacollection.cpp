@@ -1130,7 +1130,7 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
 {
    RefinedGeometry *RefG;
    Vector val;
-   DenseMatrix vval, pmat;
+   DenseMatrix vval;
    std::vector<char> buf;
    int vec_dim = it->second->VectorDim();
    os << "<DataArray type=\"" << GetDataTypeString()
@@ -1138,13 +1138,81 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
       << "\" NumberOfComponents=\"" << vec_dim << "\" "
       << VTKComponentLabels(vec_dim) << " "
       << "format=\"" << GetDataFormatString() << "\" >" << '\n';
+   // The output points RefG->RefPts are the same for every element sharing a
+   // geometry, so the shape matrix S(k,d) = phi_d(x_k) is the same too. Build it
+   // once and evaluate the field as a dense matvec per element, instead of
+   // re-running CalcShape at every output point of every element (which is
+   // O(ndof^2) per element for a tensor-product space).
+   //
+   // The GetValues/GetVectorValues overloads taking a coordinate matrix are
+   // deliberately not used: they also push every output point through the element
+   // transformation, and this routine discards the result -- Mesh::PrintVTU has
+   // already written the point coordinates.
+   const GridFunction &gf = *it->second;
+   const FiniteElementSpace *gfes = gf.FESpace();
+   // NURBS spaces are excluded: FiniteElementSpace::GetFE() hands back one shared
+   // NURBSFiniteElement that NURBSExtension::LoadFE() reconfigures for each element
+   // (different knot spans per element), so the returned pointer is identical
+   // across elements while the basis is not. A pointer-keyed cache would silently
+   // reuse the first element's shape matrix everywhere.
+   const bool can_cache = (gfes->GetNURBSext() == nullptr);
+   const FiniteElement *cached_fe = nullptr;
+   int cached_npts = -1;
+   DenseMatrix shape_mat;   // npts x ndof
+   Vector loc_data, shape_row, comp_vals;
+   Array<int> dofs;
+
+   // (fe, npts) is a sound cache key for a non-NURBS space: the same
+   // FiniteElement object implies the same geometry and order, hence the same
+   // RefPts for a fixed ref_. Variable-order and mixed-geometry spaces return a
+   // different object per order/geometry and so rebuild.
+   auto shape_matrix = [&](const FiniteElement *fe,
+                           const IntegrationRule &ir) -> const DenseMatrix &
+   {
+      const int npts = ir.GetNPoints(), ndof = fe->GetDof();
+      if (fe != cached_fe || npts != cached_npts)
+      {
+         shape_mat.SetSize(npts, ndof);
+         shape_row.SetSize(ndof);
+         for (int k = 0; k < npts; k++)
+         {
+            fe->CalcShape(ir.IntPoint(k), shape_row);
+            for (int d = 0; d < ndof; d++) { shape_mat(k, d) = shape_row(d); }
+         }
+         cached_fe = fe;
+         cached_npts = npts;
+      }
+      return shape_mat;
+   };
+
    if (vec_dim == 1)
    {
       for (int i = 0; i < mesh->GetNE(); i++)
       {
          RefG = GlobGeometryRefiner.Refine(
                    mesh->GetElementBaseGeometry(i), ref_, 1);
-         it->second->GetValues(i, RefG->RefPts, val, pmat);
+         const FiniteElement *fe = gfes->GetFE(i);
+         const IntegrationRule &ir = RefG->RefPts;
+         // The cached path only applies to value-mapped (e.g. H1) elements;
+         // anything else needs the element transformation per point.
+         if (!can_cache || fe->GetMapType() != FiniteElement::VALUE)
+         {
+            gf.GetValues(i, ir, val);
+         }
+         else
+         {
+            const int npts = ir.GetNPoints(), ndof = fe->GetDof();
+            const DenseMatrix &S = shape_matrix(fe, ir);
+            DofTransformation doftrans;
+            gfes->GetElementDofs(i, dofs, doftrans);
+            gfes->DofsToVDofs(0, dofs);   // no-op when vdim == 1, which vec_dim
+                                          // == 1 implies; kept for exactness
+            loc_data.SetSize(ndof);
+            gf.GetSubVector(dofs, loc_data);
+            doftrans.InvTransformPrimal(loc_data);
+            val.SetSize(npts);
+            S.Mult(loc_data, val);
+         }
          for (int j = 0; j < val.Size(); j++)
          {
             WriteBinaryOrASCII(os, buf, val(j), "\n", pv_data_format);
@@ -1158,7 +1226,38 @@ void ParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref_,
       {
          RefG = GlobGeometryRefiner.Refine(
                    mesh->GetElementBaseGeometry(i), ref_, 1);
-         it->second->GetVectorValues(i, RefG->RefPts, vval, pmat);
+         const FiniteElement *fe = gfes->GetFE(i);
+         const IntegrationRule &ir = RefG->RefPts;
+         // A scalar basis replicated over vdim components shares one shape matrix.
+         // Vector-valued bases (RT/ND) do not: CalcVShape applies a Piola map from the
+         // element Jacobian at each point.
+         if (!can_cache || fe->GetRangeType() != FiniteElement::SCALAR ||
+             fe->GetMapType() != FiniteElement::VALUE)
+         {
+            ElementTransformation *Tr = gfes->GetElementTransformation(i);
+            gf.GetVectorValues(*Tr, ir, vval);
+         }
+         else
+         {
+            const int npts = ir.GetNPoints(), ndof = fe->GetDof();
+            const int vd = gfes->GetVDim();
+            const DenseMatrix &S = shape_matrix(fe, ir);
+            DofTransformation doftrans;
+            gfes->GetElementVDofs(i, dofs, doftrans);
+            gf.GetSubVector(dofs, loc_data);
+            doftrans.InvTransformPrimal(loc_data);
+            // GetElementVDofs orders the local dofs in per-component blocks of
+            // length ndof, so component k starts at loc_data + ndof*k.
+            vval.SetSize(vd, npts);
+            comp_vals.SetSize(npts);
+            const real_t *d_loc = loc_data.HostRead();
+            real_t *d_comp = comp_vals.HostWrite();
+            for (int k = 0; k < vd; k++)
+            {
+               S.Mult(d_loc + ndof*k, d_comp);
+               for (int j = 0; j < npts; j++) { vval(k, j) = d_comp[j]; }
+            }
+         }
          for (int jj = 0; jj < vval.Width(); jj++)
          {
             for (int ii = 0; ii < vval.Height(); ii++)
