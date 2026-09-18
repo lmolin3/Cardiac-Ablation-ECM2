@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <memory>
 
-#include "../../linalg/dtensor.hpp"
+#include "linalg/dtensor.hpp"
 
 namespace mfem
 {

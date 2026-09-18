@@ -18,14 +18,13 @@
 // Sample runs:  mpirun -np 4 dfem-minimal-surface -der 0
 //               mpirun -np 4 dfem-minimal-surface -der 0 -o 2
 //               mpirun -np 4 dfem-minimal-surface -der 0 -r 1
+//               mpirun -np 4 dfem-minimal-surface -der 0 -o 2 -r 4 -pcamg
 //               mpirun -np 4 dfem-minimal-surface -der 1
 //               mpirun -np 4 dfem-minimal-surface -der 2
 //
 // Device sample runs:
-//               mpirun -np 4 dfem-minimal-surface -der 0 -r 1 -o 2 -d cuda
-//               mpirun -np 4 dfem-minimal-surface -der 1 -r 1 -o 2 -d cuda
-//             * mpirun -np 4 dfem-minimal-surface -der 0 -r 1 -o 2 -d hip
-//             * mpirun -np 4 dfem-minimal-surface -der 1 -r 1 -o 2 -d hip
+//               mpirun -np 4 dfem-minimal-surface -der 0 -r 1 -o 2 -d gpu
+//               mpirun -np 4 dfem-minimal-surface -der 1 -r 1 -o 2 -d gpu
 //
 // Description:  This example code demonstrates the use of MFEM to solve the
 //               minimal surface problem in 2D:
@@ -47,6 +46,8 @@
 //               visualization.
 
 #include "mfem.hpp"
+#include "../../fem/dfem/doperator.hpp"
+#include "../../fem/dfem/backends/local_qf/prelude.hpp"
 
 using namespace mfem;
 
@@ -115,11 +116,12 @@ public:
       auto operator()(
          const tensor<dscalar_t, dim> &dudxi,
          const tensor<real_t, dim, dim> &J,
-         const real_t &w) const
+         const real_t &w,
+         tensor<dscalar_t, dim> &dvdx) const
       {
          const auto invJ = inv(J);
          const auto dudx = dudxi * invJ;
-         return tuple{coeff(dudx) * dudx * transpose(invJ) * det(J) * w};
+         dvdx = coeff(dudx) * dudx * transpose(invJ) * det(J) * w;
       }
    };
 
@@ -134,7 +136,8 @@ public:
          const tensor<real_t, dim> &ddelta_udxi,
          const tensor<real_t, dim> &dudxi,
          const tensor<real_t, dim, dim> &J,
-         const real_t &w) const
+         const real_t &w,
+         tensor<real_t, dim> &dvdx) const
       {
          const auto invJ = inv(J);
          const auto dudx = dudxi * invJ;
@@ -144,11 +147,10 @@ public:
          const auto term1 = c * ddelta_udx;
          const auto term2 = c * c * c * dot(dudx, ddelta_udx) * dudx;
 
-         return tuple{(term1 - term2) * transpose(invJ) * det(J) * w};
+         dvdx = (term1 - term2) * transpose(invJ) * det(J) * w;
       }
    };
 
-private:
    // This class implements the Jacobian of the minimal surface operator. It
    // mostly acts as a wrapper to retrieve the Jacobian and apply essential
    // boundary conditions appropriately.
@@ -162,14 +164,9 @@ private:
          z(minsurface->Height())
       {
          minsurface->u.SetFromTrueDofs(x);
-         auto mesh_nodes = static_cast<ParGridFunction*>
-                           (minsurface->H1.GetParMesh()->GetNodes());
 
-         // One can retrieve the derivative of a DifferentiableOperator wrt a
-         // field variable if the derivative has been requested during the
-         // DifferentiableOperator::AddDomainIntegrator call.
-         dres_du = minsurface->res->GetDerivative(
-                      SOLUTION_U, {&minsurface->u}, {mesh_nodes});
+         MultiVector X{x, minsurface->mesh_nodes_tdofs};
+         dres_du = minsurface->res->GetDerivative(SOLUTION_U, X);
       }
 
       void Mult(const Vector &x, Vector &y) const override
@@ -177,14 +174,16 @@ private:
          z = x;
          z.SetSubVector(minsurface->ess_tdofs, 0.0);
 
-         dres_du->Mult(z, y);
+         MultiVector Y{y};
+         dres_du->Mult(z, Y);
 
-         auto d_y = y.HostReadWrite();
-         const auto d_x = x.HostRead();
-         for (int i = 0; i < minsurface->ess_tdofs.Size(); i++)
+         auto d_y = y.ReadWrite();
+         const auto d_x = x.Read();
+         const auto d_dofs = minsurface->ess_tdofs.Read();
+         mfem::forall(minsurface->ess_tdofs.Size(), [=] MFEM_HOST_DEVICE (int i)
          {
-            d_y[minsurface->ess_tdofs[i]] = d_x[minsurface->ess_tdofs[i]];
-         }
+            d_y[d_dofs[i]] = d_x[d_dofs[i]];
+         });
       }
 
       // Pointer to the wrapped MinimalSurface operator
@@ -215,22 +214,20 @@ private:
          Array<int> all_domain_attr(minsurface->H1.GetMesh()->attributes.Max());
          all_domain_attr = 1;
 
-         auto &mesh_nodes = *static_cast<ParGridFunction *>
-                            (minsurface->H1.GetParMesh()->GetNodes());
-         auto &mesh_nodes_fes = *mesh_nodes.ParFESpace();
-
-         std::vector<FieldDescriptor> solutions =
+         std::vector<FieldDescriptor> inputs =
          {
-            {DIRECTION_U, &minsurface->H1}
-         };
-         std::vector<FieldDescriptor> parameters =
-         {
+            {DIRECTION_U, &minsurface->H1},
             {SOLUTION_U, &minsurface->H1},
-            {MESH_NODES, &mesh_nodes_fes}
+            {MESH_NODES, minsurface->mesh_nodes_fes}
+         };
+
+         std::vector<FieldDescriptor> outputs =
+         {
+            {SOLUTION_U, &minsurface->H1}
          };
 
          dres_du = std::make_shared<DifferentiableOperator>(
-                      solutions, parameters, *minsurface->H1.GetParMesh());
+                      inputs, outputs, *minsurface->H1.GetParMesh());
 
          auto input_operators = tuple
          {
@@ -246,12 +243,13 @@ private:
          };
 
          ManualDerivativeApply manual_derivative_apply;
-         dres_du->AddDomainIntegrator(manual_derivative_apply, input_operators,
-                                      output_operators, minsurface->ir,
-                                      all_domain_attr);
+         dres_du->AddDomainIntegrator<LocalQFBackend>(manual_derivative_apply,
+                                                      input_operators,
+                                                      output_operators, minsurface->ir,
+                                                      all_domain_attr);
 
-         minsurface->u.SetFromTrueDofs(x);
-         dres_du->SetParameters({&minsurface->u, &mesh_nodes});
+         x0.SetSize(x.Size());
+         x0 = x;
       }
 
       void Mult(const Vector &x, Vector &y) const override
@@ -259,7 +257,9 @@ private:
          z = x;
          z.SetSubVector(minsurface->ess_tdofs, 0.0);
 
-         dres_du->Mult(z, y);
+         MultiVector X{z, x0, minsurface->mesh_nodes_tdofs};
+         MultiVector Y{y};
+         dres_du->Mult(X, Y);
 
          auto d_y = y.HostReadWrite();
          const auto d_x = x.HostRead();
@@ -271,9 +271,9 @@ private:
 
       const MinimalSurface *minsurface = nullptr;
       std::shared_ptr<DifferentiableOperator> dres_du;
+      Vector x0;
       mutable Vector z;
    };
-
 
 public:
    MinimalSurface(ParFiniteElementSpace &H1,
@@ -290,7 +290,8 @@ public:
 
       auto &mesh_nodes =
          *static_cast<ParGridFunction *>(H1.GetParMesh()->GetNodes());
-      auto &mesh_nodes_fes = *mesh_nodes.ParFESpace();
+      mesh_nodes_fes = mesh_nodes.ParFESpace();
+      mesh_nodes.GetTrueDofs(mesh_nodes_tdofs);
 
       // The following section is the heart of this example. It shows how to
       // create and interact with the DifferentialOperator class.
@@ -298,14 +299,16 @@ public:
       // The constructor of DifferentiableOperator takes two vectors of
       // FieldDescriptors. A FieldDescriptor can be viewed as a a pair of an
       // identifier (the field ID) and it's accompanying space.
-      std::vector<FieldDescriptor> solutions;
-      solutions.push_back(FieldDescriptor(SOLUTION_U, &H1));
-      std::vector<FieldDescriptor> parameters;
-      parameters.push_back(FieldDescriptor(MESH_NODES, &mesh_nodes_fes));
+      std::vector<FieldDescriptor> inputs;
+      inputs.emplace_back(SOLUTION_U, &H1);
+      inputs.emplace_back(MESH_NODES, mesh_nodes_fes);
+
+      std::vector<FieldDescriptor> outputs;
+      outputs.emplace_back(SOLUTION_U, &H1);
 
       // Create the DifferentiableOperator on the desired mesh.
       res = std::make_shared<DifferentiableOperator>(
-               solutions, parameters, *H1.GetParMesh());
+               inputs, outputs, *H1.GetParMesh());
 
       // DifferentiableOperator::AddIntegrator consists mainly of multiple
       // components. The input and output operators and the pointwise
@@ -352,16 +355,9 @@ public:
       // formed integrator should be formed. This is necessary to specify at
       // compile time in order to instantiate the correct functions.
       auto derivatives = std::integer_sequence<size_t, SOLUTION_U> {};
-      res->AddDomainIntegrator(mf_apply_qf, input_operators, output_operators,
-                               ir, all_domain_attr, derivatives);
-
-      // Before we are able to use DifferentiableOperator::Mult, we need to call
-      // DifferentiableOperator::SetParameters to set the parameters of the
-      // operator. Here, only the mesh node function is required. We do this
-      // here once, because we know that the nodes won't change. If they do,
-      // we'd have to call SetParameters before each call to Mult. This is done
-      // to be mathematically consistent with fixing paramaters.
-      res->SetParameters({&mesh_nodes});
+      res->AddDomainIntegrator<LocalQFBackend>(
+         mf_apply_qf, input_operators, output_operators,
+         ir, all_domain_attr, derivatives);
 
       Array<int> ess_bdr(H1.GetParMesh()->bdr_attributes.Max());
       ess_bdr = 1;
@@ -370,7 +366,9 @@ public:
 
    void Mult(const Vector &x, Vector &y) const override
    {
-      res->Mult(x, y);
+      MultiVector X{x, mesh_nodes_tdofs};
+      MultiVector Y{y};
+      res->Mult(X, Y);
       y.SetSubVector(ess_tdofs, 0.0);
    }
 
@@ -396,11 +394,22 @@ public:
       }
    }
 
+   std::shared_ptr<MinimalSurfaceJacobian> GetJacobian()
+   {
+      return dres_du;
+   }
+
+   const Array<int>& GetEssentialTrueDofs() const
+   {
+      return ess_tdofs;
+   }
+
 private:
-   ParFiniteElementSpace &H1;
+   ParFiniteElementSpace &H1, *mesh_nodes_fes = nullptr;
    const IntegrationRule &ir;
 
    mutable ParGridFunction u;
+   Vector mesh_nodes_tdofs;
 
    Array<int> ess_tdofs;
 
@@ -409,6 +418,45 @@ private:
    mutable std::shared_ptr<MinimalSurfaceHandcodedJacobian> man_dres_du;
    mutable std::shared_ptr<FDJacobian> fd_jac;
    int derivative_type;
+};
+
+template <typename dscalar_t, int dim = 2>
+class AMGPC : public Solver
+{
+public:
+   AMGPC(Operator &op) :
+      Solver(op.Height()),
+      op(op)
+   {}
+
+   void SetOperator(const Operator &) override
+   {
+      auto minsurface = static_cast<MinimalSurface<dscalar_t, dim>&>(op);
+      // We leverage dFEM to assemble the Jacobian of the minimal surface
+      // operator into a HypreParMatrix.
+      delete A;
+      A = nullptr;
+      minsurface.GetJacobian()->dres_du->Assemble(A);
+      auto Ae = A->EliminateRowsCols(minsurface.GetEssentialTrueDofs());
+      delete Ae;
+      amg.SetPrintLevel(0);
+      amg.SetOperator(*A);
+   }
+
+   void Mult(const Vector &x, Vector &y) const override
+   {
+      amg.Mult(x, y);
+   }
+
+   ~AMGPC()
+   {
+      delete A;
+   }
+
+private:
+   Operator &op;
+   HypreParMatrix *A = nullptr;
+   HypreBoomerAMG amg;
 };
 
 // Boundary function for the minimal surface problem described by the Scherk
@@ -438,6 +486,7 @@ int main(int argc, char *argv[])
    bool visualization = true;
    int refinements = 0;
    int derivative_type = AUTODIFF;
+   bool enable_pcamg = false;
 
    OptionsParser args(argc, argv);
    args.AddOption(&order, "-o", "--order",
@@ -451,7 +500,8 @@ int main(int argc, char *argv[])
    args.AddOption(&derivative_type, "-der", "--derivative-type",
                   "Derivative computation type: 0=AutomaticDifferentiation,"
                   " 1=HandCoded, 2=FiniteDifference");
-
+   args.AddOption(&enable_pcamg, "-pcamg", "--pcamg", "-no-pcamg", "--no-pcamg",
+                  "Enable AMG as a preconditioner when using automatic differentiation.");
    args.ParseCheck();
 
    // 3. Enable hardware devices such as GPUs, and programming models such as
@@ -526,6 +576,20 @@ int main(int argc, char *argv[])
    krylov.SetRelTol(1e-4);
    krylov.SetMaxIter(500);
    krylov.SetPrintLevel(2);
+
+   std::shared_ptr<AMGPC<real_t>> amgpc;
+   if (enable_pcamg)
+   {
+      if (derivative_type == AUTODIFF)
+      {
+         amgpc.reset(new AMGPC<real_t>(*minsurface));
+         krylov.SetPreconditioner(*amgpc);
+      }
+      else
+      {
+         MFEM_ABORT("AMG only available for the AUTODIFF derivative type");
+      }
+   }
 
    // 13. Set up the nonlinear solver (Newton) for the minimal surface equation
    NewtonSolver newton(MPI_COMM_WORLD);

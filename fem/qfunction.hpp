@@ -27,6 +27,8 @@ protected:
    bool own_qspace; ///< Does this own the associated QuadratureSpaceBase?
    int vdim; ///< Vector dimension.
 
+   void ProjectGridFunctionFallback(const GridFunction &gf);
+
 public:
    /// Default constructor, results in an empty vector.
    QuadratureFunction() : qspace(nullptr), own_qspace(false), vdim(0)
@@ -76,6 +78,27 @@ public:
    {
       Vector::operator=(orig);
    }
+
+   /** @brief Construct a QuadratureFunction on the given
+       VectorQuadratureSpace, @a vqspace.
+
+       After construction, the QuadratureFunction does not need the
+       VectorQuadratureSpace object. Instead, it uses directly its underlying
+       QuadratureSpaceBase object. */
+   QuadratureFunction(VectorQuadratureSpace &vqspace)
+      : QuadratureFunction(*vqspace.GetSpace(), vqspace.GetVDim())
+   { }
+
+   /** @brief Construct a QuadratureFunction on the given
+       VectorQuadratureSpace, @a vqspace, with the given MemoryType, @a mt, used
+       for the underlying Vector object.
+
+       After construction, the QuadratureFunction does not need the
+       VectorQuadratureSpace object. Instead, it uses directly its underlying
+       QuadratureSpaceBase object. */
+   QuadratureFunction(VectorQuadratureSpace &vqspace, MemoryType mt)
+      : QuadratureFunction(*vqspace.GetSpace(), mt, vqspace.GetVDim())
+   { }
 
    /// Read a QuadratureFunction from the stream @a in.
    /** The QuadratureFunction assumes ownership of the read QuadratureSpace. */
@@ -269,10 +292,7 @@ inline void QuadratureFunction::GetValues(
    const int s_offset = qspace->Offset(idx);
    const int sl_size = qspace->Offset(idx + 1) - s_offset;
    // Make the values matrix memory an alias of the quadrature function memory
-   Memory<real_t> &values_mem = values.GetMemory();
-   values_mem.Delete();
-   values_mem.MakeAlias(GetMemory(), vdim*s_offset, vdim*sl_size);
-   values.SetSize(vdim, sl_size);
+   values.MakeRef(GetMemory(), vdim*s_offset, vdim, sl_size);
 }
 
 inline void QuadratureFunction::GetValues(

@@ -18,9 +18,9 @@
 #define MFEM_CONFIG_HPP
 
 #ifdef MFEM_CONFIG_FILE
-#include MFEM_CONFIG_FILE
+#include MFEM_CONFIG_FILE // IWYU pragma: export
 #else
-#include "_config.hpp"
+#include "_config.hpp" // IWYU pragma: export
 #endif
 
 #include <cstdint>
@@ -156,5 +156,11 @@ constexpr real_t operator""_r(unsigned long long v)
 #error Building with PUMI (MFEM_USE_PUMI=YES) requires MPI (MFEM_USE_MPI=YES)
 #endif
 #endif // MFEM_USE_MPI not defined
+
+#ifndef MFEM_USE_CUDA
+#ifdef MFEM_USE_CUDSS
+#error Building with cuDSS (MFEM_USE_CUDSS=YES) requires CUDA (MFEM_USE_CUDA=YES)
+#endif
+#endif // MFEM_USE_CUDSS not defined
 
 #endif // MFEM_CONFIG_HPP

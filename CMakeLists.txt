@@ -59,7 +59,7 @@ project(mfem NONE)
 # Current version of MFEM, see also `makefile`.
 #   mfem_VERSION = (string)
 #   MFEM_VERSION = (int)   [automatically derived from mfem_VERSION]
-set(${PROJECT_NAME}_VERSION 4.8.1)
+set(${PROJECT_NAME}_VERSION 4.9.1)
 
 # Prohibit in-source build
 if (${PROJECT_SOURCE_DIR} STREQUAL ${PROJECT_BINARY_DIR})
@@ -184,6 +184,45 @@ if (MFEM_USE_CUDA)
    set(CMAKE_CUDA_EXTENSIONS OFF CACHE BOOL "Enable CUDA standard extensions.")
    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CUDA_FLAGS}")
    find_package(CUDAToolkit REQUIRED)
+   if(CMAKE_CUDA_COMPILER_ID STREQUAL "Clang")
+     set(_real_fatbinary "${CMAKE_CUDA_FATBINARY}")
+     set(_fatbinary_wrapper
+       "${CMAKE_BINARY_DIR}/cmake-fatbinary-cuda13")
+
+     file(WRITE "${_fatbinary_wrapper}"
+"#!/usr/bin/env bash
+real_fatbinary=\"${_real_fatbinary}\"
+"
+[=[
+translated=()
+
+for argument in "$@"; do
+  case "$argument" in
+    -im=profile=sm_*,file=*)
+      value=${argument#-im=profile=sm_}
+      architecture=${value%%,*}
+      filename=${value#*,file=}
+      translated+=(
+        "--image3=kind=elf,sm=${architecture},file=${filename}"
+      )
+      ;;
+    *)
+      translated+=("$argument")
+      ;;
+  esac
+done
+
+exec "$real_fatbinary" "${translated[@]}"
+]=])
+
+    file(CHMOD "${_fatbinary_wrapper}"
+    PERMISSIONS
+      OWNER_READ OWNER_WRITE OWNER_EXECUTE
+      GROUP_READ GROUP_EXECUTE
+      WORLD_READ WORLD_EXECUTE)
+
+    set(CMAKE_CUDA_FATBINARY "${_fatbinary_wrapper}")
+endif()
    set(CUSPARSE_FOUND TRUE)
    set(CUBLAS_FOUND TRUE)
    # Initialize CUSPARSE_LIBRARIES and CUBLAS_LIBRARIES:
@@ -237,6 +276,13 @@ if (CMAKE_BUILD_TYPE MATCHES "Debug|debug|DEBUG")
   set(MFEM_DEBUG ON)
 else()
   set(MFEM_DEBUG OFF)
+endif()
+
+# Shadow warnings for clang only; GCC's -Wshadow flags more.
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -pedantic -Wall -Wshadow")
+elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -pedantic -Wall")
 endif()
 
 # Shared build on Windows
@@ -433,6 +479,15 @@ if (MFEM_USE_STRUMPACK)
   endif()
 endif()
 
+# cuDSS can only be enabled in CUDA
+if (MFEM_USE_CUDSS)
+  if (MFEM_USE_CUDA)
+    find_package(CUDSS REQUIRED)
+  else()
+    message(FATAL_ERROR " *** cuDSS requires that CUDA be enabled.")
+  endif()
+endif()
+
 # GnuTLS
 if (MFEM_USE_GNUTLS)
   find_package(_GnuTLS REQUIRED)
@@ -592,6 +647,13 @@ if (MFEM_USE_ENZYME)
     set(ENZYME_INCLUDE_DIRS ${ENZYME_DIR}/include)
 endif()
 
+if (MFEM_USE_PROTEUS)
+    enable_language(C)
+    find_package(proteus REQUIRED PATHS "${PROTEUS_DIR}")
+    message(STATUS "${PROTEUS_DIR}/include")
+    include_directories("${PROTEUS_DIR}/include")
+endif()
+
 # MFEM_TIMER_TYPE
 if (NOT DEFINED MFEM_TIMER_TYPE)
   if (APPLE)
@@ -631,7 +693,7 @@ find_package(Threads REQUIRED)
 set(MFEM_TPLS OPENMP HYPRE LAPACK BLAS SuperLUDist STRUMPACK METIS SuiteSparse
     SUNDIALS PETSC SLEPC MUMPS AXOM FMS CONDUIT Ginkgo GNUTLS GSLIB HDF5
     NETCDF MPFR PUMI HIOP POSIXCLOCKS MFEMBacktrace ZLIB OCCA CEED RAJA UMPIRE
-    ADIOS2 MKL_CPARDISO MKL_PARDISO AMGX MAGMA CUSPARSE CUBLAS CALIPER CODIPACK
+    ADIOS2 MKL_CPARDISO MKL_PARDISO AMGX MAGMA CUSPARSE CUBLAS CUDSS CALIPER CODIPACK
     BENCHMARK PARELAG TRIBOL MPI_CXX HIP HIPBLAS HIPSPARSE MOONOLITH BLITZ
     ALGOIM ENZYME CUDA::cudart)
 
@@ -652,6 +714,8 @@ foreach(TPL IN LISTS MFEM_TPLS)
   endif()
 endforeach(TPL)
 
+# reverse to remove the first instance of entries in TPL_LIBRARIES
+# so later duplicates are kept (for dependency ordering)
 list(REVERSE TPL_LIBRARIES)
 list(REMOVE_DUPLICATES TPL_LIBRARIES)
 list(REVERSE TPL_LIBRARIES)
@@ -723,8 +787,19 @@ set(MFEM_INSTALL_DIR ${CMAKE_INSTALL_PREFIX})
 
 # Declaring the library
 mfem_add_library(mfem ${SOURCES} ${HEADERS} ${MASTER_HEADERS})
+target_compile_features(mfem PUBLIC cxx_std_${CMAKE_CXX_STANDARD})
 # message(STATUS "TPL_LIBRARIES = ${TPL_LIBRARIES}")
 target_link_libraries(mfem PUBLIC ${TPL_LIBRARIES} ${TPL_TARGETS})
+
+if (MFEM_USE_PROTEUS)
+    add_library(ClangProteusFlags INTERFACE IMPORTED)
+    set_target_properties(ClangProteusFlags PROPERTIES
+        INTERFACE_COMPILE_OPTIONS "-fpass-plugin=$<TARGET_FILE:ProteusPass>"
+    )
+    target_link_libraries(mfem PUBLIC ClangProteusFlags)
+    target_link_libraries(mfem PUBLIC proteus)
+endif()
+
 if (TPL_TARGETS)
   add_dependencies(mfem ${TPL_TARGETS})
 endif()
@@ -732,7 +807,7 @@ if (MINGW)
   target_link_libraries(mfem PRIVATE ws2_32)
 endif()
 if (MSVC)
-  target_compile_options(mfem PUBLIC "/wd4819")
+  target_compile_options(mfem PUBLIC "/wd4819" "/bigobj")
 endif()
 message(STATUS "TPL_INCLUDE_DIRS = ${TPL_INCLUDE_DIRS}")
 target_include_directories(mfem
@@ -761,7 +836,7 @@ set_target_properties(mfem PROPERTIES SOVERSION "${mfem_VERSION}")
 # If building out-of-source, define MFEM_CONFIG_FILE to point to the config file
 # inside the build directory.
 if (NOT ("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}"))
-  target_compile_definitions(mfem PRIVATE
+  target_compile_definitions(mfem PUBLIC
     "MFEM_CONFIG_FILE=\"${PROJECT_BINARY_DIR}/config/_config.hpp\"")
 endif()
 
@@ -821,16 +896,15 @@ if (MFEM_ENABLE_TESTING)
   add_mfem_target(${MFEM_ALL_TESTS_TARGET_NAME} OFF)
   add_subdirectory(tests EXCLUDE_FROM_ALL)
 
-  if (MFEM_USE_BENCHMARK)
-    # Create a target for all benchmarks and, optionally, enable it.
-    set(MFEM_ALL_BENCHMARKS_TARGET_NAME benchmarks)
-    add_mfem_target(${MFEM_ALL_BENCHMARKS_TARGET_NAME}
-                    ${MFEM_ENABLE_BENCHMARKS})
-    if (MFEM_ENABLE_BENCHMARKS)
-      add_subdirectory(tests/benchmarks) #install benchmarks if enabled
-    else()
-      add_subdirectory(tests/benchmarks EXCLUDE_FROM_ALL)
-    endif()
+  # Create a target for all benchmarks and, optionally, enable it. Some simple
+  # timer-based benchmarks in tests/benchmarks do not require Google Benchmark.
+  set(MFEM_ALL_BENCHMARKS_TARGET_NAME benchmarks)
+  add_mfem_target(${MFEM_ALL_BENCHMARKS_TARGET_NAME}
+                  ${MFEM_ENABLE_BENCHMARKS})
+  if (MFEM_ENABLE_BENCHMARKS)
+    add_subdirectory(tests/benchmarks) #install benchmarks if enabled
+  else()
+    add_subdirectory(tests/benchmarks EXCLUDE_FROM_ALL)
   endif()
 endif()
 
@@ -869,11 +943,12 @@ add_dependencies(exec
 #  - https://cmake.org/Bug/view.php?id=8438
 
 # Add a target to copy the mfem data directory to the build directory
-add_custom_command(OUTPUT data_is_copied
-  COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_SOURCE_DIR}/data data
-  COMMAND ${CMAKE_COMMAND} -E touch data_is_copied
-  COMMENT "Copying the data directory ...")
-add_custom_target(copy_data DEPENDS data_is_copied)
+# Implementable as a single copy_directory_if_different command w/ CMake >= 3.26
+file(GLOB DATA_FILES CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/data/*)
+add_custom_target(copy_data
+  COMMAND ${CMAKE_COMMAND} -E make_directory data
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DATA_FILES} data
+  COMMENT "Syncing the data directory ...")
 # Add 'copy_data' as a prerequisite for all executables, if the source and the
 # build directories are not the same.
 if (NOT ("${PROJECT_SOURCE_DIR}" STREQUAL "${PROJECT_BINARY_DIR}"))
@@ -1005,9 +1080,16 @@ install(FILES
 install(EXPORT ${PROJECT_NAME_UC}Targets
     DESTINATION ${INSTALL_CMAKE_DIR})
 
+# Install the data directory if present, i.e. if the copy_data target is built
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/data
+  DESTINATION ${MFEM_INSTALL_DIR} OPTIONAL)
+
+
 #-------------------------------------------------------------------------------
 # Create 'config.mk' from 'config.mk.in' for the build and install locations and
 # define install rules for 'config.mk' and 'test.mk'
 #-------------------------------------------------------------------------------
-
+if (MFEM_USE_CUDA OR MFEM_USE_HIP)
+  option(MFEM_EXPORT_GPU_CONFIG "Export config.mk for GPU-enabled downstream packages" ON)
+endif()
 mfem_export_mk_files()
