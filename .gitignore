@@ -498,10 +498,10 @@ TAGS
 miniapps/electrophysiology-ecm2/README.md
 .gitignore
 
-# Electrophysiology validation outputs: simulation results are reproducible from
-# the configs and scripts in miniapps/electrophysiology-ecm2/validation, and the
-# ParaView trees run to hundreds of MB per run.
-miniapps/electrophysiology-ecm2/validation/results/
+# Electrophysiology validation workspace: analysis scripts, run configs, study
+# outputs and reports. Local working material, not repository content. The
+# heart-geometry driver itself is committed as miniapps/.../tests/cardiac_ep.cpp.
+miniapps/electrophysiology-ecm2/validation/
 miniapps/electrophysiology-ecm2/**/Output/
 
 # Local patch files used to stage the dfem-dev merge; the content lives in git history.

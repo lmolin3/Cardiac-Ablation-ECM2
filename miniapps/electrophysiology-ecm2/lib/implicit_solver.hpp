@@ -107,6 +107,8 @@ namespace electrophysiology
         /// Iterations taken by the last solve (diagnostic).
         int GetNumIterations() const
         { return linear_solver ? linear_solver->GetNumIterations() : 0; }
+        bool GetConverged() const
+        { return linear_solver && linear_solver->GetConverged(); }
 
         virtual ~ImplicitSolverBase() = default;
     };
@@ -146,6 +148,8 @@ namespace electrophysiology
         OperatorHandle opT;
         ParFiniteElementSpace *fes; //< NOT OWNED
         std::unique_ptr<ParBilinearForm> T_form;
+        const IntegrationRule *integration_rule;
+        const IntegrationRule *mass_integration_rule;
         std::unique_ptr<ParLORDiscretization> lor;
         std::unique_ptr<ScalarMatrixProductCoefficient> dt_diff_coeff;
         // Separate form + scalar coefficients used only to build the LOR
@@ -167,7 +171,9 @@ namespace electrophysiology
         ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
                          BCHandler *bcs_, Array<int> &ess_tdof_list_,
                          MatrixCoefficient *diff_coeff_, Coefficient *mass_coeff_,
-                         int prec_type = 0, real_t rel_tol_ = 1e-6);
+                         int prec_type = 0, real_t rel_tol_ = 1e-6,
+                         const IntegrationRule *ir = nullptr,
+                         const IntegrationRule *mass_ir = nullptr);
 
         void EliminateBC(const Vector &x, Vector &b) const override;
 
@@ -179,4 +185,3 @@ namespace electrophysiology
 } // namespace electrophysiology
 
 } // namespace mfem
-

@@ -11,11 +11,11 @@ namespace mfem
     {
 
         // Gotran generated C/C++ code for the "fenton_karma_1998" model (converted from CellML, MBR version)
-        class FentonKarma : public GotranxODEModel
+        class FentonKarma : public EPModelBase
         {
         public:
             // Constructor to initialize the base class metadata
-            FentonKarma() : GotranxODEModel()
+            FentonKarma() : EPModelBase()
             {
                 NUM_STATES = 3;
                 NUM_PARAMS = 21;
@@ -32,6 +32,10 @@ namespace mfem
 
                 dimensionless = true; // Fenton-Karma model is dimensionless
             }
+
+            std::string GetName() const override { return "Fenton-Karma 1998"; }
+
+            int GetPotentialIndex() const override { return Kernel::potential_idx; }
 
             // Parameter index
             int parameter_index(const char name[])

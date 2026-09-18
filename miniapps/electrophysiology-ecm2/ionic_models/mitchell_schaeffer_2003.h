@@ -8,11 +8,11 @@ namespace mfem
     {
 
         // Gotran generated C/C++ code for the "mitchell_schaeffer_2003" model (converted from CellML)
-        class MitchellSchaeffer : public GotranxODEModel
+        class MitchellSchaeffer : public EPModelBase
         {
         public:
             // Constructor to initialize the base class metadata
-            MitchellSchaeffer() : GotranxODEModel()
+            MitchellSchaeffer() : EPModelBase()
             {
                 NUM_STATES = Kernel::nstates;
                 NUM_PARAMS = Kernel::nparams;
@@ -33,6 +33,10 @@ namespace mfem
                 dimensionless = Kernel::dimensionless; // Mitchell-Schaeffer model uses dimensionless potential
                 stim_sign = Kernel::stim_sign;
             }
+
+            std::string GetName() const override { return "Mitchell-Schaeffer 2003"; }
+
+            int GetPotentialIndex() const override { return Kernel::potential_idx; }
 
             // Set stimulation parameters - accepts variable number of parameters
             /*template <typename... Args>

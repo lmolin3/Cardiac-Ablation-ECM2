@@ -1,0 +1,210 @@
+[
+  {
+    "class": "TP06Epi",
+    "name": "ten Tusscher-Panfilov 2006 (epicardial)",
+    "base": "EPModelBase",
+    "ode": "cellml/tp06_epi.ode",
+    "generated": "cellml/tp06_epi_generated.h",
+    "output": "tentusscher_panfilov_2006_epi.h",
+    "doc": "ten Tusscher-Panfilov 2006 human ventricular epicardial cell model.",
+    "dimensionless": false,
+    "stim_sign": "1.0",
+    "indices": {
+      "potential_idx": [
+        "state_index",
+        "V"
+      ],
+      "calcium_idx": [
+        "state_index",
+        "Ca_i"
+      ],
+      "stim_ampl_idx": [
+        "parameter_index",
+        "stim_amplitude"
+      ],
+      "stim_duration_idx": [
+        "parameter_index",
+        "stim_duration"
+      ],
+      "stim_start_idx": [
+        "parameter_index",
+        "stim_start"
+      ],
+      "stim_end_idx": [
+        "parameter_index",
+        "stim_end"
+      ],
+      "stim_period_idx": [
+        "parameter_index",
+        "stim_period"
+      ]
+    },
+    "ctor_body": [
+      "NUM_STATES = Kernel::nstates;",
+      "NUM_PARAMS = Kernel::nparams;",
+      "NUM_MONITORED = Kernel::nmonitored;",
+      "",
+      "potential_idx = state_index(\"V\");",
+      "stim_ampl_idx = parameter_index(\"stim_amplitude\");",
+      "stim_duration_idx = parameter_index(\"stim_duration\");",
+      "stim_start_idx = parameter_index(\"stim_start\");",
+      "stim_end_idx = parameter_index(\"stim_end\");",
+      "stim_period_idx = parameter_index(\"stim_period\");",
+      "",
+      "// The device kernel hard-codes these as compile-time constants; keep",
+      "// the name-lookup path and the constants from drifting apart.",
+      "MFEM_ASSERT(potential_idx == Kernel::potential_idx, \"potential_idx mismatch\");",
+      "MFEM_ASSERT(stim_ampl_idx == Kernel::stim_ampl_idx, \"stim_ampl_idx mismatch\");",
+      "MFEM_ASSERT(state_index(\"Ca_i\") == Kernel::calcium_idx, \"calcium_idx mismatch\");",
+      "",
+      "dimensionless = Kernel::dimensionless;   // physiological mV",
+      "stim_sign = Kernel::stim_sign;",
+      "",
+      "// TP06 is physiological: the ODE emits millivolts directly, so this range is",
+      "// only ReactionSolver's blow-up guard and must never bind on a valid solution.",
+      "// It is set just outside the Nernst potentials, which bracket what the model",
+      "// can physically reach: E_K is about -86 mV and E_Na about +75 mV, against a",
+      "// resting potential of -85.2 mV and an upstroke peak converging to about",
+      "// +37 mV. Anything outside these rails is a blow-up, not an action potential.",
+      "Vmin_default = -95.0;",
+      "Vmax_default = 80.0;"
+    ],
+    "extra_members": [
+      "int GetPotentialIndex() const override { return Kernel::potential_idx; }",
+      "",
+      "/// TP06 resolves [Ca2+]i explicitly, so it can drive a contraction model.",
+      "bool HasCalcium() const override { return true; }",
+      "int GetCalciumIndex() const override { return Kernel::calcium_idx; }"
+    ]
+  },
+  {
+    "class": "TP06Endo",
+    "name": "ten Tusscher-Panfilov 2006 (endocardial)",
+    "base": "EPModelBase",
+    "ode": "cellml/tp06_endo.ode",
+    "generated": "cellml/tp06_endo_generated.h",
+    "output": "tentusscher_panfilov_2006_endo.h",
+    "doc": "ten Tusscher-Panfilov 2006 human ventricular endocardial cell model.",
+    "dimensionless": false,
+    "stim_sign": "1.0",
+    "indices": {
+      "potential_idx": [
+        "state_index",
+        "V"
+      ],
+      "calcium_idx": [
+        "state_index",
+        "Ca_i"
+      ],
+      "stim_ampl_idx": [
+        "parameter_index",
+        "stim_amplitude"
+      ],
+      "stim_duration_idx": [
+        "parameter_index",
+        "stim_duration"
+      ],
+      "stim_start_idx": [
+        "parameter_index",
+        "stim_start"
+      ],
+      "stim_end_idx": [
+        "parameter_index",
+        "stim_end"
+      ],
+      "stim_period_idx": [
+        "parameter_index",
+        "stim_period"
+      ]
+    },
+    "ctor_body": [
+      "NUM_STATES = Kernel::nstates;",
+      "NUM_PARAMS = Kernel::nparams;",
+      "NUM_MONITORED = Kernel::nmonitored;",
+      "",
+      "potential_idx = state_index(\"V\");",
+      "stim_ampl_idx = parameter_index(\"stim_amplitude\");",
+      "stim_duration_idx = parameter_index(\"stim_duration\");",
+      "stim_start_idx = parameter_index(\"stim_start\");",
+      "stim_end_idx = parameter_index(\"stim_end\");",
+      "stim_period_idx = parameter_index(\"stim_period\");",
+      "",
+      "MFEM_ASSERT(potential_idx == Kernel::potential_idx, \"potential_idx mismatch\");",
+      "MFEM_ASSERT(stim_ampl_idx == Kernel::stim_ampl_idx, \"stim_ampl_idx mismatch\");",
+      "MFEM_ASSERT(state_index(\"Ca_i\") == Kernel::calcium_idx, \"calcium_idx mismatch\");",
+      "",
+      "dimensionless = Kernel::dimensionless;",
+      "stim_sign = Kernel::stim_sign;",
+      "",
+      "// TP06 is physiological: the ODE emits millivolts directly, so this range is",
+      "// only ReactionSolver's blow-up guard and must never bind on a valid solution.",
+      "// It is set just outside the Nernst potentials, which bracket what the model",
+      "// can physically reach: E_K is about -86 mV and E_Na about +75 mV, against a",
+      "// resting potential of -85.2 mV and an upstroke peak converging to about",
+      "// +37 mV. Anything outside these rails is a blow-up, not an action potential.",
+      "Vmin_default = -95.0;",
+      "Vmax_default = 80.0;"
+    ],
+    "extra_members": [
+      "int GetPotentialIndex() const override { return Kernel::potential_idx; }",
+      "",
+      "bool HasCalcium() const override { return true; }",
+      "int GetCalciumIndex() const override { return Kernel::calcium_idx; }"
+    ]
+  },
+  {
+    "class": "Land17Model",
+    "name": "Land et al. 2017 contraction",
+    "base": "ContractionModelBase",
+    "ode": "land_2017.ode",
+    "generated": "cellml/land_2017_generated.h",
+    "output": "land_2017.h",
+    "doc": "Land et al. 2017 human cardiomyocyte active contraction model.",
+    "dimensionless": false,
+    "stim_sign": "1.0",
+    "indices": {
+      "calcium_param_idx": [
+        "parameter_index",
+        "cai"
+      ],
+      "active_tension_monitor_idx": [
+        "monitor_index",
+        "Ta"
+      ],
+      "lmbda_param_idx": [
+        "parameter_index",
+        "lmbda"
+      ],
+      "dLambda_param_idx": [
+        "parameter_index",
+        "dLambda"
+      ]
+    },
+    "ctor_body": [
+      "NUM_STATES = Kernel::nstates;",
+      "NUM_PARAMS = Kernel::nparams;",
+      "NUM_MONITORED = Kernel::nmonitored;",
+      "",
+      "// Land 2017 has no membrane potential and no stimulus of its own: it is",
+      "// driven entirely by the calcium transient handed to it by the EP model.",
+      "potential_idx = -1;",
+      "",
+      "MFEM_ASSERT(parameter_index(\"cai\") == Kernel::calcium_param_idx, \"cai index mismatch\");",
+      "MFEM_ASSERT(monitor_index(\"Ta\") == Kernel::active_tension_monitor_idx, \"Ta index mismatch\");"
+    ],
+    "extra_members": [
+      "bool RequiresCalcium() const override { return true; }",
+      "",
+      "int GetActiveTensionIndex() const override",
+      "{ return Kernel::active_tension_monitor_idx; }",
+      "",
+      "/// Index of the calcium input within the parameter array.",
+      "int GetCalciumParameterIndex() const { return Kernel::calcium_param_idx; }",
+      "",
+      "void AdvanceODE(const ContractionStepArgs &args) const override",
+      "{",
+      "    ContractionAdvance<Kernel>(args);",
+      "}"
+    ]
+  }
+]

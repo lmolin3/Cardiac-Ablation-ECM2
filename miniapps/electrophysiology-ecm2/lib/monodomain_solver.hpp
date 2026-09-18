@@ -63,6 +63,22 @@ namespace mfem
 
       // Enable partial assembly
       void EnablePA(bool pa_ = false);
+      /// Optional common mass/diffusion rule; must outlive this solver.
+      void SetIntegrationRule(const IntegrationRule *ir) { integration_rule = ir; }
+
+      /** @brief Optional separate rule for the mass form only; must outlive this solver.
+       *
+       * The point of a separate rule is mass lumping. With an H1 Gauss-Lobatto
+       * basis and a *collocated* Gauss-Lobatto rule (one quadrature point per
+       * node) the mass matrix is diagonal, so M^{-1} costs a single scaling
+       * instead of a CG solve. That matters only on the explicit path, where
+       * Mult() applies M^{-1} every stage; the implicit path solves M + dt K and
+       * gains nothing. Collocation under-integrates the mass form, which on a
+       * curved mesh is a real approximation, so it is opt-in and reported. */
+      void SetMassIntegrationRule(const IntegrationRule *ir) { mass_integration_rule = ir; }
+
+      /// True when Setup() selected an explicit ODE solver.
+      bool UsesImplicitTimeIntegration() const { return implicit_time_integration; }
 
       /** @brief Enable reassembling the implicit solver at every time step
        * @note: this needs to be called before Setup()
@@ -135,6 +151,18 @@ namespace mfem
 
       // Get ess_tdof_list
       Array<int> &GetEssTDofList() { return ess_tdof_list; }
+      /// Iterations of the linear solve actually used by the last step: the
+      /// implicit M + dt K solve, or the mass solve on the explicit path.
+      int GetNumIterations() const
+      {
+         if (implicit_time_integration) { return T_solver ? T_solver->GetNumIterations() : 0; }
+         return M_solver ? M_solver->GetNumIterations() : 0;
+      }
+      bool GetConverged() const
+      {
+         if (implicit_time_integration) { return T_solver && T_solver->GetConverged(); }
+         return M_solver && M_solver->GetConverged();
+      }
 
       // Get the current solution gf
       ParGridFunction *GetPotentialGf() { return &u_gf; }
@@ -154,6 +182,11 @@ namespace mfem
       
       // Enable partial assembly
       bool pa; 
+      const IntegrationRule *integration_rule = nullptr;
+      const IntegrationRule *mass_integration_rule = nullptr;
+      /// The mass rule falls back to the common rule when none was set.
+      const IntegrationRule *MassIntegrationRule() const
+      { return mass_integration_rule ? mass_integration_rule : integration_rule; }
 
       // Bilinear/Linear Forms
       std::unique_ptr<ParLinearForm> fform;

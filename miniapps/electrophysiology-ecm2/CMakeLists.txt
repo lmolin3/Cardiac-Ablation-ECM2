@@ -21,6 +21,7 @@ if (MFEM_USE_MPI)
     ${EP_DIR}/lib/monodomain_solver.cpp
     ${EP_DIR}/lib/implicit_solver.cpp
     ${EP_DIR}/lib/reaction_solver.cpp
+    ${EP_DIR}/lib/hyperelasticity_solver.cpp
     ${EP_DIR}/bc/ep_bchandler.cpp
   )
 
@@ -28,9 +29,14 @@ if (MFEM_USE_MPI)
     ${EP_DIR}/lib/monodomain_solver.hpp
     ${EP_DIR}/lib/implicit_solvers.hpp
     ${EP_DIR}/lib/reaction_solver.hpp
+    ${EP_DIR}/lib/hyperelasticity_solver.hpp
+    ${EP_DIR}/lib/fiber_conductivity.hpp
     ${EP_DIR}/bc/ep_bchandler.hpp
     ${EP_DIR}/ionic_models/gotranx_wrapper.hpp
     ${EP_DIR}/ionic_models/mitchell_schaeffer_2003.h
+    ${EP_DIR}/ionic_models/tentusscher_panfilov_2006_epi.h
+    ${EP_DIR}/ionic_models/tentusscher_panfilov_2006_endo.h
+    ${EP_DIR}/ionic_models/land_2017.h
   )
 
   # If CUDA is enabled, tag source files for CUDA compilation
@@ -76,8 +82,29 @@ add_mfem_miniapp(test_thermal_coupling
       MAIN tests/test_thermal_damage_coupling.cpp
       LIBRARIES electrophysiology celldeath-ecm2)
 
-  add_mfem_miniapp(test_niederer_benchmark
+  add_mfem_miniapp(cardiac_ep
+      MAIN tests/cardiac_ep.cpp
+      LIBRARIES electrophysiology)
+
+add_mfem_miniapp(test_niederer_benchmark
       MAIN tests/test_niederer_benchmark.cpp
       LIBRARIES electrophysiology)
+
+  add_mfem_miniapp(bench_electromechanics
+      MAIN tests/bench_electromechanics.cpp
+      LIBRARIES electrophysiology)
+
+  add_mfem_miniapp(test_electromechanics
+      MAIN tests/test_electromechanics.cpp
+      LIBRARIES electrophysiology)
+
+
+
+
+
+
+
+
+
 
 endif () #MFEM_USE_MPI

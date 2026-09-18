@@ -124,11 +124,13 @@ ImplicitSolverFA::~ImplicitSolverFA()
 ImplicitSolverPA::ImplicitSolverPA(ParFiniteElementSpace *fes_, real_t dt_,
                                    BCHandler *bcs_, Array<int> &ess_tdof_list_,
                                    MatrixCoefficient *diff_coeff_, Coefficient *mass_coeff_,
-                                   int prec_type_, real_t rel_tol_)
+                                   int prec_type_, real_t rel_tol_, const IntegrationRule *ir,
+                                   const IntegrationRule *mass_ir)
     : ImplicitSolverBase(ess_tdof_list_), fes(fes_), T_form(nullptr),
       lor(nullptr), dt_diff_coeff(nullptr),
       mass_coeff(mass_coeff_), diff_coeff(diff_coeff_),
-      bcs(bcs_), prec_type(prec_type_), rel_tol(rel_tol_)
+      bcs(bcs_), prec_type(prec_type_), rel_tol(rel_tol_), integration_rule(ir),
+      mass_integration_rule(mass_ir ? mass_ir : ir)
 {
     cached_dt = dt_;
 
@@ -145,8 +147,11 @@ void ImplicitSolverPA::BuildOperator()
 {
     // Reassemble the operator
     T_form = std::make_unique<ParBilinearForm>(fes);
-    T_form->AddDomainIntegrator(new MassIntegrator(*mass_coeff));
-    T_form->AddDomainIntegrator(new DiffusionIntegrator(*dt_diff_coeff));
+    auto *mi = new MassIntegrator(*mass_coeff);
+    auto *ki = new DiffusionIntegrator(*dt_diff_coeff);
+    mi->SetIntRule(mass_integration_rule); ki->SetIntRule(integration_rule);
+    T_form->AddDomainIntegrator(mi);
+    T_form->AddDomainIntegrator(ki);
 
     T_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
     T_form->Assemble();
@@ -171,8 +176,16 @@ void ImplicitSolverPA::BuildOperator()
             std::make_unique<ProductCoefficient>(cached_dt, *diff_trace_coeff);
 
         lor_form = std::make_unique<ParBilinearForm>(fes);
-        lor_form->AddDomainIntegrator(new MassIntegrator(*mass_coeff));
-        lor_form->AddDomainIntegrator(new DiffusionIntegrator(*dt_diff_scalar_coeff));
+        auto *lor_mi = new MassIntegrator(*mass_coeff);
+        auto *lor_ki = new DiffusionIntegrator(*dt_diff_scalar_coeff);
+        // The batched LOR assembly uses its own collocated rule on the refined
+        // low-order mesh, so this rule never reaches the preconditioner matrix.
+        // It is still required: lor_form is assembled on the *high-order* space,
+        // and at p >= 8 the default rule makes PADiffusionSetup3D request a
+        // Q1D^3 thread block the device cannot launch.
+        lor_mi->SetIntRule(mass_integration_rule); lor_ki->SetIntRule(integration_rule);
+        lor_form->AddDomainIntegrator(lor_mi);
+        lor_form->AddDomainIntegrator(lor_ki);
         lor_form->SetAssemblyLevel(AssemblyLevel::PARTIAL);
         lor_form->Assemble();
 

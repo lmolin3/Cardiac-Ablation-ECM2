@@ -1,0 +1,125 @@
+# Land et al. 2017 human cardiomyocyte contraction model.
+#
+#   S. Land, S.-J. Park-Holohan, N.P. Smith, C.G. dos Remedios, J.C. Kentish,
+#   S.A. Niederer, "A model of cardiac contraction based on novel measurements
+#   of tension development in human cardiomyocytes", J Mol Cell Cardiol 106
+#   (2017) 68-83.
+#
+# NOTE ON PROVENANCE: unlike the .cellml/.ode files under cellml/, this file is
+# HAND-AUTHORED and therefore tracked. It is not reproducible by re-running the
+# gotranx pipeline: it was extracted from the coupled ORd+Land reference
+# encoding distributed with gotranx (tests/odefiles/ORdmm_Land.ode) by pulling
+# out the "mechanics" subsystem and turning the calcium coupling around.
+#
+# The contraction subsystem is extracted as a STANDALONE ODE system so it can be
+# paired with any EP model that provides intracellular calcium. The equations
+# and parameter values are taken verbatim from the reference, with two
+# deliberate changes:
+#
+#   1. `cai` is a PARAMETER here, not a state. In the coupled solver it is
+#      overwritten at every dof with [Ca2+]i read from the EP model's state
+#      vector, which is exactly the one-way electromechanical coupling.
+#      Consequently the troponin buffering feedback term J_TRPN, which in the
+#      coupled cell model feeds dCaTrpn_dt back into dcai_dt, is absent: the EP
+#      model owns the calcium transient.
+#
+#   2. `CaTrpn` is initialised at its resting steady state (~0.0152 for
+#      cai = 1e-4 mM) rather than at 0. dTmB_dt evaluates CaTrpn**(-ntm/2),
+#      which is +inf at CaTrpn = 0; the Conditional below caps it at 100 so the
+#      original value is not incorrect, but starting from the resting state
+#      keeps the Rush-Larsen derivative estimates finite.
+#
+# Units: cai [mM], time [ms], Ta [kPa].
+#
+# Kinematic inputs `lmbda` (fiber stretch) and `dLambda` (stretch rate) are
+# parameters. For the one-way coupled solver they stay at the unloaded values
+# 1 and 0: tension drives the mechanics, and the mechanics do not feed back.
+
+parameters("calcium input",
+cai=ScalarParam(0.0001, unit="mM", description="Intracellular calcium, supplied by the EP model")
+)
+
+parameters("kinematics",
+lmbda=ScalarParam(1.0, unit="1", description="Fiber stretch"),
+dLambda=ScalarParam(0.0, unit="1/ms", description="Fiber stretch rate")
+)
+
+parameters("crossbridge cycling",
+Tot_A=ScalarParam(25.0, unit="1", description=""),
+Tref=ScalarParam(120.0, unit="kPa", description="Reference tension"),
+kuw=ScalarParam(0.182, unit="1/ms", description=""),
+kws=ScalarParam(0.012, unit="1/ms", description=""),
+rw=ScalarParam(0.5, unit="1", description=""),
+rs=ScalarParam(0.25, unit="1", description=""),
+gammas=ScalarParam(0.0085, unit="1", description=""),
+gammaw=ScalarParam(0.615, unit="1", description=""),
+phi=ScalarParam(2.23, unit="1", description="")
+)
+
+parameters("thin filament",
+ktrpn=ScalarParam(0.1, unit="1/ms", description=""),
+ntrpn=ScalarParam(2.0, unit="1", description=""),
+Trpn50=ScalarParam(0.35, unit="1", description=""),
+ku=ScalarParam(0.04, unit="1/ms", description=""),
+ntm=ScalarParam(2.4, unit="1", description=""),
+cat50_ref=ScalarParam(0.805, unit="uM", description=""),
+scale_HF_cat50_ref=ScalarParam(1.0, unit="1", description="Heart-failure scaling of cat50")
+)
+
+parameters("length dependence",
+Beta0=ScalarParam(2.3, unit="1", description=""),
+Beta1=ScalarParam(-2.4, unit="1", description="")
+)
+
+parameters("passive viscoelasticity",
+p_a=ScalarParam(2.1, unit="kPa", description=""),
+p_b=ScalarParam(9.1, unit="1", description=""),
+p_k=ScalarParam(7.0, unit="kPa", description=""),
+etal=ScalarParam(200.0, unit="ms", description=""),
+etas=ScalarParam(20.0, unit="ms", description="")
+)
+
+states("mechanics",
+XS=ScalarParam(0.0, unit="1", description="Fraction of crossbridges in the strongly bound state"),
+XW=ScalarParam(0.0, unit="1", description="Fraction of crossbridges in the weakly bound state"),
+CaTrpn=ScalarParam(0.0152, unit="1", description="Fraction of troponin C with calcium bound"),
+TmB=ScalarParam(1.0, unit="1", description="Fraction of blocked tropomyosin"),
+Zetas=ScalarParam(0.0, unit="1", description="Distortion of strongly bound crossbridges"),
+Zetaw=ScalarParam(0.0, unit="1", description="Distortion of weakly bound crossbridges"),
+Cd=ScalarParam(0.0, unit="1", description="Viscoelastic internal variable")
+)
+
+expressions("mechanics")
+XS_max = Conditional(Gt(XS, 0), XS, 0)
+XW_max = Conditional(Gt(XW, 0), XW, 0)
+CaTrpn_max = Conditional(Gt(CaTrpn, 0), CaTrpn, 0)
+kwu = kuw*(1/rw-1)-kws
+ksu = kws*rw*(1/rs-1)
+Aw = Tot_A*rs/((1-rs)*rw+rs)
+As = Aw
+cw = phi*kuw*((1-rs)*(1-rw))/((1-rs)*rw)
+cs = phi*kws*((1-rs)*rw)/rs
+lambda_min12 = Conditional(Lt(lmbda, 1.2), lmbda, 1.2)
+lambda_min087 = Conditional(Lt(lambda_min12, 0.87), lambda_min12, 0.87)
+h_lambda_prima = 1+Beta0*(lambda_min12+lambda_min087-1.87)
+h_lambda = Conditional(Gt(h_lambda_prima, 0), h_lambda_prima, 0)
+XU = (1-TmB)-XS-XW
+gammawu = gammaw*abs(Zetaw)
+gammasu = gammas*Conditional(Gt(Gt(Zetas,0)*Zetas, Lt(Zetas, -1)*(-Zetas-1)), Gt(Zetas,0)*Zetas, Lt(Zetas, -1)*(-Zetas-1))
+dXS_dt = kws*XW - ksu*XS - gammasu*XS
+dXW_dt = kuw*XU - kwu*XW - kws*XW - gammawu*XW
+cat50 = (cat50_ref+Beta1*(lambda_min12-1))*scale_HF_cat50_ref
+dCaTrpn_dt = ktrpn*(((cai*1000/cat50)**ntrpn)*(1-CaTrpn)-CaTrpn)
+kb = ku*Trpn50**ntm/(1-rs-(1-rs)*rw)
+dTmB_dt = kb*Conditional(Lt(CaTrpn**(-ntm/2), 100), CaTrpn**(-ntm/2), 100)*XU-ku*CaTrpn**(ntm/2)*TmB
+dZetas_dt = As*dLambda - cs*Zetas
+dZetaw_dt = Aw*dLambda - cw*Zetaw
+Ta = h_lambda*(Tref/rs)*(XS*(Zetas+1) + XW*Zetaw)
+C = lambda_min12 - 1
+dCd = C - Cd
+eta = Conditional(Lt(dCd, 0), etas, etal)
+dCd_dt = p_k * (C - Cd) / eta
+Fd = eta * dCd
+F1 = (exp( p_b * C) - 1)
+Tp = p_a * (F1 + Fd)
+Ttot = Ta + Tp

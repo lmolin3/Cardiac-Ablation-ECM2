@@ -1,6 +1,7 @@
 #include "reaction_solver.hpp"
-#include "../../../general/forall.hpp"
+#include "general/forall.hpp"
 #include <iostream>
+#include <cmath>
 
 using namespace mfem;
 using namespace mfem::electrophysiology;
@@ -8,31 +9,8 @@ using namespace mfem::electrophysiology;
 namespace
 {
 
-// Select the integration scheme for kernel K. The branch is uniform across all
-// threads, so it costs nothing in terms of divergence; keeping it at runtime
-// avoids instantiating the kernel once per (model, scheme) pair.
-template <typename IonicModelKernel>
-MFEM_HOST_DEVICE inline void ApplyScheme(int scheme,
-                                         const real_t *__restrict s, real_t t, real_t dt,
-                                         const real_t *__restrict p, real_t *v)
-{
-    if (scheme == (int)TimeIntegrationScheme::EXPLICIT_EULER)
-    {
-        IonicModelKernel::explicit_euler(s, t, dt, p, v);
-    }
-    else if (scheme == (int)TimeIntegrationScheme::GENERALIZED_RUSH_LARSEN)
-    {
-        IonicModelKernel::generalized_rush_larsen(s, t, dt, p, v);
-    }
-    else if (scheme == (int)TimeIntegrationScheme::FORWARD_EXPLICIT_EULER)
-    {
-        IonicModelKernel::forward_explicit_euler(s, t, dt, p, v);
-    }
-    else if (scheme == (int)TimeIntegrationScheme::FORWARD_GENERALIZED_RUSH_LARSEN)
-    {
-        IonicModelKernel::forward_generalized_rush_larsen(s, t, dt, p, v);
-    }
-}
+// The scheme dispatch itself now lives in gotranx_wrapper.hpp as
+// ApplyOdeScheme<K>(), shared with the contraction kernels.
 
 // One ODE substep for every dof: read the state, override the stimulation amplitude,
 // integrate, and write the new state back in place.
@@ -66,7 +44,7 @@ void ReactionSubstep(int n, int scheme, real_t t, real_t dt, real_t vrange,
                               : IonicModelKernel::stim_sign;
       p[IonicModelKernel::stim_ampl_idx] = IonicModelKernel::dimensionless ? d_stim[i] / Jscaling : d_stim[i];
 
-      ApplyScheme<IonicModelKernel>(scheme, s, t, dt, p, v);
+      ApplyOdeScheme<IonicModelKernel>(scheme, s, t, dt, p, v);
 
       // Only the updated state is stored: ApplyScheme takes `s` by const pointer, so
       // writing it back to a second array would just record the previous substep.
@@ -147,6 +125,12 @@ ReactionSolver::ReactionSolver(ParFiniteElementSpace *fes_, Coefficient *chi_coe
         break;
     case IonicModelType::FENTON_KARMA:
         model = std::make_unique<FentonKarma>();
+        break;
+    case IonicModelType::TENTUSSCHER_PANFILOV_EPI:
+        model = std::make_unique<TP06Epi>();
+        break;
+    case IonicModelType::TENTUSSCHER_PANFILOV_ENDO:
+        model = std::make_unique<TP06Endo>();
         break;
     case IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT:
     {
@@ -294,7 +278,16 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
         }
     }
 
-    // Compute variables for conversion to/from dimensionless potential
+    // Compute variables for conversion to/from dimensionless potential.
+    // The range belongs to the model -- a dimensionless model defines its own
+    // affine map, and a physiological one needs a clamp wide enough to leave its
+    // action potential alone -- so take it from there unless the caller has
+    // explicitly overridden it with SetVRange().
+    if (!vrange_user_set)
+    {
+        Vmin = model->Vmin_default;
+        Vmax = model->Vmax_default;
+    }
     Vrange = Vmax - Vmin;
     invVrange = 1.0 / Vrange;
 
@@ -380,6 +373,203 @@ void ReactionSolver::Setup(const std::vector<double> &initial_states, const std:
 
     // Initialize stimulation vector once, outside the loop
     stimulation_vec = parameters_default[model->stim_ampl_idx];
+
+    //<--- Contraction state, only when a contraction model has been registered
+    if (contraction_model)
+    {
+        const int num_states_c = contraction_model->GetNumStates();
+        const int num_param_c = contraction_model->GetNumParameters();
+
+        contraction_values.SetSize(num_states_c * n); contraction_values.UseDevice(true);
+        contraction_params.SetSize(num_param_c);      contraction_params.UseDevice(true);
+        Ta_tvector_.SetSize(n);                       Ta_tvector_.UseDevice(true);
+        Ta_tvector_ = 0.0;
+
+        std::vector<real_t> c_states(num_states_c), c_params(num_param_c);
+        contraction_model->init_state_values(c_states.data());
+        contraction_model->init_parameter_values(c_params.data());
+
+        real_t *h_cv = contraction_values.HostWrite();
+        for (int k = 0; k < num_states_c; k++)
+        {
+            for (int i = 0; i < n; i++) { h_cv[k * n + i] = c_states[k]; }
+        }
+
+        real_t *h_cp = contraction_params.HostWrite();
+        for (int k = 0; k < num_param_c; k++) { h_cp[k] = c_params[k]; }
+
+        // Nothing has been integrated yet, so the zero-initialised tension above
+        // is already the correct answer for t = 0.
+        tension_updated_ = true;
+    }
+}
+
+
+void ReactionSolver::RegisterModels(std::unique_ptr<EPModelBase> ep_model,
+                                    std::unique_ptr<ContractionModelBase> contraction_model_)
+{
+    MFEM_VERIFY(ep_model != nullptr, "ReactionSolver::RegisterModels(): ep_model must not be null.");
+
+    //<--- Verification: fail fast on an incompatible pairing.
+    if (contraction_model_ && contraction_model_->RequiresCalcium() && !ep_model->HasCalcium())
+    {
+        throw std::runtime_error(
+            "Incompatible pairing: ContractionModel requires [Ca2+]i, but EPModel does not provide it. "
+            "(contraction model '" + contraction_model_->GetName() +
+            "', EP model '" + ep_model->GetName() + "')");
+    }
+
+    //<--- Resolve the dispatch key: the reaction kernel is templated on the
+    // model's Kernel struct, so the concrete type has to be known statically.
+    if (dynamic_cast<MitchellSchaefferTD *>(ep_model.get()))
+    {
+        model_type = IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT;
+    }
+    else if (dynamic_cast<MitchellSchaeffer *>(ep_model.get()))
+    {
+        model_type = IonicModelType::MITCHELL_SCHAEFFER;
+    }
+    else if (dynamic_cast<FentonKarma *>(ep_model.get()))
+    {
+        model_type = IonicModelType::FENTON_KARMA;
+    }
+    else if (dynamic_cast<TP06Epi *>(ep_model.get()))
+    {
+        model_type = IonicModelType::TENTUSSCHER_PANFILOV_EPI;
+    }
+    else if (dynamic_cast<TP06Endo *>(ep_model.get()))
+    {
+        model_type = IonicModelType::TENTUSSCHER_PANFILOV_ENDO;
+    }
+    else
+    {
+        throw std::runtime_error(
+            "ReactionSolver::RegisterModels(): unknown EP model '" + ep_model->GetName() +
+            "'. Add it to IonicModelType and to the dispatch switches in this file.");
+    }
+
+    if (contraction_model_)
+    {
+        if (dynamic_cast<Land17Model *>(contraction_model_.get()))
+        {
+            contraction_type = ContractionModelType::LAND_2017;
+        }
+        else
+        {
+            throw std::runtime_error(
+                "ReactionSolver::RegisterModels(): unknown contraction model '" +
+                contraction_model_->GetName() + "'.");
+        }
+    }
+    else
+    {
+        contraction_type = ContractionModelType::NONE;
+    }
+
+    model = std::move(ep_model);
+    contraction_model = std::move(contraction_model_);
+
+    has_td_dependency = dynamic_cast<GotranxODEModelWithThermalDamage *>(model.get()) != nullptr;
+    if (has_td_dependency)
+    {
+        const int num_time_constants =
+            dynamic_cast<GotranxODEModelWithThermalDamage *>(model.get())->GetTimeConstantsIdxs().size();
+        td_delta_tau.resize(num_time_constants, 0.0);
+        td_healthy_tau.resize(num_time_constants, 0.0);
+    }
+
+    //<--- Resource allocation: with no contraction model, none of the
+    // contraction arrays are touched, so a pure-EP run allocates nothing extra.
+    if (!contraction_model)
+    {
+        contraction_values.SetSize(0);
+        contraction_params.SetSize(0);
+        Ta_tvector_.SetSize(0);
+        tension_updated_ = false;
+    }
+}
+
+
+void ReactionSolver::RegisterModels(IonicModelType ep_type,
+                                    ContractionModelType contraction_type_)
+{
+    std::unique_ptr<EPModelBase> ep;
+    switch (ep_type)
+    {
+    case IonicModelType::MITCHELL_SCHAEFFER:
+        ep = std::make_unique<MitchellSchaeffer>(); break;
+    case IonicModelType::FENTON_KARMA:
+        ep = std::make_unique<FentonKarma>(); break;
+    case IonicModelType::TENTUSSCHER_PANFILOV_EPI:
+        ep = std::make_unique<TP06Epi>(); break;
+    case IonicModelType::TENTUSSCHER_PANFILOV_ENDO:
+        ep = std::make_unique<TP06Endo>(); break;
+    case IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT:
+        ep = std::make_unique<MitchellSchaefferTD>(); break;
+    default:
+        mfem_error("ReactionSolver::RegisterModels(): unsupported ionic model type");
+    }
+
+    std::unique_ptr<ContractionModelBase> contraction;
+    switch (contraction_type_)
+    {
+    case ContractionModelType::NONE:
+        break;
+    case ContractionModelType::LAND_2017:
+        contraction = std::make_unique<Land17Model>(); break;
+    default:
+        mfem_error("ReactionSolver::RegisterModels(): unsupported contraction model type");
+    }
+
+    RegisterModels(std::move(ep), std::move(contraction));
+}
+
+
+const Vector &ReactionSolver::GetActiveTension()
+{
+    MFEM_VERIFY(contraction_model != nullptr,
+                "ReactionSolver::GetActiveTension(): no contraction model registered. "
+                "Call RegisterModels() with one, or do not query the tension.");
+
+    //<--- Cached: the contraction ODEs have already been advanced for this step.
+    if (tension_updated_) { return Ta_tvector_; }
+
+    MFEM_VERIFY(contraction_values.Size() > 0,
+                "ReactionSolver::GetActiveTension(): Setup() must run before the first step.");
+
+    const int n = fes_truevsize;
+    const int ca_idx = model->GetCalciumIndex();
+
+    // Integrate everything that has elapsed since the last query, in substeps
+    // no larger than the EP step so the accuracy does not depend on how often
+    // the caller asks. Calcium is held at its present value across the substeps
+    // -- the same staggering approximation the outer coupling already makes, so
+    // the stride must stay short against the calcium transient (tens of ms).
+    const real_t elapsed = (dt_pending_ > 0.0) ? dt_pending_ : dt_;
+    const real_t dt_cap = (dt_ > 0.0) ? dt_ : elapsed;
+    const int nsub = std::max(1, (int)std::ceil(elapsed / dt_cap - 1e-12));
+
+    ContractionStepArgs args;
+    args.ndofs = n;
+    args.dt = elapsed / nsub;
+    args.scheme = (int)scheme;
+    // The EP states are already in SoA layout, so the calcium row is a
+    // contiguous span of `values` -- no gather and no scratch vector needed.
+    args.calcium = values.Read() + static_cast<size_t>(ca_idx) * n;
+    args.calcium_scale = calcium_scale_;
+    args.states = contraction_values.ReadWrite();
+    args.params = contraction_params.Read();
+    args.per_dof_params = false;
+    args.active_tension = Ta_tvector_.Write();
+
+    for (int sub = 0; sub < nsub; sub++)
+    {
+        contraction_model->AdvanceODE(args);
+    }
+
+    dt_pending_ = 0.0;
+    tension_updated_ = true;
+    return Ta_tvector_;
 }
 
 void ReactionSolver::GetPotential(Vector &u)
@@ -407,13 +597,15 @@ void ReactionSolver::SetPotential(const Vector &u)
     const int off = model->potential_idx * n;
     const bool dimless = model->dimensionless;
     const real_t vmin = Vmin, invvrange = invVrange;
+    const bool limit = limit_voltage;
 
     const real_t *d_u = u.Read();
     real_t *d_values = values.ReadWrite();
 
     mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
     {
-        d_values[off + i] = dimless ? fabs((d_u[i] - vmin) * invvrange) : d_u[i];
+        const real_t v = (d_u[i] - vmin) * invvrange;
+        d_values[off + i] = dimless ? (limit ? fabs(v) : v) : d_u[i];
     });
     states_gfs_stale = true;
 }
@@ -561,6 +753,12 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
     const real_t dt_ode = dt / ode_substeps;
     real_t current_time = t;
 
+    // Cache the step size for the contraction models and invalidate the active
+    // tension: it is recomputed lazily, from the calcium this step produces.
+    dt_ = dt;
+    dt_pending_ += dt;
+    tension_updated_ = false;
+
     // Cache frequently used values OUTSIDE the substep loop
     const int n = fes_truevsize;
     const bool use_dimensionless = model->dimensionless;
@@ -570,12 +768,14 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
     //<--- Seed the potential entry of `values` from the incoming vector x
     {
         const real_t vmin = Vmin, invvrange = invVrange;
+        const bool limit = limit_voltage;
         const real_t *d_x = x.Read();
         real_t *d_values = values.ReadWrite();
         mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
         {
             d_values[pot_off + i] = use_dimensionless
-                                    ? fabs((d_x[i] - vmin) * invvrange)
+                                    ? (limit ? fabs((d_x[i] - vmin) * invvrange)
+                                             : (d_x[i] - vmin) * invvrange)
                                     : d_x[i];
         });
     }
@@ -634,7 +834,7 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
     // accuracy; with ode_substeps == N it divides the projection cost by N.
     if (!substep_stim_projection)
     {
-        ProjectStimulation(t + dt);
+        ProjectStimulation(t + stimulus_sample_fraction * dt);
     }
 
     //<--- Substep loop: integrate the pointwise ODEs on device
@@ -643,7 +843,7 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
         // Re-sample the stimulation at every substep, if the caller asked for it.
         if (substep_stim_projection)
         {
-            ProjectStimulation(current_time + dt_ode);
+            ProjectStimulation(current_time + stimulus_sample_fraction * dt_ode);
         }
 
         const real_t *d_stim = stimulation_vec.Read();
@@ -665,6 +865,16 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
                 per_dof_params, n, (int)scheme, current_time, dt_ode, Vrange,
                 d_stim, d_chi, d_Cm, d_values, d_params);
             break;
+        case IonicModelType::TENTUSSCHER_PANFILOV_EPI:
+            ReactionSubstepDispatch<TP06Epi::Kernel>(
+                per_dof_params, n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_values, d_params);
+            break;
+        case IonicModelType::TENTUSSCHER_PANFILOV_ENDO:
+            ReactionSubstepDispatch<TP06Endo::Kernel>(
+                per_dof_params, n, (int)scheme, current_time, dt_ode, Vrange,
+                d_stim, d_chi, d_Cm, d_values, d_params);
+            break;
         case IonicModelType::MITCHELL_SCHAEFFER_TD_DEPENDENT:
             ReactionSubstepDispatch<MitchellSchaefferTD::Kernel>(
                 per_dof_params, n, (int)scheme, current_time, dt_ode, Vrange,
@@ -680,13 +890,14 @@ void ReactionSolver::Step(Vector &x, real_t &t, real_t &dt, bool provisional)
     //<--- Write the potential back into x, clamped to the physical range
     {
         const real_t vmin = Vmin, vmax = Vmax, vrange = Vrange;
+        const bool limit = limit_voltage;
         const real_t *d_values = values.Read();
         real_t *d_x = x.Write();
         mfem::forall(n, [=] MFEM_HOST_DEVICE (int i)
         {
             real_t val = d_values[pot_off + i];
             if (use_dimensionless) { val = val * vrange + vmin; }
-            d_x[i] = fmin(fmax(val, vmin), vmax);
+            d_x[i] = limit ? fmin(fmax(val, vmin), vmax) : val;
         });
     }
 

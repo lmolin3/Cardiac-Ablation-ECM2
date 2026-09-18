@@ -36,6 +36,10 @@ namespace mfem
                 time_constants_idxs.push_back(parameter_index("tau_out"));
             }
 
+            std::string GetName() const override { return "Mitchell-Schaeffer 2003 (temperature/damage dependent)"; }
+
+            int GetPotentialIndex() const override { return Kernel::potential_idx; }
+
             // Parameter index
             int parameter_index(const char name[])
             {

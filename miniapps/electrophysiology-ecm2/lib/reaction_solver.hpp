@@ -6,26 +6,34 @@
 #include "../ionic_models/mitchell_schaeffer_2003.h"
 #include "../ionic_models/fenton_karma_1998.h"
 #include "../ionic_models/mitchell_schaeffer_2003_td_dependent.h"
+#include "../ionic_models/tentusscher_panfilov_2006_epi.h"
+#include "../ionic_models/tentusscher_panfilov_2006_endo.h"
+
+// ... and all available contraction models here
+#include "../ionic_models/land_2017.h"
 
 namespace mfem
 {
     namespace electrophysiology
     {
 
-        enum class TimeIntegrationScheme : int
-        {
-            EXPLICIT_EULER = 0,
-            FORWARD_EXPLICIT_EULER = 1,
-            GENERALIZED_RUSH_LARSEN = 2,
-            FORWARD_GENERALIZED_RUSH_LARSEN = 3,
-            HYBRID_RUSH_LARSEN = 4
-        };
+        // NOTE: TimeIntegrationScheme now lives in gotranx_wrapper.hpp, next to
+        // the generated Kernel functions it selects, so that the contraction
+        // kernels can dispatch on it too.
 
         enum class IonicModelType : int
         {
             MITCHELL_SCHAEFFER = 0,
             FENTON_KARMA = 1,
+            TENTUSSCHER_PANFILOV_EPI = 2,
+            TENTUSSCHER_PANFILOV_ENDO = 3,
             MITCHELL_SCHAEFFER_TD_DEPENDENT = 10
+        };
+
+        enum class ContractionModelType : int
+        {
+            NONE = 0,
+            LAND_2017 = 1
         };
 
 
@@ -43,8 +51,38 @@ namespace mfem
             TimeIntegrationScheme scheme;
 
             int ode_substeps = 1; // Number of inner ODE time steps (1: dt = dt_ode)
-            std::unique_ptr<GotranxODEModel>
+            std::unique_ptr<EPModelBase>
                 model; // Pointer to the model for ODE pointwise solution
+
+            // ----------------------------------------------------------------
+            // Active contraction (optional second physics)
+            // ----------------------------------------------------------------
+            // Everything below stays empty unless a contraction model has been
+            // registered: a pure-EP run must not pay for mechanics storage.
+            ContractionModelType contraction_type = ContractionModelType::NONE;
+            std::unique_ptr<ContractionModelBase> contraction_model;
+
+            Vector contraction_values;   // [nstates_c * fes_truevsize], SoA like `values`
+            Vector contraction_params;   // [nparams_c] uniform parameters
+            Vector Ta_tvector_;          // [fes_truevsize] active tension at the true dofs
+
+            // The contraction ODEs are integrated on demand rather than inside
+            // Step(): a quasi-static mechanics solve may ask for the tension zero
+            // or many times per step, and it must always see the same value.
+            // Step() invalidates the cache, GetActiveTension() refills it.
+            bool tension_updated_ = false;
+            real_t dt_ = 0.0;            // Time step cached by Step(), used by GetActiveTension()
+
+            // Physical time the contraction models still owe. Step() accumulates
+            // it; GetActiveTension() integrates it and clears it. This is what
+            // decouples the two rates: a driver that solves the mechanics every
+            // Nth step must still advance the cell model by the full N*dt, or the
+            // contraction ODEs silently run N times slower than the EP ones.
+            real_t dt_pending_ = 0.0;
+
+            // Converts the EP model's calcium unit into the contraction model's.
+            // TP06 and Land 2017 both use mM, so this is 1 by default.
+            real_t calcium_scale_ = 1.0;
 
             // Pointwise ODE data, stored flat in structure-of-arrays layout so that the
             // reaction kernels can run on device with coalesced access: entry k of dof i
@@ -129,8 +167,14 @@ namespace mfem
             // prolongation per state. Step() only marks them stale.
             mutable bool states_gfs_stale = true;
 
+            // Potential range. Seeded from the registered model's own defaults in
+            // Setup(); SetVRange() overrides and latches vrange_user_set so that
+            // Setup() does not undo the caller's choice.
             real_t Vmin = -80;
             real_t Vmax = -20;
+            bool vrange_user_set = false;
+            bool limit_voltage = true; // compatibility with historical drivers
+            real_t stimulus_sample_fraction = 1.0;
             real_t Vrange;
             real_t invVrange;
 
@@ -145,6 +189,14 @@ namespace mfem
             }
 
         public:
+            /// Validation uses the affine voltage map without reflection/clipping.
+            void EnableVoltageLimiting(bool enabled) { limit_voltage = enabled; }
+            /// 0.5 avoids endpoint ambiguity when steps end on pulse boundaries.
+            void SetStimulusSampleFraction(real_t fraction)
+            {
+                MFEM_VERIFY(fraction >= 0 && fraction <= 1, "Invalid stimulus sample fraction");
+                stimulus_sample_fraction = fraction;
+            }
             /**
              * @brief Constructor for the ReactionSolver class.
              */
@@ -232,7 +284,15 @@ namespace mfem
             void Update();
 
             /**
-             * @brief Sets the voltage range for dimensionless models.
+             * @brief Override the potential range.
+             *
+             * For a dimensionless model this is the affine map applied to the
+             * [0,1] state. For a physiological model the ODE already produces
+             * millivolts, so it is only the clamp guarding against blow-up, and
+             * narrowing it will truncate the action potential.
+             *
+             * Rarely needed: Setup() takes the range from the registered model.
+             * Calling this latches the values so Setup() will not overwrite them.
              */
             void SetVRange(real_t V_min, real_t V_max)
             {
@@ -240,6 +300,14 @@ namespace mfem
                 Vmax = V_max;
                 Vrange = (Vmax - Vmin);
                 invVrange = 1.0 / Vrange;
+                vrange_user_set = true;
+            }
+
+            /// Potential range currently in use [mV].
+            void GetVRange(real_t &V_min, real_t &V_max) const
+            {
+                V_min = Vmin;
+                V_max = Vmax;
             }
 
             /**
@@ -282,7 +350,10 @@ namespace mfem
             /**
              * @brief Get model object.
              */
-            GotranxODEModel* GetModel() { return model.get(); }
+            EPModelBase* GetModel() { return model.get(); }
+
+            /// The registered contraction model, or nullptr for a pure-EP run.
+            ContractionModelBase* GetContractionModel() { return contraction_model.get(); }
 
             /**
              * @brief Update the potential t-dof vector from the internal state.
@@ -515,7 +586,66 @@ namespace mfem
             }
 
             /**
+             * @brief Register the cellular models, pairing EP with contraction.
+             *
+             * Replaces the model created by the constructor. Passing
+             * @a contraction_model_ = nullptr selects a pure-EP run: no
+             * contraction state is allocated at all, and GetActiveTension()
+             * will refuse to be called.
+             *
+             * Fails fast on an incompatible pairing: a contraction model driven
+             * by calcium cannot be fed by a phenomenological EP model that does
+             * not resolve [Ca2+]i. Detecting that at registration turns what
+             * would otherwise be a silent zero-tension run into an immediate,
+             * explicit error.
+             *
+             * @throws std::runtime_error on an incompatible pairing.
+             */
+            void RegisterModels(std::unique_ptr<EPModelBase> ep_model,
+                                std::unique_ptr<ContractionModelBase> contraction_model_ = nullptr);
+
+            /**
+             * @brief Convenience overload selecting both models by enum.
+             */
+            void RegisterModels(IonicModelType ep_type,
+                                ContractionModelType contraction_type_ = ContractionModelType::NONE);
+
+            /// True if a contraction model has been registered.
+            bool HasContractionModel() const { return contraction_model != nullptr; }
+
+            /**
+             * @brief Number of reals allocated for the contraction physics.
+             *
+             * Zero for a pure-EP run. Exposed so that the "no contraction model
+             * means no mechanics storage" contract is testable rather than
+             * merely asserted in a comment.
+             */
+            long long GetContractionAllocatedEntries() const
+            {
+                return static_cast<long long>(contraction_values.Size()) +
+                       contraction_params.Size() + Ta_tvector_.Size();
+            }
+
+            /**
+             * @brief Active tension at the true dofs, computed on demand.
+             *
+             * The contraction ODEs are advanced here, not in Step(), using the
+             * time step Step() cached. The result is memoised for the rest of
+             * the step, so a Newton loop that queries the tension repeatedly
+             * integrates the cell model exactly once and sees a frozen Ta --
+             * which is what makes the mechanics solve well-posed.
+             *
+             * Takes no dt argument by design: the step size is whatever Step()
+             * last used, and letting a caller pass a different one would advance
+             * the contraction model out of sync with the EP model.
+             */
+            const Vector &GetActiveTension();
+
+            /**
              * @brief Solves the ionic model.
+             *
+             * Caches @a dt for the contraction models and invalidates the active
+             * tension, which is then recomputed lazily by GetActiveTension().
              */
             void Step(Vector &x, real_t &t, real_t &dt, bool provisional = false);
 

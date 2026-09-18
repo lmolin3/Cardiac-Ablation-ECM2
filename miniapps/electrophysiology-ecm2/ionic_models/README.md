@@ -88,6 +88,99 @@ namespace mfem
 
 
 
+================================================================================
+AUTOMATED WORKFLOW (gotranx_to_mfem.py)
+================================================================================
+
+Steps 1-5 above are mechanical but touch every line of a 60 kB generated file,
+so they are now scripted. The manual description is kept because it explains
+what the script does and is still the right reference when a model needs
+something unusual.
+
+  1. Download the CellML model into cellml/ and convert it:
+       gotranx cellml2ode cellml/<model>.cellml -o cellml/<model>.ode
+
+  2. If the model's stimulus protocol lacks one of the parameters that
+     DisableInternalTimeManagement() writes (IstimAmplitude / Start / End /
+     Period / PulseDuration, or their model-specific names), add it to the .ode
+     and use it in the stimulus expression. The ten Tusscher-Panfilov CellML,
+     for instance, has no stim_end, so one was added.
+
+  3. Generate the raw C kernels:
+       gotranx ode2c cellml/<model>.ode --scheme explicit_euler \
+               --scheme generalized_rush_larsen -o cellml/<model>_generated.h -f none
+
+  4. Add an entry to models.json describing the wrapper: class name, base class
+     (EPModelBase or ContractionModelBase), which names map to which indices,
+     the constructor body and any interface overrides.
+
+  5. Emit the MFEM header:
+       python3 gotranx_to_mfem.py --config models.json
+
+  6. Add the model to IonicModelType (or ContractionModelType) and to the
+     dispatch switches in lib/reaction_solver.cpp.
+
+The generated headers are checked in, so a working tree does not need gotranx
+installed unless a model is being (re)generated.
+
+cellml/ is a scratch directory and is NOT tracked: it holds the downloaded
+.cellml sources, the .ode conversions and the raw gotranx output that
+models.json points at. Steps 1-3 repopulate it, and they have to be re-run
+before step 5 will work on a fresh checkout. Note that step 2 is not optional
+for ten Tusscher-Panfilov -- the published CellML has no stim_end, and
+DisableInternalTimeManagement() writes that index unconditionally.
+
+The one exception is land_2017.ode, which lives here in ionic_models/ and IS
+tracked. It is hand-authored rather than derived: it was extracted from the
+coupled ORd+Land encoding shipped with gotranx by pulling out the mechanics
+subsystem and turning cai from a state into an input parameter. Re-running the
+pipeline will not reproduce it, so it is source, not scratch.
+
+
+================================================================================
+POTENTIAL RANGE
+================================================================================
+
+Every model carries Vmin_default / Vmax_default, which ReactionSolver::Setup()
+adopts unless the caller overrode them with SetVRange(). The two meanings differ:
+
+  * dimensionless models (Mitchell-Schaeffer, Fenton-Karma) -- the range IS the
+    affine map applied to the [0,1] state, so it defines the physical potential.
+    The base-class defaults (-80, -20 mV) are these.
+
+  * physiological models (ten Tusscher-Panfilov) -- the ODE already produces
+    millivolts, so the range is only ReactionSolver's blow-up guard. It must be
+    wide enough never to bind on a valid solution. TP06 uses (-95, +80 mV), set
+    just outside the Nernst potentials E_K ~ -86 mV and E_Na ~ +75 mV, which
+    bracket what the model can physically reach.
+
+A physiological model that inherits the dimensionless defaults will have its
+action potential silently flattened against both rails. It will still look like
+it works -- clamping to -20 mV is enough depolarisation to open ICaL, so calcium
+and tension still develop. test_electromechanics checks that the potential never
+touches either rail for exactly this reason.
+
+
+================================================================================
+CONTRACTION MODELS
+================================================================================
+
+Contraction models derive from ContractionModelBase rather than EPModelBase.
+They are driven by the calcium transient of an EP model, so:
+
+  * [Ca2+]i is a PARAMETER of the contraction ODE, overwritten at every dof from
+    the EP state vector every step (see ContractionAdvanceKernel in
+    gotranx_wrapper.hpp);
+  * the active tension Ta is an intermediate expression, so
+    GetActiveTensionIndex() returns an index into the MONITORED values, not the
+    states;
+  * ReactionSolver::RegisterModels() refuses to pair a calcium-driven
+    contraction model with an EP model whose HasCalcium() is false.
+
+land_2017.ode was extracted from the coupled ORdmm_Land reference distributed
+with gotranx (cellml/ORdmm_Land.ode), with cai turned into an input parameter.
+
+
 - How to introduce damage and temperature dependency
 In our case we are interested in including the effect of temperature and damage into the ionic model.
 Given a generic ionic model

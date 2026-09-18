@@ -10,7 +10,7 @@
 // CONTRIBUTING.md for details.
 
 #include "monodomain_solver.hpp"
-#include "../../../general/forall.hpp"
+#include "general/forall.hpp"
 
 using namespace mfem;
 using namespace mfem::electrophysiology;
@@ -109,10 +109,16 @@ void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type_, real_t rel_tol_
    ///<--- Setup bilinear forms
    // Mass matrix
    M_form = std::make_unique<ParBilinearForm>(fes);
-   M_form->AddDomainIntegrator(new MassIntegrator(*chi_Cm_coeff));
+   auto *mass_integrator = new MassIntegrator(*chi_Cm_coeff);
+   // A separate mass rule, when one was supplied, exists so that a collocated
+   // Gauss-Lobatto rule can make the mass matrix diagonal (lumping).
+   mass_integrator->SetIntRule(MassIntegrationRule());
+   M_form->AddDomainIntegrator(mass_integrator);
    // Diffusion matrix
    K_form = std::make_unique<ParBilinearForm>(fes);
-   K_form->AddDomainIntegrator(new DiffusionIntegrator(*sigma_coeff));
+   auto *diff_integrator = new DiffusionIntegrator(*sigma_coeff);
+   diff_integrator->SetIntRule(integration_rule);
+   K_form->AddDomainIntegrator(diff_integrator);
    // Finalize (based on assembly level)
    if (pa)
    {
@@ -200,8 +206,11 @@ void MonodomainDiffusionSolver::Setup(real_t dt, int prec_type_, real_t rel_tol_
    M_solver->SetPreconditioner(*M_prec);
    M_solver->SetOperator(*opM);
 
-   // Solver for implicit operator
-   BuildImplicitSolver();
+   // Solver for the implicit operator. Only built when an implicit ODE solver was
+   // selected: BuildImplicitSolver() asserts on that flag, and on the explicit path
+   // T = M + dt K is never formed, so building it would waste the assembly and, with
+   // prec_type 1, an entire LOR discretization and AMG hierarchy that nothing uses.
+   if (implicit_time_integration) { BuildImplicitSolver(); }
 
    /// 5. Assemble linear form for rhs
    fform = std::make_unique<ParLinearForm>(fes);
@@ -285,7 +294,7 @@ void MonodomainDiffusionSolver::BuildImplicitSolver()
 
    if (pa)
    {
-      T_solver = std::make_unique<ImplicitSolverPA>(fes, cached_dt, bcs, ess_tdof_list, sigma_coeff, chi_Cm_coeff.get(), prec_type, lin_rel_tol);
+      T_solver = std::make_unique<ImplicitSolverPA>(fes, cached_dt, bcs, ess_tdof_list, sigma_coeff, chi_Cm_coeff.get(), prec_type, lin_rel_tol, integration_rule, MassIntegrationRule());
    }
    else
    {
